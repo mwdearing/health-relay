@@ -1,6 +1,5 @@
 import Foundation
 import XCTest
-import ZIPFoundation
 @testable import HealthBridgeCompanionCore
 
 final class AppleHealthExportLabImporterTests: XCTestCase {
@@ -139,41 +138,59 @@ final class AppleHealthExportLabImporterTests: XCTestCase {
         XCTAssertEqual(result.effectiveDate, "2026-05-01")
     }
 
-    // MARK: - End-to-end zip read (proves the ZIPFoundation usage compiles and works)
+    // MARK: - End-to-end zip read (MinimalZipReader, real zip bytes)
 
-    func testImportLabResultsReadsOnlyClinicalRecordsJSONFromZip() throws {
+    /// A real zip (built with Python's stdlib `zipfile`, not this codebase, so it can't
+    /// share a bug with the reader under test) containing three entries: a DEFLATEd
+    /// clinical-records Observation, an irrelevant DEFLATEd non-clinical file, and a
+    /// STORED (uncompressed) clinical-records Observation -- exercising both ZIP
+    /// compression methods `MinimalZipReader` supports.
+    private static let syntheticExportZipBase64 = """
+    UEsDBBQAAAAIAAuKPF0yAMxf/wAAAJ4BAAAjAAAAY2xpbmljYWwtcmVjb3Jkcy9PYnNlcnZhdGlvbi0xLmpzb25dj09rhDAQxb+KzNk/o7tKzW2h7alQ2norHrI6akCTJY62svjdS7S07OYQwpv3e29yBUujmWxFxXIhEB68nkeys2RlNPgeqNqJh+f8lD/FGCDi/fV7YuceWfI0OqJRWvZOqiRTa+wCwvu8QmVqpdu/99bYy7Oxkp1nLdfSMfvk1j4uI9PggI75IqKoN0pXobEt/COQ5GkcJLDFMH2z0z5MraYBVt8DahqqWM30KJkKNewMJlmAWYDHAh8EonA/SwWiC55lP9HbJDUrXralNgWEFx8xRN+DSautZhhMH71sNZYasqQrepe6pX3/3nzd4ocsRGfuVNvdBachrmu5/gBQSwMEFAAAAAgAC4o8XURjMsYTAAAAEQAAABgAAAB3b3Jrb3V0LXJvdXRlcy9yb3V0ZS5ncHjLyy9RSM7JzMtMTsxRSEksSQQAUEsDBBQAAAAAAAAAIQBS4vX0ngEAAJ4BAAAjAAAAY2xpbmljYWwtcmVjb3Jkcy9PYnNlcnZhdGlvbi0yLmpzb257InJlc291cmNlVHlwZSI6ICJPYnNlcnZhdGlvbiIsICJpZCI6ICJBQUFBQUFBQS0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDIiLCAic3RhdHVzIjogImZpbmFsIiwgImNhdGVnb3J5IjogW3siY29kaW5nIjogW3siY29kZSI6ICJsYWJvcmF0b3J5In1dfV0sICJjb2RlIjogeyJjb2RpbmciOiBbeyJzeXN0ZW0iOiAiaHR0cDovL2xvaW5jLm9yZyIsICJjb2RlIjogIjI5NTEtMiJ9XSwgInRleHQiOiAiU29kaXVtIn0sICJlZmZlY3RpdmVEYXRlVGltZSI6ICIyMDI2LTA2LTA1VDA4OjAwOjAwLTA1OjAwIiwgInZhbHVlUXVhbnRpdHkiOiB7InZhbHVlIjogMTQwLjAsICJ1bml0IjogIm1tb2wvTCJ9LCAicmVmZXJlbmNlUmFuZ2UiOiBbeyJsb3ciOiB7InZhbHVlIjogMTM2LjB9LCAiaGlnaCI6IHsidmFsdWUiOiAxNDUuMH19XX1QSwECFAMUAAAACAALijxdMgDMX/8AAACeAQAAIwAAAAAAAAAAAAAAgAEAAAAAY2xpbmljYWwtcmVjb3Jkcy9PYnNlcnZhdGlvbi0xLmpzb25QSwECFAMUAAAACAALijxdRGMyxhMAAAARAAAAGAAAAAAAAAAAAAAAgAFAAQAAd29ya291dC1yb3V0ZXMvcm91dGUuZ3B4UEsBAhQDFAAAAAAAAAAhAFLi9fSeAQAAngEAACMAAAAAAAAAAAAAAIABiQEAAGNsaW5pY2FsLXJlY29yZHMvT2JzZXJ2YXRpb24tMi5qc29uUEsFBgAAAAADAAMA6AAAAGgDAAAAAA==
+    """
+
+    private func writeSyntheticExportZip() throws -> URL {
         let tempDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+        addTeardownBlock { try? FileManager.default.removeItem(at: tempDirectory) }
 
+        let data = try XCTUnwrap(Data(base64Encoded: Self.syntheticExportZipBase64))
         let zipURL = tempDirectory.appendingPathComponent("export.zip")
-        let archive = try XCTUnwrap(Archive(url: zipURL, accessMode: .create))
+        try data.write(to: zipURL)
+        return zipURL
+    }
 
-        let observationData = try JSONSerialization.data(withJSONObject: observation())
-        try archive.addEntry(
-            with: "clinical-records/Observation-1.json",
-            type: .file,
-            uncompressedSize: Int64(observationData.count),
-            provider: { position, size -> Data in
-                observationData.subdata(in: Int(position)..<Int(position) + size)
-            }
-        )
-        let irrelevantData = Data("not clinical data".utf8)
-        try archive.addEntry(
-            with: "workout-routes/route.gpx",
-            type: .file,
-            uncompressedSize: Int64(irrelevantData.count),
-            provider: { position, size -> Data in
-                irrelevantData.subdata(in: Int(position)..<Int(position) + size)
-            }
-        )
+    func testImportLabResultsReadsOnlyClinicalRecordsJSONFromZip() throws {
+        let zipURL = try writeSyntheticExportZip()
 
         let summary = try AppleHealthExportLabImporter.importLabResults(fromZipAt: zipURL)
 
-        XCTAssertEqual(summary.observationCount, 1)
+        // Two clinical-records Observations (one DEFLATEd, one STORED); the
+        // workout-routes/route.gpx entry is neither clinical-records nor .json and must
+        // be skipped without even attempting to parse it as JSON.
+        XCTAssertEqual(summary.observationCount, 2)
         XCTAssertEqual(summary.skippedCount, 0)
-        XCTAssertEqual(summary.labResults.count, 1)
-        XCTAssertEqual(summary.labResults[0].loinc, "2951-2")
+        XCTAssertEqual(summary.labResults.count, 2)
+        XCTAssertEqual(Set(summary.labResults.map(\.effectiveDate)), ["2026-06-04", "2026-06-05"])
+        XCTAssertTrue(summary.labResults.allSatisfy { $0.loinc == "2951-2" && $0.valueNum == 140.0 })
+    }
+
+    func testMinimalZipReaderListsEntriesWithCorrectSizesAndMethods() throws {
+        let zipURL = try writeSyntheticExportZip()
+
+        let entries = try MinimalZipReader.listEntries(at: zipURL)
+
+        let paths = Set(entries.map(\.path))
+        XCTAssertEqual(paths, [
+            "clinical-records/Observation-1.json",
+            "workout-routes/route.gpx",
+            "clinical-records/Observation-2.json",
+        ])
+        let deflated = try XCTUnwrap(entries.first { $0.path == "clinical-records/Observation-1.json" })
+        XCTAssertEqual(deflated.compressionMethod, 8)
+        let stored = try XCTUnwrap(entries.first { $0.path == "clinical-records/Observation-2.json" })
+        XCTAssertEqual(stored.compressionMethod, 0)
+        XCTAssertEqual(stored.compressedSize, stored.uncompressedSize)
     }
 }
