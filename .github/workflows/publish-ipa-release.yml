@@ -1,0 +1,125 @@
+name: Publish IPA release
+
+# HealthRelay fork: manual only. Turns the artifact of a finished "Build unsigned IPA" run into a
+# GitHub Release (tag app-v<version>, the unsigned IPA and its SHA-256), in the same format as the
+# earlier releases. The build workflows stay read-only; write access exists only in this job.
+#
+# Guards: the run must be a successful "Build unsigned IPA" run on main, the IPA must carry the
+# neutral com.example.* bundle id (the real id is never published), and an existing tag or release
+# is never overwritten. It uses no third-party actions, only the gh CLI on the runner.
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Run ID of a successful "Build unsigned IPA" run on main (the number in the run URL)
+        required: true
+        type: string
+      highlights:
+        description: Optional short "What's new" text for the release notes (plain text)
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-ipa-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish unsigned IPA release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # zizmor: ignore[undocumented-permissions]
+      actions: read # zizmor: ignore[undocumented-permissions]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      BUILD_RUN_ID: ${{ inputs.build_run_id }}
+      HIGHLIGHTS: ${{ inputs.highlights }}
+    steps:
+      - name: Check the build run
+        run: |
+          set -euo pipefail
+          if ! [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "build_run_id must be the numeric run ID" >&2
+            exit 1
+          fi
+          run_json="$(gh api "repos/$REPO/actions/runs/$BUILD_RUN_ID")"
+          test "$(jq -r .path <<<"$run_json")" = ".github/workflows/build-ipa.yml"
+          test "$(jq -r .conclusion <<<"$run_json")" = "success"
+          test "$(jq -r .head_branch <<<"$run_json")" = "main"
+          {
+            echo "BUILD_SHA=$(jq -r .head_sha <<<"$run_json")"
+            echo "BUILD_NUMBER=$(jq -r .run_number <<<"$run_json")"
+          } >> "$GITHUB_ENV"
+
+      - name: Download and verify the IPA
+        run: |
+          set -euo pipefail
+          artifact_ids="$(gh api "repos/$REPO/actions/runs/$BUILD_RUN_ID/artifacts" \
+            --jq '[.artifacts[] | select((.name | startswith("HealthRelay-unsigned-ipa-")) and (.expired | not))] | map(.id) | .[]')"
+          test "$(wc -l <<<"$artifact_ids")" -eq 1
+          mkdir -p ipa
+          gh api "repos/$REPO/actions/artifacts/$artifact_ids/zip" > ipa/artifact.zip
+          (cd ipa && unzip -q artifact.zip && rm artifact.zip)
+          (cd ipa && sha256sum -c HealthRelay-unsigned.ipa.sha256)
+          read -r build_file_sha build_file_number < ipa/HealthRelay-unsigned.ipa.build.txt
+          test "$build_file_sha" = "$BUILD_SHA"
+          test "$build_file_number" = "$BUILD_NUMBER"
+
+      - name: Read the app version and refuse a real bundle id
+        run: |
+          set -euo pipefail
+          python3 - >> "$GITHUB_ENV" <<'PY'
+          import plistlib
+          import zipfile
+
+          with zipfile.ZipFile("ipa/HealthRelay-unsigned.ipa") as ipa:
+              name = next(n for n in ipa.namelist() if n.endswith(".app/Info.plist") and n.count("/") == 2)
+              info = plistlib.loads(ipa.read(name))
+          bundle_id = info["CFBundleIdentifier"]
+          if not bundle_id.startswith("com.example."):
+              raise SystemExit(f"refusing to publish an IPA with a non-placeholder bundle id: {bundle_id}")
+          print(f"APP_VERSION={info['CFBundleShortVersionString']}")
+          print(f"APP_BUILD={info['CFBundleVersion']}")
+          PY
+
+      - name: Create the release
+        run: |
+          set -euo pipefail
+          tag="app-v${APP_VERSION}"
+          if gh release view "$tag" --repo "$REPO" >/dev/null 2>&1 || gh api "repos/$REPO/git/ref/tags/$tag" >/dev/null 2>&1; then
+            echo "Tag or release $tag already exists; releases are never overwritten" >&2
+            exit 1
+          fi
+          {
+            echo "## HealthRelay iOS companion ${APP_VERSION} (build ${APP_BUILD})"
+            echo
+            if [ -n "$HIGHLIGHTS" ]; then
+              echo "### What's new"
+              echo
+              printf '%s\n' "$HIGHLIGHTS"
+              echo
+            fi
+            echo "Unsigned IPA, built from commit \`${BUILD_SHA:0:7}\` by the \`Build unsigned IPA\` GitHub Actions workflow."
+            echo
+            echo "**This IPA is unsigned.** You must sign it with your own Apple developer certificate before it will install — the same way you'd sideload any other unsigned iOS app (a sideload signer such as AltStore or Sideloadly, or Xcode with your own team). There is no App Store listing and no pre-signed build is distributed."
+            echo
+            echo "\`HealthRelay-unsigned.ipa.sha256\` is the checksum of the attached IPA; verify with \`sha256sum -c HealthRelay-unsigned.ipa.sha256\`."
+            echo
+            echo "See [README](../../blob/main/README.md#1-build-and-install-the-iphone-app) and [docs/setup.md](../../blob/main/docs/setup.md) for pairing."
+          } > notes.md
+          gh release create "$tag" \
+            ipa/HealthRelay-unsigned.ipa \
+            ipa/HealthRelay-unsigned.ipa.sha256 \
+            --repo "$REPO" \
+            --target "$BUILD_SHA" \
+            --title "HealthRelay ${APP_VERSION} (unsigned IPA)" \
+            --notes-file notes.md \
+            --verify-tag=false
+          echo "Published $tag" >> "$GITHUB_STEP_SUMMARY"
