@@ -4482,14 +4482,14 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     func syncRecentElectrocardiograms() async {
         guard let url = URL(string: receiverURLString) else {
             statusIsError = true
-            statusMessage = "Bridge URL is invalid."
+            statusMessage = "[ECG] Bridge URL is invalid."
             return
         }
 
         #if canImport(HealthKit)
         do {
             statusIsError = false
-            statusMessage = "Reading ECG recordings from HealthKit..."
+            statusMessage = "[ECG] Reading ECG recordings from HealthKit..."
             try await HealthStoreAuthorizer().requestReadAuthorization(healthTypes: [.electrocardiogram])
             let now = Date()
             let calendar = utcCalendar()
@@ -4525,14 +4525,14 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
 
             guard ForegroundSyncUploadPolicy.shouldUpload(batch) else {
                 statusIsError = false
-                statusMessage = "HealthKit returned no ECG sync payload for the selected sync window. Nothing sent."
+                statusMessage = "[ECG] HealthKit returned no ECG sync payload for the selected sync window. Nothing sent."
                 return
             }
 
             let uploadDescription = batch.electrocardiograms.isEmpty
                 ? "ECG cursor-only sync"
                 : "\(batch.electrocardiograms.count) ECG recordings"
-            statusMessage = "Uploading \(uploadDescription) to \(url.host() ?? url.absoluteString)..."
+            statusMessage = "[ECG] Uploading \(uploadDescription) to \(url.host() ?? url.absoluteString)..."
             let data = try encoder.encode(batch)
             let cursor = batch.sync.cursors.first(where: {
                 $0.sourceKey == "apple_health.phone"
@@ -4569,11 +4569,11 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             )
         } catch {
             statusIsError = true
-            statusMessage = "ECG sync failed: \(describe(error))"
+            statusMessage = "[ECG] ECG sync failed: \(describe(error))"
         }
         #else
         statusIsError = true
-        statusMessage = "HealthKit is not available on this platform."
+        statusMessage = "[ECG] HealthKit is not available on this platform."
         #endif
     }
 
@@ -4581,23 +4581,23 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     func syncRecentMedicationDoseEvents() async {
         guard let url = URL(string: receiverURLString) else {
             statusIsError = true
-            statusMessage = "Bridge URL is invalid."
+            statusMessage = "[Medication] Bridge URL is invalid."
             return
         }
 
         #if canImport(HealthKit)
         guard #available(iOS 26.0, *) else {
             statusIsError = false
-            statusMessage = "Medication dose events need iOS 26 or later. Skipped."
+            statusMessage = "[Medication] Medication dose events need iOS 26 or later. Skipped."
             return
         }
         do {
             statusIsError = false
-            statusMessage = "Reading medication dose events from HealthKit..."
+            statusMessage = "[Medication] Reading medication dose events from HealthKit..."
             let reader = HealthKitMedicationDoseEventReader()
             guard try await reader.requestPerObjectReadAuthorization() else {
                 statusIsError = false
-                statusMessage = "Medication access was not granted. Skipped."
+                statusMessage = "[Medication] Medication access was not granted. Skipped."
                 return
             }
             let now = Date()
@@ -4631,14 +4631,14 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
 
             guard ForegroundSyncUploadPolicy.shouldUpload(batch) else {
                 statusIsError = false
-                statusMessage = "HealthKit returned no medication sync payload for the selected sync window. Nothing sent."
+                statusMessage = "[Medication] HealthKit returned no medication sync payload for the selected sync window. Nothing sent."
                 return
             }
 
             let uploadDescription = batch.medicationDoseEvents.isEmpty
                 ? "medication cursor-only sync"
                 : "\(batch.medicationDoseEvents.count) medication dose events"
-            statusMessage = "Uploading \(uploadDescription) to \(url.host() ?? url.absoluteString)..."
+            statusMessage = "[Medication] Uploading \(uploadDescription) to \(url.host() ?? url.absoluteString)..."
             let data = try encoder.encode(batch)
             let cursor = batch.sync.cursors.first(where: {
                 $0.sourceKey == "apple_health.phone"
@@ -4675,11 +4675,11 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             )
         } catch {
             statusIsError = true
-            statusMessage = "Medication sync failed: \(describe(error))"
+            statusMessage = "[Medication] Medication sync failed: \(describe(error))"
         }
         #else
         statusIsError = true
-        statusMessage = "HealthKit is not available on this platform."
+        statusMessage = "[Medication] HealthKit is not available on this platform."
         #endif
     }
 
@@ -6287,7 +6287,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     private func appendActivityLog(_ rawMessage: String, isError: Bool) {
         let trimmed = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let sanitized = CompanionPrimaryStatusMessage.sanitized(from: trimmed, isError: isError)
+        // HealthRelay lanes log their own outcome verbatim (counts, cursor state, error code; never a value).
+        let sanitized = trimmed.hasPrefix("[ECG]") || trimmed.hasPrefix("[Medication]")
+            ? trimmed
+            : CompanionPrimaryStatusMessage.sanitized(from: trimmed, isError: isError)
         guard activityLogMessages.last?.hasSuffix(sanitized) != true else { return }
         let entry = "\(Self.activityLogTimeFormatter.string(from: Date())) — \(sanitized)"
         activityLogMessages.append(entry)

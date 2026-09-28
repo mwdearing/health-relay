@@ -24,6 +24,9 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: diagnostics: the ECG and medication lanes prefix their status with `[ECG]` / `[Medication]`
+  and the Activity Log keeps those lines verbatim (counts and error codes only), so a lane outcome is
+  visible on the phone instead of being collapsed into generic labels.
 - 2026-09-28: README/setup no longer point at the upstream App Store app; install = your own build
   (`Build unsigned IPA` workflow or Xcode). Upstream website/privacy/support links kept as attribution
   (a guardrail requires them). Component table: iOS Companion (HealthRelay) 1.2.0.
