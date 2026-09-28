@@ -24,6 +24,11 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: `Publish IPA release` workflow (manual). Takes the run ID of a successful `Build unsigned
+  IPA` run on main, downloads its artifact, verifies the checksum and build stamp, reads the version
+  from the IPA, refuses any bundle id that isn't `com.example.*`, and creates release `app-v<version>`
+  with the IPA and SHA-256. It never overwrites an existing tag or release. Write access is limited to
+  this one job; the build workflows stay read-only. Uses the `gh` CLI only, no third-party actions.
 - 2026-09-28: iOS UI for iOS 26/27 design (companion). Pastel palette drawn from the app icon, as
   named color sets (`RelayMint`/`RelayOnMint` for the primary action; `Ready`/`Waiting`/`Failed`
   tint+ink pairs for status; `AccentColor`, set as the global accent), replacing the blue, indigo,
