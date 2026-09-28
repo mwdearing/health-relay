@@ -731,4 +731,17 @@ private final class FailingObserverDirtinessStore: BackgroundObserverDirtinessSt
 
 private enum SyntheticBackgroundLaneFailure: Error {
     case injected
+
+    func testAutomaticLaneTypeCodesExcludeForegroundOnlyDedicatedTypes() {
+        let lanes = HealthBridgeBackgroundSync.supportedAutomaticLaneTypeCodes
+        let unified = HealthBridgeBackgroundSync.supportedUnifiedReadTypeCodes
+
+        XCTAssertTrue(unified.contains("electrocardiogram"))
+        XCTAssertFalse(lanes.contains("electrocardiogram"))
+        XCTAssertFalse(lanes.contains("medication_dose_event"))
+        for code in ["steps", "workout", "sleep_analysis", "heart_rate", "dietary_zinc"] {
+            XCTAssertTrue(lanes.contains(code), code)
+        }
+        XCTAssertEqual(Set(lanes).subtracting(unified), [])
+    }
 }
