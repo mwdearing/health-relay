@@ -34,6 +34,21 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build | tail -5
 
+      - name: Accent color diagnosis
+        run: |
+          APP="ios/HealthBridgeCompanion/build/Debug-iphonesimulator/HealthBridgeCompanion.app"
+          echo "--- build settings"
+          (cd ios/HealthBridgeCompanion && xcodebuild -project HealthBridgeCompanion.xcodeproj -target HealthBridgeCompanion -sdk iphonesimulator -configuration Debug -showBuildSettings | grep -iE "ACCENT|APPICON|GENERATE_INFOPLIST|INFOPLIST_FILE" )
+          echo "--- built Info.plist accent keys"
+          /usr/libexec/PlistBuddy -c "Print" "$APP/Info.plist" | grep -iE "accent|CFBundleIcons" || echo "(none)"
+          echo "--- AccentColor records in Assets.car"
+          xcrun assetutil --info "$APP/Assets.car" | python3 -c '
+          import json, sys
+          for it in json.load(sys.stdin):
+              if "accent" in str(it.get("Name","")).lower():
+                  print({k: it.get(k) for k in ("AssetType","Name","Appearance","Idiom","Color components","Color space")})
+          '
+
       - name: Inspect the built icon assets
         run: |
           APP="ios/HealthBridgeCompanion/build/Debug-iphonesimulator/HealthBridgeCompanion.app"
@@ -77,6 +92,7 @@ jobs:
           xcrun simctl bootstatus "$UDID" -b
           xcrun simctl ui "$UDID" appearance light
           xcrun simctl install "$UDID" "$APP"
+          xcrun simctl ui "$UDID" content_size extra-small
           xcrun simctl launch "$UDID" "$BUNDLE"
           sleep 12
           OUT="$RUNNER_TEMP/shots"; mkdir -p "$OUT"
