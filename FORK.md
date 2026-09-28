@@ -26,6 +26,11 @@ receiver-specific parts stay here.
 ## Modifications (newest first)
 - 2026-09-28: iOS: disabled `PrimaryButton`s no longer get a second 0.65 fade on top of the system's
   disabled dimming (the Connect button was nearly invisible in dark mode before a link is pasted).
+- 2026-09-28: `Publish IPA release` workflow (manual). Takes the run ID of a successful `Build unsigned
+  IPA` run on main, downloads its artifact, verifies the checksum and build stamp, reads the version
+  from the IPA, refuses any bundle id that isn't `com.example.*`, and creates release `app-v<version>`
+  with the IPA and SHA-256. It never overwrites an existing tag or release. Write access is limited to
+  this one job; the build workflows stay read-only. Uses the `gh` CLI only, no third-party actions.
 - 2026-09-28: lab-results export.zip importer (B3, labs only -- ECG already syncs live via
   HealthKit, so a manual export never needs it). Contract: optional `lab_results` array
   (`LabResult` model, migration 012, `_upsert_lab_results`, `lab_result` deleted-record family

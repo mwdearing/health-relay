@@ -3,6 +3,8 @@ from pathlib import Path
 
 PYTHON_WORKFLOW = Path(".github/workflows/python.yml")
 IOS_WORKFLOW = Path(".github/workflows/ios.yml")
+BUILD_WORKFLOW = Path(".github/workflows/build-ipa.yml")
+PUBLISH_WORKFLOW = Path(".github/workflows/publish-ipa-release.yml")
 DEPENDABOT_CONFIG = Path(".github/dependabot.yml")
 PINNED_ACTION = re.compile(r"^\s*uses:\s*[^#\s]+@(?P<sha>[0-9a-f]{40})(?:\s+#.*)?$")
 
@@ -63,3 +65,26 @@ def test_dependabot_keeps_security_updates_without_version_prs() -> None:
     assert text.count("open-pull-requests-limit: 0") == 2
     assert "cooldown:" not in text
     assert "groups:" not in text
+
+
+def test_publish_ipa_release_workflow_is_narrow_and_never_overwrites() -> None:
+    text = PUBLISH_WORKFLOW.read_text()
+    build = BUILD_WORKFLOW.read_text()
+    # Manual only, read-only by default; write access lives in exactly one job.
+    assert "workflow_dispatch:" in text
+    assert "push:" not in text
+    assert "pull_request" not in text
+    assert "permissions:\n  contents: read" in text
+    assert text.count("contents: write") == 1
+    assert "contents: write" not in build
+    # Inputs reach shell steps through env, never by interpolation into scripts.
+    run_blocks = text.split("run: |")[1:]
+    assert run_blocks
+    assert all("${{" not in block for block in run_blocks)
+    # Only a successful main build, a placeholder bundle id, and no overwrite.
+    assert '".github/workflows/build-ipa.yml"' in text
+    assert '.head_branch <<<"$run_json")" = "main"' in text
+    assert 'startswith("com.example.")' in text
+    assert "releases are never overwritten" in text
+    # No third-party actions; the gh CLI on the runner does the work.
+    assert "uses:" not in text
