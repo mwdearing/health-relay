@@ -79,7 +79,7 @@ jobs:
           for runtime, devices in sorted(data.items(), reverse=True):
               if "iOS-26" in runtime or "iOS-27" in runtime:
                   for d in devices:
-                      if d["name"].startswith("iPhone") and "Pro" not in d["name"] and "Air" not in d["name"]:
+                      if d["name"].startswith("iPhone") and "Pro Max" in d["name"]:
                           print(d["udid"]); raise SystemExit
           for runtime, devices in sorted(data.items(), reverse=True):
               for d in devices:
