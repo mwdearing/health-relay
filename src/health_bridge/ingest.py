@@ -129,6 +129,9 @@ def _successful_result(batch: HealthBridgeBatchV1) -> IngestResult:
                 for med in batch.medication_dose_events
             },
         ),
+        lab_result_count=len(
+            {(lab.source_key, lab.client_record_id) for lab in batch.lab_results},
+        ),
     )
 
 

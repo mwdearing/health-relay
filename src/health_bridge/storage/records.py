@@ -85,6 +85,19 @@ UPSERT_MEDICATION_DOSE_EVENT_SQL = (
     "dose = excluded.dose, unit = excluded.unit, "
     "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
 )
+UPSERT_LAB_RESULT_SQL = (
+    "insert into lab_results (source_id, client_record_id, loinc, name, "
+    "category, effective_date, value_num, unit, value_text, ref_low, "
+    "ref_high, ref_text) "
+    "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+    "on conflict(source_id, client_record_id) do update set "
+    "loinc = excluded.loinc, name = excluded.name, category = excluded.category, "
+    "effective_date = excluded.effective_date, value_num = excluded.value_num, "
+    "unit = excluded.unit, value_text = excluded.value_text, "
+    "ref_low = excluded.ref_low, ref_high = excluded.ref_high, "
+    "ref_text = excluded.ref_text, "
+    "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
+)
 
 
 def upsert_batch_records(
@@ -97,6 +110,7 @@ def upsert_batch_records(
     _upsert_workouts(connection, batch)
     _upsert_electrocardiograms(connection, batch)
     _upsert_medication_dose_events(connection, batch)
+    _upsert_lab_results(connection, batch)
     upsert_sleep_sessions(connection, batch, sleep_reset_plan)
     upsert_sync_state(
         connection,
@@ -337,5 +351,37 @@ def _upsert_medication_dose_events(
                 med.scheduled_time,
                 med.dose,
                 med.unit,
+            ),
+        )
+
+
+def _upsert_lab_results(
+    connection: sqlite3.Connection,
+    batch: HealthBridgeBatchV1,
+) -> None:
+    for lab in batch.lab_results:
+        current_source_id = source_id(connection, lab.source_key)
+        if record_is_tombstoned(
+            connection,
+            source_id_value=current_source_id,
+            record_family="lab_result",
+            client_record_id=lab.client_record_id,
+        ):
+            continue
+        _ = connection.execute(
+            UPSERT_LAB_RESULT_SQL,
+            (
+                current_source_id,
+                lab.client_record_id,
+                lab.loinc,
+                lab.name,
+                lab.category,
+                lab.effective_date,
+                lab.value_num,
+                lab.unit,
+                lab.value_text,
+                lab.ref_low,
+                lab.ref_high,
+                lab.ref_text,
             ),
         )

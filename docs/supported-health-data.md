@@ -117,6 +117,8 @@ This list is the complete requested scope and the public disclosure source for A
 
 HealthRelay also reads medication dose events (iOS 26 and later). HealthKit authorizes medications per object through its own medication picker, not through the permission sheet above, so they are not in the list; the app asks for that access only when the medication lane runs, and the names and doses go only to your receiver.
 
+HealthRelay also has a manual Import Health Export screen for lab results. This is not a HealthKit type at all -- Apple Health does not expose clinical records (FHIR Observations, including lab results) through HealthKit read authorization the way it does quantities and categories. The importer parses an `export.zip` file you choose yourself (from Apple Health's own Settings -> \[your name\] -> Export All Health Data), extracts only the `clinical-records/*.json` entries on-device, and sends the parsed results to your receiver only after you review the count and confirm. Nothing else in the export is read or sent.
+
 Runtime availability varies by iPhone model, paired devices, region, and iOS version. A type appearing here does not mean the user has granted it or that a record exists. Revoking access in Apple Health prevents future reads of that type; it does not delete records already sent to the user's receiver.
 
 Sleep correction, deletion, reset-epoch, and crash-recovery behavior is documented in [Architecture and trust boundaries](architecture.md#sleep-corrections).

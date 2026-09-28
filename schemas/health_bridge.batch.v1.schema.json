@@ -51,6 +51,10 @@
       "type": "array",
       "items": { "$ref": "#/$defs/medicationDoseEvent" }
     },
+    "lab_results": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/labResult" }
+    },
     "sleep_sessions": {
       "type": "array",
       "items": { "$ref": "#/$defs/sleepSession" }
@@ -227,6 +231,25 @@
         "unit": { "type": "string", "minLength": 1 }
       }
     },
+    "labResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["client_record_id", "source_key", "name", "effective_date"],
+      "properties": {
+        "client_record_id": { "type": "string", "pattern": "^(synthetic|hk)-[a-z0-9-]+$" },
+        "source_key": { "type": "string", "pattern": "^(synthetic|apple_health)\\.[a-z0-9_.-]+$" },
+        "loinc": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "category": { "type": "string", "minLength": 1 },
+        "effective_date": { "type": "string", "minLength": 1 },
+        "value_num": { "type": "number" },
+        "unit": { "type": "string", "minLength": 1 },
+        "value_text": { "type": "string", "minLength": 1 },
+        "ref_low": { "type": "number" },
+        "ref_high": { "type": "number" },
+        "ref_text": { "type": "string", "minLength": 1 }
+      }
+    },
     "sleepStageInterval": {
       "type": "object",
       "additionalProperties": false,
@@ -263,7 +286,8 @@
             "workout",
             "sleep_session",
             "electrocardiogram",
-            "medication_dose_event"
+            "medication_dose_event",
+            "lab_result"
           ]
         },
         "source_key": { "type": "string", "pattern": "^(synthetic|apple_health)\\.[a-z0-9_.-]+$" },

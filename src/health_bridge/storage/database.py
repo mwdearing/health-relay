@@ -51,6 +51,7 @@ MIGRATION_IDS: Final = (
     "009_pairing_transport",
     "010_electrocardiograms",
     "011_medication_dose_events",
+    "012_lab_results",
 )
 
 

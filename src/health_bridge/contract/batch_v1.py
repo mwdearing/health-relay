@@ -91,6 +91,10 @@ OmittableNonNegativeFloat: TypeAlias = Annotated[
     NonNegativeFloat | None,
     BeforeValidator(reject_explicit_null_number),
 ]
+OmittableFiniteFloat: TypeAlias = Annotated[
+    FiniteFloat | None,
+    BeforeValidator(reject_explicit_null_number),
+]
 
 
 class StrictModel(BaseModel):
@@ -272,6 +276,33 @@ class MedicationDoseEvent(StrictModel):
         return self
 
 
+class LabResult(StrictModel):
+    """One FHIR clinical-record Observation from an Apple Health export.zip.
+
+    HealthRelay fork, optional top-level array; the on-device export importer's only
+    record family -- ECG and medications sync live via HealthKit and never need a
+    manual export.
+
+    Fields mirror the source Observation loosely (LOINC code, display name, category,
+    effective date as the source gave it, numeric or free-text value, reference range).
+    The receiver stores them as-is; the host decides in/out-of-range flags and what may
+    leave it (Telegram gets counts only).
+    """
+
+    client_record_id: SyntheticRecordId
+    source_key: SyntheticSourceKey
+    loinc: OmittableString = None
+    name: NonEmptyString
+    category: OmittableString = None
+    effective_date: NonEmptyString
+    value_num: OmittableFiniteFloat = None
+    unit: OmittableString = None
+    value_text: OmittableString = None
+    ref_low: OmittableFiniteFloat = None
+    ref_high: OmittableFiniteFloat = None
+    ref_text: OmittableString = None
+
+
 class SleepStageInterval(StrictModel):
     stage: Literal["in_bed", "awake", "core", "deep", "rem"]
     start_time: UtcTimestamp
@@ -312,6 +343,7 @@ class DeletedRecord(StrictModel):
         "sleep_session",
         "electrocardiogram",
         "medication_dose_event",
+        "lab_result",
     ]
     source_key: SyntheticSourceKey
     client_record_id: SyntheticRecordId
@@ -340,6 +372,7 @@ class HealthBridgeBatchV1(StrictModel):
     workouts: tuple[Workout, ...]
     electrocardiograms: tuple[Electrocardiogram, ...] = ()
     medication_dose_events: tuple[MedicationDoseEvent, ...] = ()
+    lab_results: tuple[LabResult, ...] = ()
     sleep_sessions: tuple[SleepSession, ...]
     deleted_records: tuple[DeletedRecord, ...]
     sync: SyncContext

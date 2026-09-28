@@ -18,6 +18,9 @@ DELETE_ELECTROCARDIOGRAM_SQL: Final = (
 DELETE_MEDICATION_DOSE_EVENT_SQL: Final = (
     "delete from medication_dose_events where source_id = ? and client_record_id = ?"
 )
+DELETE_LAB_RESULT_SQL: Final = (
+    "delete from lab_results where source_id = ? and client_record_id = ?"
+)
 DELETE_WORKOUT_SQL: Final = (
     "delete from workouts where source_id = ? and client_record_id = ?"
 )
@@ -65,6 +68,8 @@ def delete_active_record(
         delete_sql = DELETE_ELECTROCARDIOGRAM_SQL
     elif record_family == "medication_dose_event":
         delete_sql = DELETE_MEDICATION_DOSE_EVENT_SQL
+    elif record_family == "lab_result":
+        delete_sql = DELETE_LAB_RESULT_SQL
     else:
         msg = f"Unsupported deleted record family: {record_family}"
         raise ValueError(msg)

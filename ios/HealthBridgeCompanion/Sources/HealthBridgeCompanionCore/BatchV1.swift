@@ -14,6 +14,9 @@ public struct HealthBridgeBatchV1: Codable, Equatable, Sendable {
     public let electrocardiograms: [HealthBridgeElectrocardiogram]
     /// HealthRelay addition: optional, encoded only when non-empty.
     public let medicationDoseEvents: [HealthBridgeMedicationDoseEvent]
+    /// HealthRelay addition: optional, encoded only when non-empty. From the export
+    /// importer only (no cursor, no HealthKit authorization -- see HealthBridgeLabResult).
+    public let labResults: [HealthBridgeLabResult]
     public let sleepSessions: [HealthBridgeSleepSession]
     public let deletedRecords: [HealthBridgeDeletedRecord]
     public let sync: HealthBridgeSyncContext
@@ -29,6 +32,7 @@ public struct HealthBridgeBatchV1: Codable, Equatable, Sendable {
         workouts: [HealthBridgeWorkout],
         electrocardiograms: [HealthBridgeElectrocardiogram] = [],
         medicationDoseEvents: [HealthBridgeMedicationDoseEvent] = [],
+        labResults: [HealthBridgeLabResult] = [],
         sleepSessions: [HealthBridgeSleepSession],
         deletedRecords: [HealthBridgeDeletedRecord],
         sync: HealthBridgeSyncContext
@@ -43,6 +47,7 @@ public struct HealthBridgeBatchV1: Codable, Equatable, Sendable {
         self.workouts = workouts
         self.electrocardiograms = electrocardiograms
         self.medicationDoseEvents = medicationDoseEvents
+        self.labResults = labResults
         self.sleepSessions = sleepSessions
         self.deletedRecords = deletedRecords
         self.sync = sync
@@ -59,6 +64,7 @@ public struct HealthBridgeBatchV1: Codable, Equatable, Sendable {
         case workouts
         case electrocardiograms
         case medicationDoseEvents = "medication_dose_events"
+        case labResults = "lab_results"
         case sleepSessions = "sleep_sessions"
         case deletedRecords = "deleted_records"
         case sync
@@ -82,6 +88,10 @@ public struct HealthBridgeBatchV1: Codable, Equatable, Sendable {
             [HealthBridgeMedicationDoseEvent].self,
             forKey: .medicationDoseEvents
         ) ?? []
+        labResults = try container.decodeIfPresent(
+            [HealthBridgeLabResult].self,
+            forKey: .labResults
+        ) ?? []
         sleepSessions = try container.decode([HealthBridgeSleepSession].self, forKey: .sleepSessions)
         deletedRecords = try container.decode([HealthBridgeDeletedRecord].self, forKey: .deletedRecords)
         sync = try container.decode(HealthBridgeSyncContext.self, forKey: .sync)
@@ -102,6 +112,9 @@ public struct HealthBridgeBatchV1: Codable, Equatable, Sendable {
         }
         if !medicationDoseEvents.isEmpty {
             try container.encode(medicationDoseEvents, forKey: .medicationDoseEvents)
+        }
+        if !labResults.isEmpty {
+            try container.encode(labResults, forKey: .labResults)
         }
         try container.encode(sleepSessions, forKey: .sleepSessions)
         try container.encode(deletedRecords, forKey: .deletedRecords)
@@ -303,6 +316,68 @@ public struct HealthBridgeElectrocardiogram: Codable, Equatable, Sendable {
         case samplingFrequencyHz = "sampling_frequency_hz"
         case voltageCount = "voltage_count"
         case voltagesMicrovolts = "voltages_microvolts"
+    }
+}
+
+/// HealthRelay addition: one FHIR clinical-record Observation from an Apple Health
+/// export.zip, parsed on-device by the export importer. ECG and medications already
+/// sync live via HealthKit and never need this path; lab results have no HealthKit
+/// counterpart at all, so this is the export importer's only record family.
+public struct HealthBridgeLabResult: Codable, Equatable, Sendable {
+    public let clientRecordID: String
+    public let sourceKey: String
+    public let loinc: String?
+    public let name: String
+    public let category: String?
+    public let effectiveDate: String
+    public let valueNum: Double?
+    public let unit: String?
+    public let valueText: String?
+    public let refLow: Double?
+    public let refHigh: Double?
+    public let refText: String?
+
+    public init(
+        clientRecordID: String,
+        sourceKey: String,
+        loinc: String? = nil,
+        name: String,
+        category: String? = nil,
+        effectiveDate: String,
+        valueNum: Double? = nil,
+        unit: String? = nil,
+        valueText: String? = nil,
+        refLow: Double? = nil,
+        refHigh: Double? = nil,
+        refText: String? = nil
+    ) {
+        self.clientRecordID = clientRecordID
+        self.sourceKey = sourceKey
+        self.loinc = loinc
+        self.name = name
+        self.category = category
+        self.effectiveDate = effectiveDate
+        self.valueNum = valueNum
+        self.unit = unit
+        self.valueText = valueText
+        self.refLow = refLow
+        self.refHigh = refHigh
+        self.refText = refText
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case clientRecordID = "client_record_id"
+        case sourceKey = "source_key"
+        case loinc
+        case name
+        case category
+        case effectiveDate = "effective_date"
+        case valueNum = "value_num"
+        case unit
+        case valueText = "value_text"
+        case refLow = "ref_low"
+        case refHigh = "ref_high"
+        case refText = "ref_text"
     }
 }
 
