@@ -24,6 +24,8 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: iOS: disabled `PrimaryButton`s no longer get a second 0.65 fade on top of the system's
+  disabled dimming (the Connect button was nearly invisible in dark mode before a link is pasted).
 - 2026-09-28: iOS UI for iOS 26/27 design (companion). Pastel palette drawn from the app icon, as
   named color sets (`RelayMint`/`RelayOnMint` for the primary action; `Ready`/`Waiting`/`Failed`
   tint+ink pairs for status; `AccentColor`, set as the global accent), replacing the blue, indigo,
