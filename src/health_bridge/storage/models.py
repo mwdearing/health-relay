@@ -14,6 +14,7 @@ class IngestResult:
     error_summary: str | None = None
     electrocardiogram_count: int = 0
     medication_dose_event_count: int = 0
+    lab_result_count: int = 0
 
 
 def failed_ingest_result(error_summary: str) -> IngestResult:
