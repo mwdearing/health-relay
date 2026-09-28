@@ -24,6 +24,9 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: README/setup no longer point at the upstream App Store app; install = your own build
+  (`Build unsigned IPA` workflow or Xcode). Upstream website/privacy/support links kept as attribution
+  (a guardrail requires them). Component table: iOS Companion (HealthRelay) 1.2.0.
 - 2026-09-28: iOS display strings and contrast. User-facing "Health Bridge" text becomes
   "HealthRelay" when it names the app (header, Health permission usage descriptions, the
   Health app Privacy path) and "your server" when it names the receiver; status classifiers
