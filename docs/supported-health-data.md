@@ -35,6 +35,44 @@ This list is the complete requested scope and the public disclosure source for A
 - `heart_rate_variability_sdnn` — Heart Rate Variability SDNN
 - `height` — Height
 - `hydration` — Hydration
+- `dietary_biotin` — Dietary Biotin
+- `dietary_caffeine` — Dietary Caffeine
+- `dietary_calcium` — Dietary Calcium
+- `dietary_carbohydrates` — Dietary Carbohydrates
+- `dietary_chloride` — Dietary Chloride
+- `dietary_cholesterol` — Dietary Cholesterol
+- `dietary_chromium` — Dietary Chromium
+- `dietary_copper` — Dietary Copper
+- `dietary_energy_consumed` — Dietary Energy Consumed
+- `dietary_fat_monounsaturated` — Dietary Fat Monounsaturated
+- `dietary_fat_polyunsaturated` — Dietary Fat Polyunsaturated
+- `dietary_fat_saturated` — Dietary Fat Saturated
+- `dietary_fat_total` — Dietary Fat Total
+- `dietary_fiber` — Dietary Fiber
+- `dietary_folate` — Dietary Folate
+- `dietary_iodine` — Dietary Iodine
+- `dietary_iron` — Dietary Iron
+- `dietary_magnesium` — Dietary Magnesium
+- `dietary_manganese` — Dietary Manganese
+- `dietary_molybdenum` — Dietary Molybdenum
+- `dietary_niacin` — Dietary Niacin
+- `dietary_pantothenic_acid` — Dietary Pantothenic Acid
+- `dietary_phosphorus` — Dietary Phosphorus
+- `dietary_potassium` — Dietary Potassium
+- `dietary_protein` — Dietary Protein
+- `dietary_riboflavin` — Dietary Riboflavin
+- `dietary_selenium` — Dietary Selenium
+- `dietary_sodium` — Dietary Sodium
+- `dietary_sugar` — Dietary Sugar
+- `dietary_thiamin` — Dietary Thiamin
+- `dietary_vitamin_a` — Dietary Vitamin A
+- `dietary_vitamin_b12` — Dietary Vitamin B12
+- `dietary_vitamin_b6` — Dietary Vitamin B6
+- `dietary_vitamin_c` — Dietary Vitamin C
+- `dietary_vitamin_d` — Dietary Vitamin D
+- `dietary_vitamin_e` — Dietary Vitamin E
+- `dietary_vitamin_k` — Dietary Vitamin K
+- `dietary_zinc` — Dietary Zinc
 - `inhaler_usage` — Inhaler Usage
 - `insulin_delivery` — Insulin Delivery
 - `lean_body_mass` — Lean Body Mass

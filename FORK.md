@@ -24,6 +24,10 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: 38 HealthKit dietary quantity types (all but water, which is `hydration`) added to
+  the receiver timeseries catalog, the Swift catalog expansion entries, the disclosure doc and the
+  pinned tests; units g/mg/mcg/kcal as in health-insights `dietary_types.py`. Python half by the
+  Hermes bot (R-1), Swift half and pins by Claude.
 - 2026-09-28: ECG, iOS core (B2 step 2). `HealthBridgeElectrocardiogram` batch model; the batch
   encodes `electrocardiograms` only when non-empty (upstream byte vectors unchanged) and decodes
   it as optional. Registry static `.electrocardiogram` (category heart, unit "recording",
