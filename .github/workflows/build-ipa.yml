@@ -1,0 +1,87 @@
+name: Build unsigned IPA
+
+# HealthRelay fork: manual only. Produces an UNSIGNED .ipa for sideload signing on the owner's
+# phone (RyukSign). No certificate, profile or secret is involved; the bundle id is a dispatch
+# input so the tracked project keeps its public-neutral placeholder.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_id:
+        description: Bundle identifier to stamp into the unsigned app
+        required: true
+        default: com.example.HealthRelay
+      configuration:
+        description: Build configuration
+        required: false
+        default: Release
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ipa:
+    name: Unsigned iPhone IPA
+    runs-on: macos-26
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ios/HealthBridgeCompanion
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build unsigned generic iPhone app
+        env:
+          BUNDLE_ID: ${{ inputs.bundle_id }}
+          CONFIGURATION: ${{ inputs.configuration }}
+        run: |
+          set -euo pipefail
+          BUILD_DIR="$RUNNER_TEMP/build"
+          xcodebuild -project HealthBridgeCompanion.xcodeproj \
+            -target HealthBridgeCompanion \
+            -sdk iphoneos \
+            -configuration "$CONFIGURATION" \
+            -derivedDataPath "$BUILD_DIR" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            "PRODUCT_BUNDLE_IDENTIFIER=$BUNDLE_ID" \
+            "HEALTH_BRIDGE_SOURCE_COMMIT=$GITHUB_SHA" \
+            "HEALTH_BRIDGE_ICLOUD_CONTAINER_IDENTIFIER=iCloud.$BUNDLE_ID" \
+            build
+
+      - name: Package Payload into an unsigned IPA
+        run: |
+          set -euo pipefail
+          BUILD_DIR="$RUNNER_TEMP/build"
+          IPA_OUT="$RUNNER_TEMP/export"
+          APP_PATH=$(find "$BUILD_DIR" -type d -name "HealthBridgeCompanion.app" -path "*iphoneos*" | head -1)
+          test -n "$APP_PATH" || { echo "No HealthBridgeCompanion.app for iphoneos found"; exit 1; }
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_PATH/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "$APP_PATH/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Info.plist"
+          mkdir -p "$IPA_OUT/Payload"
+          cp -R "$APP_PATH" "$IPA_OUT/Payload/"
+          cd "$IPA_OUT"
+          /usr/bin/zip -qry "HealthRelay-unsigned.ipa" Payload
+          shasum -a 256 HealthRelay-unsigned.ipa | tee HealthRelay-unsigned.ipa.sha256
+
+      - name: Upload unsigned IPA artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: HealthRelay-unsigned-ipa-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/export/HealthRelay-unsigned.ipa
+            ${{ runner.temp }}/export/HealthRelay-unsigned.ipa.sha256
+          retention-days: 14
+          if-no-files-found: error
