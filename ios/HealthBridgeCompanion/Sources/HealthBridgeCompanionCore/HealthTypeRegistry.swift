@@ -115,6 +115,19 @@ public struct HealthBridgeHealthType: Codable, Equatable, Hashable, Sendable {
         aliases: ["HKMedicationDoseEventType"]
     )
 
+    /// HealthRelay addition. Not a HealthKit type at all -- Apple Health does not expose
+    /// clinical records (FHIR Observations) through HealthKit read authorization, so this
+    /// is never part of `dedicatedSyncTypes` or any authorization request; the export
+    /// importer sends it after a manual file pick and user confirmation only.
+    public static let labResult = HealthBridgeHealthType(
+        typeCode: "lab_result",
+        displayName: "Lab Result",
+        category: .other,
+        defaultUnit: "observation",
+        sensitivity: .high,
+        aliases: []
+    )
+
     public static let canonicalTypes: [HealthBridgeHealthType] = [
         .steps,
         .heartRate,
@@ -123,6 +136,7 @@ public struct HealthBridgeHealthType: Codable, Equatable, Hashable, Sendable {
         .workouts,
         .electrocardiogram,
         .medicationDoseEvents,
+        .labResult,
     ]
 
     public static let dedicatedSyncTypes: [HealthBridgeHealthType] = [

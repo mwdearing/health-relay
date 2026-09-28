@@ -247,6 +247,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     @Published private(set) var hasPendingOutboxDeletion = false
     @Published private(set) var hasPendingPrivateStorageRecovery = false
     @Published private(set) var hasTransientPrivateStorageFailure = false
+    /// HealthRelay addition: the export importer's on-device parse, held for review
+    /// before the user confirms sending it. Nil once sent, cancelled, or never parsed.
+    @Published private(set) var pendingExportImportSummary: AppleHealthExportLabImporter.Summary?
     @Published var pairingImportText = ""
     @Published var manualPairingServer = ""
     @Published var manualPairingCode = ""
@@ -4693,6 +4696,79 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         statusIsError = true
         statusMessage = "[Medication] HealthKit is not available on this platform."
         #endif
+    }
+
+    // MARK: - Apple Health export.zip lab-results importer (HealthRelay addition)
+    //
+    // Manual, user-initiated, on-device only until confirmed: no HealthKit read, no
+    // cursor, no automatic/background trigger. ECG and medications already sync live
+    // via HealthKit and never need a manual export; lab results have no HealthKit
+    // counterpart at all, so this is the importer's only record family.
+
+    /// Parses `url` (a `.fileImporter`-picked export.zip) entirely on-device and holds
+    /// the result in `pendingExportImportSummary` for review. Nothing is sent yet.
+    func parseAppleHealthExport(from url: URL) {
+        statusIsError = false
+        statusMessage = "[Export] Reading export.zip..."
+        let didStartAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if didStartAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+        do {
+            let summary = try AppleHealthExportLabImporter.importLabResults(fromZipAt: url)
+            pendingExportImportSummary = summary
+            if summary.labResults.isEmpty {
+                statusMessage = summary.observationCount == 0
+                    ? "[Export] No clinical records found in that export."
+                    : "[Export] Found \(summary.observationCount) clinical record(s) but none had a usable value or date. Nothing to send."
+            } else {
+                statusMessage = "[Export] Found \(summary.labResults.count) lab result(s). Review and confirm to send."
+            }
+        } catch {
+            pendingExportImportSummary = nil
+            statusIsError = true
+            statusMessage = "[Export] Could not read that file: \(describe(error))"
+        }
+    }
+
+    /// Sends the previously parsed, user-reviewed lab results to the receiver.
+    func confirmPendingAppleHealthExportImport() async {
+        guard let summary = pendingExportImportSummary, !summary.labResults.isEmpty else {
+            cancelPendingAppleHealthExportImport()
+            return
+        }
+        guard let url = URL(string: receiverURLString) else {
+            statusIsError = true
+            statusMessage = "[Export] Bridge URL is invalid."
+            return
+        }
+        do {
+            let batch = LabResultImportBatchFactory.makeLabResultBatch(results: summary.labResults)
+            statusMessage = "[Export] Uploading \(summary.labResults.count) lab results to \(url.host() ?? url.absoluteString)..."
+            let data = try encoder.encode(batch)
+            let deliveryResult = try await uploadPayloadsWithOutbox([data], to: url)
+            let outboxNotice = lastOutboxNotice
+            statusIsError = false
+            pendingExportImportSummary = nil
+            statusMessage = deliveryStatusMessage(
+                deliveryResult,
+                uploadedDescription: "Sent \(summary.labResults.count) lab results",
+                queuedDescription: "Queued \(summary.labResults.count) lab results behind earlier pending upload(s)",
+                outboxNotice: outboxNotice
+            )
+        } catch {
+            statusIsError = true
+            statusMessage = "[Export] Send failed: \(describe(error))"
+        }
+    }
+
+    /// Discards a parsed export without sending it.
+    func cancelPendingAppleHealthExportImport() {
+        pendingExportImportSummary = nil
+        statusIsError = false
+        statusMessage = "[Export] Discarded."
     }
 
     @discardableResult

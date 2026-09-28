@@ -1,8 +1,10 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @StateObject private var viewModel: HealthBridgeCompanionViewModel
     @State private var showPendingPairingCancellationConfirmation = false
+    @State private var showExportFileImporter = false
 
     init(viewModel: HealthBridgeCompanionViewModel = HealthBridgeCompanionViewModel()) {
         _viewModel = StateObject(wrappedValue: viewModel)
@@ -25,6 +27,7 @@ struct ContentView: View {
                         healthAccessCard
                     } else {
                         syncControlCard
+                        exportImportCard
                     }
                 }
                 .padding(.horizontal, HealthBridgeSpacing.screen)
@@ -55,6 +58,36 @@ struct ContentView: View {
         // Apply the brand accent explicitly. Reading the asset by name is what the other
         // colors already do, and it does not depend on the global accent plumbing.
         .tint(.relayAccent)
+        .fileImporter(
+            isPresented: $showExportFileImporter,
+            allowedContentTypes: [.zip],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case let .success(urls):
+                if let url = urls.first {
+                    viewModel.parseAppleHealthExport(from: url)
+                }
+            case .failure:
+                break
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { viewModel.pendingExportImportSummary != nil },
+            set: { isPresented in
+                if !isPresented {
+                    viewModel.cancelPendingAppleHealthExportImport()
+                }
+            }
+        )) {
+            if let summary = viewModel.pendingExportImportSummary {
+                ExportImportReviewView(
+                    summary: summary,
+                    onConfirm: { Task { await viewModel.confirmPendingAppleHealthExportImport() } },
+                    onCancel: { viewModel.cancelPendingAppleHealthExportImport() }
+                )
+            }
+        }
     }
 
     /// The Sync card only appears once the iPhone is paired and Health access was requested.
@@ -332,6 +365,29 @@ struct ContentView: View {
         }
         .padding(.horizontal, HealthBridgeSpacing.screen)
         .padding(.bottom, 8)
+    }
+
+    /// HealthRelay addition: a manual, one-shot import of an Apple Health export.zip
+    /// for lab results only -- ECG and medications already sync live above and never
+    /// need this. The file is parsed entirely on-device; nothing is sent until the
+    /// review sheet's Send button is tapped.
+    private var exportImportCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            SectionHeader(
+                title: "Import Health Export",
+                subtitle: "Add lab results from an Apple Health export.zip file."
+            )
+
+            PrimaryButton(
+                title: "Choose Export File",
+                subtitle: "Settings \u{2192} [your name] \u{2192} Export All Health Data",
+                systemImage: "doc.zipper",
+                isDisabled: !viewModel.canRunPrimaryAction
+            ) {
+                showExportFileImporter = true
+            }
+        }
+        .cardStyle()
     }
 
     private var statusGlyph: some View {
