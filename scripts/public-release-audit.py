@@ -59,6 +59,7 @@ MARKERS = (
     "bearer_token",
     "pairing_url",
     "healthbridge://pair",
+    "healthrelay://pair",
     "token_hash",
     "setup-page",
     "outbox payload",

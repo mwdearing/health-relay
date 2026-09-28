@@ -4506,9 +4506,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             let now = Date()
             let calendar = utcCalendar()
             let end = now
-            let startOfToday = calendar.startOfDay(for: now)
-            let fallbackStart = calendar.date(byAdding: .day, value: -30, to: startOfToday)
-                ?? now.addingTimeInterval(-30 * 24 * 60 * 60)
+            // First sync honours the user's Apple Health history window; later syncs continue from the cursor.
+            let fallbackStart = healthHistoryDepth.sanitized.lowerBoundDate(now: now, calendar: calendar)
+                ?? Date.distantPast
             let (cursorStore, progressScope) = try captureReceiverSyncProgressScope()
             let receiverBindingID = progressScope.receiverBindingID
             let cursorValue = try cursorStore.cursorValue(
@@ -4615,9 +4615,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             let now = Date()
             let calendar = utcCalendar()
             let end = now
-            let startOfToday = calendar.startOfDay(for: now)
-            let fallbackStart = calendar.date(byAdding: .day, value: -30, to: startOfToday)
-                ?? now.addingTimeInterval(-30 * 24 * 60 * 60)
+            // First sync honours the user's Apple Health history window; later syncs continue from the cursor.
+            let fallbackStart = healthHistoryDepth.sanitized.lowerBoundDate(now: now, calendar: calendar)
+                ?? Date.distantPast
             let (cursorStore, progressScope) = try captureReceiverSyncProgressScope()
             let receiverBindingID = progressScope.receiverBindingID
             let cursorValue = try cursorStore.cursorValue(

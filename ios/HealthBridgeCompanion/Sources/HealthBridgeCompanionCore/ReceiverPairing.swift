@@ -273,7 +273,8 @@ private enum PairingLinkDecoder {
     }
 
     private static func isSupportedPairingURL(_ url: URL) -> Bool {
-        if url.scheme?.lowercased() == "healthbridge", url.host?.lowercased() == "pair" {
+        if let scheme = url.scheme?.lowercased(), scheme == "healthrelay" || scheme == "healthbridge",
+           url.host?.lowercased() == "pair" {
             return true
         }
         return url.scheme?.lowercased() == "https" && url.host != nil && url.path == "/pair"
