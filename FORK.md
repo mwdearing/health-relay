@@ -24,6 +24,8 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: IPA builds stamp marketing version `1.2.<run number>` by default (a distinct version
+  string per build, since sideload signers show only the marketing version).
 - 2026-09-28: diagnostics: the ECG and medication lanes prefix their status with `[ECG]` / `[Medication]`
   and the Activity Log keeps those lines verbatim (counts and error codes only), so a lane outcome is
   visible on the phone instead of being collapsed into generic labels.
