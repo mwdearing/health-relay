@@ -20,7 +20,7 @@ def test_v2_setup_page_is_qr_first_with_manual_code_fallback(tmp_path: Path) -> 
     page = render_pairing_setup_page(bundle, pairing_url)
 
     assert "<svg" in page
-    assert 'href="healthbridge://pair?payload=' in page
+    assert 'href="healthrelay://pair?payload=' in page
     assert "Scan with iPhone Camera" in page
     assert "Use a code instead" in page
     assert "health.example.test" in page

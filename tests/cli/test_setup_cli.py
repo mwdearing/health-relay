@@ -197,7 +197,7 @@ def test_setup_default_detects_but_never_configures_clients(tmp_path: Path) -> N
     _assert_owner_only(db_path)
     _assert_owner_only(setup_page)
     setup_html = setup_page.read_text(encoding="utf-8")
-    assert "healthbridge://pair?payload=" in setup_html
+    assert "healthrelay://pair?payload=" in setup_html
     assert "invitation_token" not in completed.stdout
     assert not re.search(r"hbi_[A-Za-z0-9_-]{20,}", completed.stdout)
 
@@ -439,7 +439,7 @@ def test_setup_page_contains_custom_scheme_qr_and_manual_code(
 
     assert completed.returncode == 0, completed.stderr
     setup_html = setup_page.read_text(encoding="utf-8")
-    assert 'href="healthbridge://pair?payload=' in setup_html
+    assert 'href="healthrelay://pair?payload=' in setup_html
     assert "Scan with iPhone Camera" in setup_html
     assert "Use a code instead" in setup_html
     assert "temporary, single-use invitation" in setup_html

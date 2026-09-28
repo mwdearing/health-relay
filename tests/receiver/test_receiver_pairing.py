@@ -78,7 +78,7 @@ def test_pairing_deep_link_round_trips_without_losing_secret(tmp_path: Path) -> 
     decoded = pairing_bundle_from_deep_link(deep_link)
 
     # Then
-    assert deep_link.startswith("healthbridge://pair?payload=")
+    assert deep_link.startswith("healthrelay://pair?payload=")
     assert decoded == bundle
 
 
@@ -159,7 +159,7 @@ def test_v2_pairing_deep_link_contains_secret_but_not_human_code(
     deep_link = pairing_deep_link(bundle)
     decoded = pairing_invitation_from_deep_link(deep_link)
 
-    assert deep_link.startswith("healthbridge://pair?payload=")
+    assert deep_link.startswith("healthrelay://pair?payload=")
     assert decoded.schema_id == "health_bridge.receiver_pairing_invitation.v2"
     assert decoded.label == bundle.label
     assert decoded.receiver_url == bundle.receiver_url
@@ -186,3 +186,13 @@ def test_v2_pairing_deep_link_rejects_cross_origin_redeem_url(
 
     with pytest.raises(ReceiverPairingBundleError, match="same origin"):
         _ = pairing_invitation_from_deep_link(pairing_deep_link(tampered))
+
+
+def test_legacy_healthbridge_scheme_still_decodes_but_is_not_emitted() -> None:
+    from health_bridge.receiver.pairing import (
+        ACCEPTED_DEEP_LINK_SCHEMES,
+        PAIRING_DEEP_LINK_SCHEME,
+    )
+
+    assert PAIRING_DEEP_LINK_SCHEME == "healthrelay"
+    assert frozenset({"healthrelay", "healthbridge"}) == ACCEPTED_DEEP_LINK_SCHEMES

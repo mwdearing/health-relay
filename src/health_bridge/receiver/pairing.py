@@ -15,7 +15,9 @@ PAIRING_SCHEMA_ID: Final = "health_bridge.receiver_pairing.v1"
 PAIRING_SCHEMA_VERSION: Final = "1.0.0"
 PAIRING_INVITATION_SCHEMA_ID: Final = "health_bridge.receiver_pairing_invitation.v2"
 PAIRING_INVITATION_SCHEMA_VERSION: Final = "2.0.0"
-PAIRING_DEEP_LINK_SCHEME: Final = "healthbridge"
+PAIRING_DEEP_LINK_SCHEME: Final = "healthrelay"
+# HealthRelay emits its own scheme; links from upstream-era setup pages still decode.
+ACCEPTED_DEEP_LINK_SCHEMES: Final = frozenset({"healthrelay", "healthbridge"})
 PAIRING_DEEP_LINK_HOST: Final = "pair"
 PAIRING_WARNING: Final = (
     "This pairing bundle contains a receiver bearer-token secret. "
@@ -26,7 +28,7 @@ PAIRING_INVITATION_WARNING: Final = (
     "Import it on your own device before it expires, then delete the setup artifact."
 )
 EMPTY_BEARER_MESSAGE: Final = "Pairing bundle bearer credential must not be empty."
-INVALID_DEEP_LINK_MESSAGE: Final = "Pairing deep link must use healthbridge://pair."
+INVALID_DEEP_LINK_MESSAGE: Final = "Pairing deep link must use healthrelay://pair."
 MISSING_PAYLOAD_MESSAGE: Final = "Pairing deep link is missing payload."
 INVALID_PAYLOAD_MESSAGE: Final = "Pairing deep link payload is invalid."
 INVALID_URL_SCHEME_MESSAGE: Final = "Pairing receiver URL must use http or https."
@@ -284,7 +286,7 @@ def pairing_invitation_from_deep_link(
 def _decoded_deep_link_payload(deep_link: str) -> bytes:
     parsed = urlparse(deep_link)
     if (
-        parsed.scheme != PAIRING_DEEP_LINK_SCHEME
+        parsed.scheme not in ACCEPTED_DEEP_LINK_SCHEMES
         or parsed.netloc != PAIRING_DEEP_LINK_HOST
     ):
         raise ReceiverPairingBundleError(INVALID_DEEP_LINK_MESSAGE)
