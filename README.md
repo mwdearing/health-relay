@@ -1,19 +1,18 @@
-> HealthRelay is a private fork of Apple Health AI Bridge (Apache-2.0). See `FORK.md` and `NOTICE`. The upstream README follows; product names, App Store links and website below refer to the upstream project.
+> HealthRelay is a private fork of Apple Health AI Bridge (Apache-2.0). See `FORK.md` and `NOTICE`. This README is adapted from upstream's; the upstream product (Health Bridge for AI, on the App Store) is a separate app and is not needed for HealthRelay.
 
 <div align="center">
   <img src="assets/brand/healthrelay-lockup.png" alt="HealthRelay" width="520">
   <p><strong>Your Apple Health data, continuously available to your own AI agent.</strong></p>
   <p>
-    <a href="https://apps.apple.com/us/app/health-bridge-for-ai/id6786152806">Download on the App Store</a> ·
+    <a href="#1-build-and-install-the-iphone-app">Build the iPhone app</a> ·
     <a href="docs/setup.md">Set up your bridge</a> ·
-    <a href="docs/supported-health-data.md">Supported health data</a> ·
-    <a href="https://healthbridge.chanhyo.dev/">Website</a>
+    <a href="docs/supported-health-data.md">Supported health data</a>
   </p>
 </div>
 
 ---
 
-Apple Health AI Bridge is the open-source project behind Health Bridge for AI.
+HealthRelay adds electrocardiograms, the full set of HealthKit dietary nutrients and medication dose events to Apple Health AI Bridge, the open-source project behind Health Bridge for AI. It is built and installed by you; there is no App Store listing.
 
 The project gives you a direct, self-hosted path from Apple Health to the AI tools you choose—without routing it through a hosted intermediary. The iPhone companion continuously sends the HealthKit data you permit to a receiver you control, where read-only CLI and MCP interfaces make it available to compatible agents.
 
@@ -31,9 +30,14 @@ You need:
 - an MCP client on the receiver machine, or a terminal for direct CLI access;
 - [`uv`](https://docs.astral.sh/uv/) for the receiver package.
 
-### 1. Install the iPhone app
+### 1. Build and install the iPhone app
 
-Download [Health Bridge for AI from the App Store](https://apps.apple.com/us/app/health-bridge-for-ai/id6786152806) on your iPhone. TestFlight remains available for beta builds and prerelease testing through the [official install page](https://healthbridge.chanhyo.dev/install/).
+HealthRelay is not on the App Store. Build it yourself, then sign and install it with your own Apple developer identity (a sideload signer or Xcode):
+
+- **GitHub Actions:** run the `Build unsigned IPA` workflow (Actions → Build unsigned IPA → Run workflow) with your bundle identifier and marketing version; download the `HealthRelay-unsigned-ipa-*` artifact and sign it on your phone or Mac.
+- **Xcode 16 or later:** follow [docs/self-build.md](docs/self-build.md).
+
+If you previously used the upstream Health Bridge for AI app, remove it before pairing HealthRelay: both apps register the same pairing link, and a scanned QR code would otherwise open the old app.
 
 ### 2. Prepare the receiver route
 
@@ -130,7 +134,7 @@ Do not expose the receiver's loopback port or pairing page to the public interne
 
 Report vulnerabilities through GitHub’s private vulnerability reporting flow described in [SECURITY.md](SECURITY.md).
 
-Public policies and help: [Privacy](https://healthbridge.chanhyo.dev/privacy) · [Support](https://healthbridge.chanhyo.dev/support)
+Upstream project (attribution, not HealthRelay support): [Website](https://healthbridge.chanhyo.dev/) · [Privacy](https://healthbridge.chanhyo.dev/privacy) · [Support](https://healthbridge.chanhyo.dev/support). Those pages describe the upstream Health Bridge for AI product. HealthRelay issues go to this repository.
 
 ### Remove local bridge data
 
@@ -151,7 +155,7 @@ The repository contains independently released components. Always include the co
 | Surface | Current version | Identifier |
 | --- | --- | --- |
 | Receiver/CLI | `1.1.1` | signed tag `receiver-v1.1.1` |
-| iOS Companion | `1.1.1` | source candidate build `48` |
+| iOS Companion (HealthRelay) | `1.2.0` | build number = `Build unsigned IPA` workflow run number |
 | Batch Protocol | `1.0.0` | `health_bridge.batch.v1` |
 
 These numbers do not need to match. Receiver-only fixes must not force an unchanged iOS Companion update, and compatible product patches must not bump the Batch Protocol. The canonical machine-readable mapping is [`component-versions.json`](component-versions.json); see the complete [versioning and compatibility policy](docs/versioning.md).
@@ -160,7 +164,7 @@ User installs are pinned to a signed Receiver/CLI release tag instead of the mov
 
 ## Build from source
 
-The App Store is the normal iPhone installation path. TestFlight is reserved for beta builds. Contributors and advanced users can build with Xcode 16 or later by following [docs/self-build.md](docs/self-build.md).
+Your own build is the only installation path for HealthRelay: the `Build unsigned IPA` workflow (see step 1 above) or Xcode 16 or later following [docs/self-build.md](docs/self-build.md).
 
 ## Documentation
 
