@@ -4,6 +4,7 @@ public enum HealthKitCatalogObjectKind: String, Codable, Equatable, Sendable {
     case quantity
     case category
     case workout
+    case electrocardiogram
 }
 
 public enum HealthKitMetricAggregation: String, Codable, Equatable, Sendable {
@@ -157,6 +158,17 @@ public enum HealthKitTypeCatalog {
             aggregation: .count,
             usesDedicatedSyncLane: true,
             backgroundEligible: true
+        ),
+        HealthKitTypeCatalogEntry(
+            typeCode: "electrocardiogram",
+            displayName: "Electrocardiogram",
+            healthKitIdentifier: "HKElectrocardiogramType",
+            objectKind: .electrocardiogram,
+            canonicalUnit: "recording",
+            sensitivity: .high,
+            aggregation: .count,
+            usesDedicatedSyncLane: false,
+            backgroundEligible: false
         ),
         HealthKitTypeCatalogEntry(
             typeCode: "sleep_analysis",
@@ -385,6 +397,8 @@ public enum HealthKitTypeCatalog {
         switch entry.objectKind {
         case .workout:
             return .workout
+        case .electrocardiogram:
+            return .heart
         case .category:
             if entry.typeCode == "sleep_analysis" {
                 return .sleep

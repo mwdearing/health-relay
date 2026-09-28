@@ -9,6 +9,9 @@ public struct HealthBridgeBatchV1: Codable, Equatable, Sendable {
     public let healthTypes: [HealthBridgeHealthType]
     public let samples: [HealthBridgeSample]
     public let workouts: [HealthBridgeWorkout]
+    /// HealthRelay addition: optional in the contract. Encoded only when non-empty so
+    /// batches without ECG data stay byte-identical to upstream's encoding.
+    public let electrocardiograms: [HealthBridgeElectrocardiogram]
     public let sleepSessions: [HealthBridgeSleepSession]
     public let deletedRecords: [HealthBridgeDeletedRecord]
     public let sync: HealthBridgeSyncContext
@@ -22,6 +25,7 @@ public struct HealthBridgeBatchV1: Codable, Equatable, Sendable {
         healthTypes: [HealthBridgeHealthType],
         samples: [HealthBridgeSample],
         workouts: [HealthBridgeWorkout],
+        electrocardiograms: [HealthBridgeElectrocardiogram] = [],
         sleepSessions: [HealthBridgeSleepSession],
         deletedRecords: [HealthBridgeDeletedRecord],
         sync: HealthBridgeSyncContext
@@ -34,6 +38,7 @@ public struct HealthBridgeBatchV1: Codable, Equatable, Sendable {
         self.healthTypes = healthTypes
         self.samples = samples
         self.workouts = workouts
+        self.electrocardiograms = electrocardiograms
         self.sleepSessions = sleepSessions
         self.deletedRecords = deletedRecords
         self.sync = sync
@@ -48,9 +53,47 @@ public struct HealthBridgeBatchV1: Codable, Equatable, Sendable {
         case healthTypes = "health_types"
         case samples
         case workouts
+        case electrocardiograms
         case sleepSessions = "sleep_sessions"
         case deletedRecords = "deleted_records"
         case sync
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaID = try container.decode(String.self, forKey: .schemaID)
+        schemaVersion = try container.decode(String.self, forKey: .schemaVersion)
+        generatedAt = try container.decode(String.self, forKey: .generatedAt)
+        exportWindow = try container.decode(HealthBridgeTimeWindow.self, forKey: .exportWindow)
+        sources = try container.decode([HealthBridgeSource].self, forKey: .sources)
+        healthTypes = try container.decode([HealthBridgeHealthType].self, forKey: .healthTypes)
+        samples = try container.decode([HealthBridgeSample].self, forKey: .samples)
+        workouts = try container.decode([HealthBridgeWorkout].self, forKey: .workouts)
+        electrocardiograms = try container.decodeIfPresent(
+            [HealthBridgeElectrocardiogram].self,
+            forKey: .electrocardiograms
+        ) ?? []
+        sleepSessions = try container.decode([HealthBridgeSleepSession].self, forKey: .sleepSessions)
+        deletedRecords = try container.decode([HealthBridgeDeletedRecord].self, forKey: .deletedRecords)
+        sync = try container.decode(HealthBridgeSyncContext.self, forKey: .sync)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaID, forKey: .schemaID)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(generatedAt, forKey: .generatedAt)
+        try container.encode(exportWindow, forKey: .exportWindow)
+        try container.encode(sources, forKey: .sources)
+        try container.encode(healthTypes, forKey: .healthTypes)
+        try container.encode(samples, forKey: .samples)
+        try container.encode(workouts, forKey: .workouts)
+        if !electrocardiograms.isEmpty {
+            try container.encode(electrocardiograms, forKey: .electrocardiograms)
+        }
+        try container.encode(sleepSessions, forKey: .sleepSessions)
+        try container.encode(deletedRecords, forKey: .deletedRecords)
+        try container.encode(sync, forKey: .sync)
     }
 }
 
@@ -181,6 +224,73 @@ public struct HealthBridgeWorkout: Codable, Equatable, Sendable {
         case durationSeconds = "duration_seconds"
         case energyKcal = "energy_kcal"
         case distanceMeters = "distance_meters"
+    }
+}
+
+public struct HealthBridgeElectrocardiogram: Codable, Equatable, Sendable {
+    public enum Classification: String, Codable, Equatable, Sendable {
+        case notSet = "not_set"
+        case sinusRhythm = "sinus_rhythm"
+        case atrialFibrillation = "atrial_fibrillation"
+        case inconclusiveLowHeartRate = "inconclusive_low_heart_rate"
+        case inconclusiveHighHeartRate = "inconclusive_high_heart_rate"
+        case inconclusivePoorReading = "inconclusive_poor_reading"
+        case inconclusiveOther = "inconclusive_other"
+        case unrecognized
+    }
+
+    public enum SymptomsStatus: String, Codable, Equatable, Sendable {
+        case notSet = "not_set"
+        case noneReported = "none"
+        case present
+    }
+
+    public let clientRecordID: String
+    public let sourceKey: String
+    public let startTime: String
+    public let endTime: String
+    public let classification: Classification
+    public let symptomsStatus: SymptomsStatus
+    public let averageHeartRateBPM: Double?
+    public let samplingFrequencyHz: Double?
+    public let voltageCount: Int
+    public let voltagesMicrovolts: [Double]?
+
+    public init(
+        clientRecordID: String,
+        sourceKey: String,
+        startTime: String,
+        endTime: String,
+        classification: Classification,
+        symptomsStatus: SymptomsStatus,
+        averageHeartRateBPM: Double? = nil,
+        samplingFrequencyHz: Double? = nil,
+        voltageCount: Int,
+        voltagesMicrovolts: [Double]? = nil
+    ) {
+        self.clientRecordID = clientRecordID
+        self.sourceKey = sourceKey
+        self.startTime = startTime
+        self.endTime = endTime
+        self.classification = classification
+        self.symptomsStatus = symptomsStatus
+        self.averageHeartRateBPM = averageHeartRateBPM
+        self.samplingFrequencyHz = samplingFrequencyHz
+        self.voltageCount = voltageCount
+        self.voltagesMicrovolts = voltagesMicrovolts
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case clientRecordID = "client_record_id"
+        case sourceKey = "source_key"
+        case startTime = "start_time"
+        case endTime = "end_time"
+        case classification
+        case symptomsStatus = "symptoms_status"
+        case averageHeartRateBPM = "average_heart_rate_bpm"
+        case samplingFrequencyHz = "sampling_frequency_hz"
+        case voltageCount = "voltage_count"
+        case voltagesMicrovolts = "voltages_microvolts"
     }
 }
 

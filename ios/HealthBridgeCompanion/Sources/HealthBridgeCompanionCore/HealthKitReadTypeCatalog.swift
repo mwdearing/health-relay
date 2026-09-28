@@ -37,6 +37,8 @@ public enum HealthKitReadTypeCatalog {
             return categoryType(for: entry)
         case .workout:
             return HKObjectType.workoutType()
+        case .electrocardiogram:
+            return HKObjectType.electrocardiogramType()
         }
     }
 
