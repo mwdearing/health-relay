@@ -51,7 +51,7 @@ jobs:
             -target HealthBridgeCompanion \
             -sdk iphoneos \
             -configuration "$CONFIGURATION" \
-            -derivedDataPath "$BUILD_DIR" \
+            "SYMROOT=$BUILD_DIR" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
