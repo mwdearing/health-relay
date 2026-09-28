@@ -41,6 +41,8 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "gearshape")
                     }
+                    // The toolbar button stays neutral: the root accent tints its glass in dark mode.
+                    .tint(Color.primary)
                     .accessibilityLabel("Settings")
                 }
             }
