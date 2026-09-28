@@ -111,6 +111,7 @@
 		A7F6E5D4C3B2A19087654321 /* HealthKitGenericQuantityReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7F6E5D4C3B2A19087654321 /* HealthKitGenericQuantityReader.swift */; };
 		E0C0000000000000000000E1 /* HealthKitElectrocardiogramReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C0000000000000000000F1 /* HealthKitElectrocardiogramReader.swift */; };
 		E0C0000000000000000000E2 /* ElectrocardiogramSyncBatchFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C0000000000000000000F2 /* ElectrocardiogramSyncBatchFactory.swift */; };
+		CCBBDE1F2B7F52E315A65F9E /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = 467E3FC0813C5C5AF9DF0927 /* ZIPFoundation */; };
 		FDF432D1A479A49C2787EC13 /* AppleHealthExportLabImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AFAF92C8DA1830DC29A87B7 /* AppleHealthExportLabImporter.swift */; };
 		B870BD82A73FEF81B3931E06 /* LabResultImportBatchFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9840DD2AA83772279714A53 /* LabResultImportBatchFactory.swift */; };
 		B88C522FB864989E97B87DBC /* ExportImportReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71BE4234B403C6FF81370B10 /* ExportImportReviewView.swift */; };
@@ -282,7 +283,7 @@
 
 /* Begin PBXFrameworksBuildPhase section */
 		A29074000000000000000002 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		196738691649AC2E2FD321A6 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		196738691649AC2E2FD321A6 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (CCBBDE1F2B7F52E315A65F9E /* ZIPFoundation in Frameworks */,); runOnlyForDeploymentPostprocessing = 0; };
 		A25174000000000000000002 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		A27174000000000000000002 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
@@ -337,12 +338,34 @@
 			buildPhases = (B0193229F5D633567D732C36 /* Sources */, 196738691649AC2E2FD321A6 /* Frameworks */, 8B0AD72DF5FB9B933D77B1AB /* Resources */);
 			buildRules = ();
 			dependencies = ();
+			packageProductDependencies = (
+				467E3FC0813C5C5AF9DF0927 /* ZIPFoundation */,
+			);
 			name = HealthBridgeCompanion;
 			productName = HealthBridgeCompanion;
 			productReference = BDFCE515EF81D393B8476C15 /* HealthBridgeCompanion.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		6444761D5357E1939ADEC82F /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/weichsel/ZIPFoundation.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.19;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		467E3FC0813C5C5AF9DF0927 /* ZIPFoundation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 6444761D5357E1939ADEC82F /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
+			productName = ZIPFoundation;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin PBXProject section */
 		9E88446A3F44B57E975BE17B /* Project object */ = {
@@ -355,6 +378,9 @@
 			knownRegions = (en, Base);
 			mainGroup = 2EB2D8158FC6EF9EB19CB439;
 			productRefGroup = 1E78B559816E575FC0BDB29C /* Products */;
+			packageReferences = (
+				6444761D5357E1939ADEC82F /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
+			);
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (61AD50A9B9189CC3CF187456 /* HealthBridgeCompanion */, A25173000000000000000001 /* HealthBridgeCompanionMailboxQA */, A27173000000000000000001 /* HealthBridgeCompanionPublicDocumentsQA */, A29073000000000000000001 /* HealthBridgeCompanionAppTests */);
