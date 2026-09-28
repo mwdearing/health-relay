@@ -24,7 +24,6 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
-## Modifications (newest first)
 - 2026-09-28: medication dose events, iOS side (B2 step 3b). `HealthBridgeMedicationDoseEvent`
   batch model (encoded only when non-empty), `HealthKitMedicationDoseEventReader` (iOS 26+:
   per-object read authorization for the medication and dose-event types, medication list joined
