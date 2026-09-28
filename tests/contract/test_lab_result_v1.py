@@ -57,7 +57,7 @@ def test_text_only_lab_result_is_accepted() -> None:
     payload = _fixture()
     record = _lab(value_text="Negative", ref_text="Negative")
     for key in ("value_num", "unit", "ref_low", "ref_high"):
-        record.pop(key, None)
+        _ = record.pop(key, None)
     payload["lab_results"] = [record]
 
     batch = HealthBridgeBatchV1.model_validate_json(json.dumps(payload))
