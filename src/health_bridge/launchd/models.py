@@ -70,7 +70,7 @@ _ERROR_MESSAGES: Final[dict[LaunchdServiceErrorCode, str]] = {
         "Mailbox LaunchAgent artifact permissions are unsafe."
     ),
     LaunchdServiceErrorCode.FOREIGN_MANIFEST: (
-        "Mailbox LaunchAgent manifest is not owned by Health Bridge."
+        "Mailbox LaunchAgent manifest is not owned by HealthRelay."
     ),
     LaunchdServiceErrorCode.MANIFEST_DRIFT: (
         "Mailbox LaunchAgent artifacts have drifted."

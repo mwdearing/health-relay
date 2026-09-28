@@ -91,7 +91,7 @@ def mailbox_helper_status(
 
 @helper_app.command(
     "uninstall",
-    help="Retire only an exact Health Bridge-owned helper generation.",
+    help="Retire only an exact HealthRelay-owned helper generation.",
 )
 def uninstall_mailbox_helper(
     json_output: Annotated[

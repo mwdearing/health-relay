@@ -408,7 +408,7 @@ def test_setup_human_output_states_that_configuration_is_not_automatic(
     completed = _run_cli(*args)
 
     assert completed.returncode == 0, completed.stderr
-    assert "Health Bridge core setup prepared." in completed.stdout
+    assert "HealthRelay core setup prepared." in completed.stdout
     assert "no configuration is automatic" in completed.stdout
     assert "Private pairing page (open only after both health checks pass)" in (
         completed.stdout
