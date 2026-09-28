@@ -39,6 +39,16 @@ jobs:
       - name: Run Swift package tests
         run: swift test
 
+      - name: Resolve Xcode project package dependencies
+        # HealthRelay addition (ZIPFoundation, the export-lab-results importer): a plain
+        # `xcodebuild -project ... -target ... build` never runs SPM resolution -- that
+        # only happens for a `-resolvePackageDependencies` action or an actual `-scheme`
+        # build. Without this step the target build fails with "couldn't be opened
+        # because there is no such file" for the package module and its resource bundle.
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project HealthBridgeCompanion.xcodeproj
+
       - name: Build unsigned iPhone simulator app
         run: |
           xcodebuild -project HealthBridgeCompanion.xcodeproj \
