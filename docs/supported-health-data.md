@@ -21,6 +21,7 @@ This list is the complete requested scope and the public disclosure source for A
 - `distance_downhill_snow_sports` — Downhill Snow Sports Distance
 - `distance_swimming` — Swimming Distance
 - `distance_walking_running` — Walking + Running Distance
+- `electrocardiogram` — Electrocardiogram
 - `electrodermal_activity` — Electrodermal Activity
 - `energy` — Active Energy
 - `environmental_audio_exposure` — Environmental Audio Exposure

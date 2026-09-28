@@ -92,8 +92,8 @@ public struct HealthBridgeHealthType: Codable, Equatable, Hashable, Sendable {
         aliases: ["HKWorkoutType"]
     )
 
-    /// HealthRelay addition. Not a dedicated automatic lane yet: the foreground ECG sync
-    /// requests authorization for this type explicitly.
+    /// HealthRelay addition: a dedicated foreground lane (`syncRecentElectrocardiograms`);
+    /// not background-eligible yet.
     public static let electrocardiogram = HealthBridgeHealthType(
         typeCode: "electrocardiogram",
         displayName: "Electrocardiogram",
@@ -116,6 +116,7 @@ public struct HealthBridgeHealthType: Codable, Equatable, Hashable, Sendable {
         .steps,
         .workouts,
         .sleepAnalysis,
+        .electrocardiogram,
     ]
 
     public static func resolve(alias: String) -> HealthBridgeHealthType? {

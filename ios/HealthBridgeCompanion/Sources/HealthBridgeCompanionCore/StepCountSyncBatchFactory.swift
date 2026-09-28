@@ -165,6 +165,7 @@ public enum ForegroundSyncUploadPolicy {
     public static func shouldUpload(_ batch: HealthBridgeBatchV1) -> Bool {
         !batch.samples.isEmpty
             || !batch.workouts.isEmpty
+            || !batch.electrocardiograms.isEmpty
             || !batch.sleepSessions.isEmpty
             || !batch.deletedRecords.isEmpty
             || !batch.sync.cursors.isEmpty
