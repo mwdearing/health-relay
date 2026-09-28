@@ -888,8 +888,10 @@ def test_ios_companion_uses_button_like_ctas_and_simple_history_sync_copy() -> N
     assert "Queued uploads and sync status" not in content_view
     assert "AppDetailsView" in content_view
     assert "DeveloperDiagnosticsView" not in content_view
-    assert "Connection, sync status, and app details" in content_view
-    assert 'title: "Settings"' in content_view
+    # Settings is a toolbar button (standard iOS placement), not a card on the screen.
+    assert ".toolbar {" in content_view
+    assert '.accessibilityLabel("Settings")' in content_view
+    assert 'Image(systemName: "gearshape")' in content_view
     assert "Permissions and app info" not in content_view
     assert "Permissions, troubleshooting, app info" not in content_view
     assert (

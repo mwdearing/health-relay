@@ -24,6 +24,15 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: iOS UI for iOS 26/27 design (companion). Pastel palette drawn from the app icon, as
+  named color sets (`RelayMint`/`RelayOnMint` for the primary action; `Ready`/`Waiting`/`Failed`
+  tint+ink pairs for status; `AccentColor`, set as the global accent), replacing the blue, indigo,
+  purple and saturated status tints. Every text pair is at least 6.9:1 in light and dark. Standard
+  large title, Settings as a toolbar button (was a card), Sync Now and Cancel as a bottom-anchored
+  capsule (`glassProminent` on iOS 26+, prominent capsule before), two card radii (26 / 12), 52pt
+  status glyph. Copy and logic unchanged. Layered app icon: `AppIcon.icon` (Icon Composer bundle,
+  pulse and chevron as separate SVG layers over a deep-teal gradient, dark-appearance fill) added
+  beside the flat `AppIcon.appiconset`, which stays as the fallback for Xcode 16 and older iOS.
 - 2026-09-28: README redesign and dark-theme lockup. The lockup's ink text was unreadable on
   GitHub's dark theme; `healthrelay-lockup-dark.png` (same art, text recolored to #F0F6FC/#AEB8C2
   by `_dark_lockup` in the generator) is served through `<picture>`. README restructured: hero with

@@ -98,3 +98,27 @@ def test_public_release_audit_only_allows_healthrelay_visual_binaries() -> None:
         assert f'Path("{path.as_posix()}")' in audit
     assert "health-bridge-" not in audit
     assert "ios/HealthBridgeCompanion/App/Assets.xcassets/AppIcon.appiconset/" in audit
+
+
+def test_layered_app_icon_is_valid_and_bundled() -> None:
+    """The Icon Composer bundle has its layers, matches the generator, and ships."""
+    icon = Path("ios/HealthBridgeCompanion/App/AppIcon.icon")
+    config = cast(
+        "dict[str, object]",
+        json.loads((icon / "icon.json").read_text(encoding="utf-8")),
+    )
+    groups = cast("list[dict[str, list[dict[str, str]]]]", config["groups"])
+    layers = [layer for group in groups for layer in group["layers"]]
+    assert {layer["name"] for layer in layers} == {"pulse", "chevron"}
+    for layer in layers:
+        art = (icon / "Assets" / layer["image-name"]).read_text(encoding="utf-8")
+        assert art.startswith("<svg")
+        assert 'viewBox="0 0 1024 1024"' in art
+    # Same 1000-unit geometry as the flat icon: pulse starts at (110, 520).
+    pulse = (icon / "Assets" / "pulse.svg").read_text(encoding="utf-8")
+    assert "112.64,532.48" in pulse
+    dark = cast("list[dict[str, object]]", config["fill-specializations"])
+    assert {entry["appearance"] for entry in dark} == {"dark"}
+    project = XCODE_PROJECT.read_text(encoding="utf-8")
+    assert "AppIcon.icon in Resources" in project
+    assert "folder.iconcomposer.icon" in project
