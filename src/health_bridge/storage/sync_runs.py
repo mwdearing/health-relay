@@ -10,7 +10,7 @@ INSERT_SYNC_RUN_SQL = (
     "workout_count, sleep_session_count, deleted_record_count, sync_cursor_count, "
     "error_summary, sync_window_start, sync_window_end, electrocardiogram_count, "
     "medication_dose_event_count) "
-    "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 
