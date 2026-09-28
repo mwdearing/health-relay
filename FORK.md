@@ -24,6 +24,16 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: ECG, iOS core (B2 step 2). `HealthBridgeElectrocardiogram` batch model; the batch
+  encodes `electrocardiograms` only when non-empty (upstream byte vectors unchanged) and decodes
+  it as optional. Registry static `.electrocardiogram` (category heart, unit "recording",
+  sensitivity high), catalog entry (`objectKind: .electrocardiogram`, not a dedicated lane, not
+  background-eligible yet), read-type mapping to `HKObjectType.electrocardiogramType()`,
+  `HealthKitElectrocardiogramReader` (`HKSampleQuery` + per-sample `HKElectrocardiogramQuery`
+  voltages in microvolts, summary-only option), `ElectrocardiogramSyncBatchFactory`
+  (`foreground_electrocardiogram_sync`, `hk-ecg-<uuid>`, mismatched/non-finite voltage series
+  sent summary-only), 3 XCTest cases. Not yet requested in the unified authorization set, so
+  `docs/supported-health-data.md` is unchanged until the app lane (next step) requests it.
 - 2026-09-27: ECG, contract + receiver (B2 step 1). Batch schema: optional top-level
   `electrocardiograms` array (`$defs/electrocardiogram`), `deleted_records.record_family`
   gains `electrocardiogram`. Receiver: `Electrocardiogram` pydantic model, migration
