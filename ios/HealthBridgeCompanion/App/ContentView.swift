@@ -998,8 +998,9 @@ private struct PrimaryButton: View {
         .relayProminentButtonStyle()
         .controlSize(.large)
         .tint(fill)
+        // No extra fade: the system already dims a disabled button, and stacking a second
+        // fade made the Connect button nearly invisible in dark mode.
         .disabled(isDisabled || isLoading)
-        .opacity(isDisabled ? 0.65 : 1)
         .accessibilityHint(subtitle)
     }
 }
