@@ -12,7 +12,7 @@ struct ContentView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: HealthBridgeSpacing.section) {
-                    header
+                    intro
                     statusCard
 
                     if viewModel.hasPendingPairing {
@@ -26,35 +26,55 @@ struct ContentView: View {
                     } else {
                         syncControlCard
                     }
-
-                    detailsSection
                 }
                 .padding(.horizontal, HealthBridgeSpacing.screen)
-                .padding(.top, 28)
-                .padding(.bottom, 40)
+                .padding(.top, 8)
+                .padding(.bottom, 16)
             }
             .background(Color(.systemGroupedBackground))
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("HealthRelay")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        AppDetailsView(viewModel: viewModel)
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                    // The toolbar button stays neutral: the root accent tints its glass in dark mode.
+                    .tint(Color.primary)
+                    .accessibilityLabel("Settings")
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if showsSyncControls {
+                    syncBar
+                }
+            }
         }
+        // Apply the brand accent explicitly. Reading the asset by name is what the other
+        // colors already do, and it does not depend on the global accent plumbing.
+        .tint(.relayAccent)
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("HealthRelay")
-                .font(.system(size: 36, weight: .bold, design: .rounded))
-            Text("Sync Apple Health data from this iPhone to your own local server.")
-                .font(.body)
-                .foregroundStyle(.relaySecondaryText)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    /// The Sync card only appears once the iPhone is paired and Health access was requested.
+    private var showsSyncControls: Bool {
+        viewModel.setupState != .unpaired && viewModel.healthPermissionsRequested
+    }
+
+    private var intro: some View {
+        Text("Sync Apple Health data from this iPhone to your own local server.")
+            .font(.subheadline)
+            .foregroundStyle(.relaySecondaryText)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var statusCard: some View {
-        HStack(alignment: .center, spacing: 16) {
+        HStack(alignment: .center, spacing: 14) {
             statusGlyph
             VStack(alignment: .leading, spacing: 4) {
                 Text(statusTitle)
-                    .font(.title2.weight(.bold))
+                    .font(.title3.weight(.semibold))
                 Text(statusSubtitle)
                     .font(.subheadline)
                     .foregroundStyle(.relaySecondaryText)
@@ -62,7 +82,7 @@ struct ContentView: View {
             }
             Spacer(minLength: 0)
         }
-        .cardStyle(cornerRadius: 28)
+        .cardStyle()
     }
 
     private var pairingCard: some View {
@@ -91,7 +111,7 @@ struct ContentView: View {
             }
             .padding(14)
             .background(Color(.tertiarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: HealthBridgeRadius.inset, style: .continuous))
 
             TextField("Paste private setup link", text: $viewModel.pairingImportText, axis: .vertical)
                 .lineLimit(2...4)
@@ -100,13 +120,12 @@ struct ContentView: View {
                 .font(.body)
                 .padding(14)
                 .background(Color(.tertiarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: HealthBridgeRadius.inset, style: .continuous))
 
             PrimaryButton(
                 title: "Connect",
                 subtitle: "Redeem this one-time invitation",
                 systemImage: "link.badge.plus",
-                tint: .relayBlue,
                 isDisabled: !viewModel.canImportPairingText,
                 isLoading: viewModel.isPairing
             ) {
@@ -141,7 +160,7 @@ struct ContentView: View {
                 InlineNotice(
                     message: pairingFailure.message,
                     systemImage: "exclamationmark.triangle.fill",
-                    tint: .relayOrange
+                    tint: .relayWaitingInk
                 )
             }
             if viewModel.mailboxKeyDiagnosticState != .lost {
@@ -182,7 +201,7 @@ struct ContentView: View {
                 .keyboardType(.URL)
                 .padding(12)
                 .background(Color(.tertiarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: HealthBridgeRadius.inset, style: .continuous))
 
             TextField("Invitation code", text: $viewModel.manualPairingCode)
                 .textInputAutocapitalization(.characters)
@@ -190,13 +209,12 @@ struct ContentView: View {
                 .keyboardType(.asciiCapable)
                 .padding(12)
                 .background(Color(.tertiarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: HealthBridgeRadius.inset, style: .continuous))
 
             PrimaryButton(
                 title: "Connect with Code",
                 subtitle: "Codes expire and work only once",
                 systemImage: "number.square.fill",
-                tint: .relayBlue,
                 isDisabled: !viewModel.canRedeemManualPairing,
                 isLoading: viewModel.isPairing
             ) {
@@ -226,7 +244,6 @@ struct ContentView: View {
                 title: viewModel.healthPermissionsRequested ? "Review Permissions" : "Allow Health Access",
                 subtitle: "Opens Apple Health permission sheet",
                 systemImage: "checkmark.shield.fill",
-                tint: .relayGreen,
                 isDisabled: false,
                 isLoading: viewModel.isRequestingHealthPermissions
             ) {
@@ -237,7 +254,7 @@ struct ContentView: View {
                 InlineNotice(
                     message: viewModel.healthPermissionNotice,
                     systemImage: viewModel.healthPermissionNoticeIsError ? "exclamationmark.triangle.fill" : "info.circle.fill",
-                    tint: viewModel.healthPermissionNoticeIsError ? .relayOrange : .relayBlue
+                    tint: viewModel.healthPermissionNoticeIsError ? .relayWaitingInk : .relayAccentInk
                 )
             }
         }
@@ -251,35 +268,10 @@ struct ContentView: View {
                 subtitle: "Send allowed Apple Health data to your local server."
             )
 
-            PrimaryButton(
-                title: "Sync Now",
-                subtitle: syncActionSubtitle,
-                systemImage: viewModel.syncPresentationIsActive ? "arrow.triangle.2.circlepath" : "arrow.up.arrow.down.circle.fill",
-                tint: .relayIndigo,
-                isDisabled: !viewModel.canRunPrimaryAction,
-                isLoading: viewModel.syncPresentationIsActive
-            ) {
-                Task { await viewModel.performPrimaryAction() }
-            }
-
-            if viewModel.isSyncing {
-                PrimaryButton(
-                    title: "Cancel",
-                    subtitle: "Stop this sync. Already queued uploads are kept.",
-                    systemImage: "xmark.circle.fill",
-                    tint: .relayOrange,
-                    isDisabled: false
-                ) {
-                    Task { await viewModel.cancelCurrentForegroundAction() }
-                }
-            }
-
-            Divider()
-
             CompactSettingRow(
                 title: "Sync Range",
                 systemImage: "clock.arrow.circlepath",
-                tint: .purple
+                tint: .relayAccentInk
             ) {
                 Picker("Sync Range", selection: Binding(
                     get: { viewModel.healthHistoryDepthOptionID },
@@ -305,7 +297,7 @@ struct ContentView: View {
                     title: "Automatic Sync",
                     subtitle: viewModel.automaticSyncScopeSummary,
                     systemImage: "arrow.triangle.2.circlepath",
-                    tint: .relayGreen
+                    tint: .relayAccentInk
                 )
             }
             .disabled(!viewModel.canChangeAutomaticSyncSetting)
@@ -313,34 +305,43 @@ struct ContentView: View {
         .cardStyle()
     }
 
-    private var detailsSection: some View {
-        NavigationLink {
-            AppDetailsView(viewModel: viewModel)
-        } label: {
-            CardRow(
-                title: "Settings",
-                subtitle: "Connection, sync status, and app details",
-                systemImage: "gearshape.fill",
-                tint: .relayOrange
-            )
+    /// Primary actions sit at the bottom of the screen, above the home indicator.
+    private var syncBar: some View {
+        VStack(spacing: 8) {
+            PrimaryButton(
+                title: "Sync Now",
+                subtitle: syncActionSubtitle,
+                systemImage: viewModel.syncPresentationIsActive ? "arrow.triangle.2.circlepath" : "arrow.up.arrow.down.circle.fill",
+                isDisabled: !viewModel.canRunPrimaryAction,
+                isLoading: viewModel.syncPresentationIsActive
+            ) {
+                Task { await viewModel.performPrimaryAction() }
+            }
+
+            if viewModel.isSyncing {
+                PrimaryButton(
+                    title: "Cancel",
+                    subtitle: "Stop this sync. Already queued uploads are kept.",
+                    systemImage: "xmark.circle.fill",
+                    emphasis: .caution,
+                    isDisabled: false
+                ) {
+                    Task { await viewModel.cancelCurrentForegroundAction() }
+                }
+            }
         }
-        .buttonStyle(.plain)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(.horizontal, HealthBridgeSpacing.screen)
+        .padding(.bottom, 8)
     }
 
     private var statusGlyph: some View {
-        ZStack {
-            Circle()
-                .fill(statusColor.opacity(0.16))
-                .frame(width: 76, height: 76)
-            Circle()
-                .fill(statusColor)
-                .frame(width: 58, height: 58)
-            Image(systemName: statusSymbol)
-                .font(.system(size: 26, weight: .bold))
-                .foregroundStyle(.relayOnTint)
-        }
+        Image(systemName: statusSymbol)
+            .font(.system(size: 22, weight: .bold))
+            .foregroundStyle(statusTone.ink)
+            .frame(width: 52, height: 52)
+            .background(statusTone.tint, in: Circle())
+            .overlay(Circle().strokeBorder(statusTone.ink.opacity(0.25), lineWidth: 1))
+            .accessibilityHidden(true)
     }
 
     private var statusTitle: String {
@@ -389,14 +390,14 @@ struct ContentView: View {
         return "Needs Attention"
     }
 
-    private var statusColor: Color {
-        if !viewModel.canSendConnectionTest && viewModel.pendingOutboxCount > 0 { return .relayOrange }
-        if !viewModel.canSendConnectionTest { return .relayRed }
-        if viewModel.syncPresentationIsActive { return .relayGreen }
-        if viewModel.statusIsError { return .relayRed }
-        if viewModel.pendingOutboxCount > 0 { return .relayOrange }
-        if viewModel.backgroundSyncEnabled || viewModel.healthPermissionsRequested { return .relayGreen }
-        return .relayOrange
+    private var statusTone: StatusTone {
+        if !viewModel.canSendConnectionTest && viewModel.pendingOutboxCount > 0 { return .waiting }
+        if !viewModel.canSendConnectionTest { return .failed }
+        if viewModel.syncPresentationIsActive { return .ready }
+        if viewModel.statusIsError { return .failed }
+        if viewModel.pendingOutboxCount > 0 { return .waiting }
+        if viewModel.backgroundSyncEnabled || viewModel.healthPermissionsRequested { return .ready }
+        return .waiting
     }
 
     private var statusSymbol: String {
@@ -564,7 +565,7 @@ private struct ReceiverSettingsView: View {
             } icon: {
                 Image(systemName: viewModel.canSendConnectionTest ? (connectionIsReachable ? "checkmark.circle.fill" : "link.circle.fill") : "xmark.circle.fill")
                     .font(.title3)
-                    .foregroundStyle(viewModel.canSendConnectionTest ? (connectionIsReachable ? .relayGreen : .relayBlue) : .relayRed)
+                    .foregroundStyle(viewModel.canSendConnectionTest ? (connectionIsReachable ? .relayReadyInk : .relayAccentInk) : .relayFailedInk)
             }
 
             Divider()
@@ -572,7 +573,7 @@ private struct ReceiverSettingsView: View {
             LabeledContent("Mailbox connection key") {
                 Text(viewModel.mailboxKeyLifecycleLabel)
                     .foregroundStyle(
-                        viewModel.mailboxKeyDiagnosticState == .active ? .relayGreen : .relaySecondaryText
+                        viewModel.mailboxKeyDiagnosticState == .active ? .relayReadyInk : .relaySecondaryText
                     )
             }
             Text(viewModel.mailboxKeyLifecycleDetail)
@@ -595,7 +596,6 @@ private struct ReceiverSettingsView: View {
                 title: viewModel.usesMailboxTransport ? "Check Mailbox Folder" : "Check Connection",
                 subtitle: viewModel.usesMailboxTransport ? "Verify the encrypted iCloud folder is available" : "Verify your server is reachable",
                 systemImage: "wifi",
-                tint: .relayBlue,
                 isDisabled: !viewModel.canSendConnectionTest,
                 isLoading: viewModel.isCheckingConnection
             ) {
@@ -605,7 +605,7 @@ private struct ReceiverSettingsView: View {
             if !connectionNotice.isEmpty {
                 Label(connectionNotice, systemImage: viewModel.statusIsError ? "exclamationmark.triangle.fill" : "info.circle.fill")
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(viewModel.statusIsError ? .relayOrange : .relaySecondaryText)
+                    .foregroundStyle(viewModel.statusIsError ? .relayWaitingInk : .relaySecondaryText)
                     .padding(.top, 2)
             }
 
@@ -671,12 +671,11 @@ private struct ReceiverSettingsView: View {
                 .font(.body)
                 .padding(14)
                 .background(Color(.tertiarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: HealthBridgeRadius.inset, style: .continuous))
             PrimaryButton(
                 title: viewModel.canSendConnectionTest ? "Replace Connection" : "Connect from Setup Link",
                 subtitle: "Save connection details securely on this iPhone",
                 systemImage: "link.badge.plus",
-                tint: .relayBlue,
                 isDisabled: !viewModel.canImportPairingText,
                 isLoading: viewModel.isPairing
             ) {
@@ -701,19 +700,18 @@ private struct ReceiverSettingsView: View {
                         .keyboardType(.URL)
                         .padding(12)
                         .background(Color(.tertiarySystemGroupedBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: HealthBridgeRadius.inset, style: .continuous))
                     TextField("Invitation code", text: $viewModel.manualPairingCode)
                         .textInputAutocapitalization(.characters)
                         .autocorrectionDisabled()
                         .keyboardType(.asciiCapable)
                         .padding(12)
                         .background(Color(.tertiarySystemGroupedBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: HealthBridgeRadius.inset, style: .continuous))
                     PrimaryButton(
                         title: "Connect with Code",
                         subtitle: "Codes expire and work only once",
                         systemImage: "number.square.fill",
-                        tint: .relayBlue,
                         isDisabled: !viewModel.canRedeemManualPairing,
                         isLoading: viewModel.isPairing
                     ) {
@@ -892,7 +890,7 @@ private struct SectionHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.title3.weight(.bold))
+                .font(.headline)
             if !subtitle.isEmpty {
                 Text(subtitle)
                     .font(.subheadline)
@@ -904,13 +902,26 @@ private struct SectionHeader: View {
 }
 
 private struct PrimaryButton: View {
+    enum Emphasis {
+        case primary
+        case caution
+    }
+
     let title: String
     let subtitle: String
     let systemImage: String
-    let tint: Color
+    var emphasis: Emphasis = .primary
     let isDisabled: Bool
     var isLoading = false
     let action: () -> Void
+
+    private var fill: Color {
+        emphasis == .primary ? .relayMint : .relayWaitingTint
+    }
+
+    private var labelColor: Color {
+        emphasis == .primary ? .relayOnMint : .relayWaitingInk
+    }
 
     var body: some View {
         Button(action: action) {
@@ -920,17 +931,17 @@ private struct PrimaryButton: View {
             } icon: {
                 if isLoading {
                     ProgressView()
-                        .tint(.relayOnTint)
+                        .tint(labelColor)
                 } else {
                     Image(systemName: systemImage)
                 }
             }
-            .foregroundStyle(.relayOnTint)
+            .foregroundStyle(labelColor)
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .relayProminentButtonStyle()
         .controlSize(.large)
-        .tint(tint)
+        .tint(fill)
         .disabled(isDisabled || isLoading)
         .opacity(isDisabled ? 0.65 : 1)
         .accessibilityHint(subtitle)
@@ -950,65 +961,50 @@ private struct InlineNotice: View {
     }
 }
 
-private struct CardRow: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    let tint: Color
-    var accessory: String? = nil
-
-    var body: some View {
-        HStack(spacing: 14) {
-            Image(systemName: systemImage)
-                .font(.headline)
-                .foregroundStyle(tint)
-                .frame(width: 38, height: 38)
-                .background(tint.opacity(0.13))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.relaySecondaryText)
-                    .lineLimit(2)
-            }
-            Spacer(minLength: 0)
-            if let accessory {
-                Text(accessory)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(tint)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(tint.opacity(0.10))
-                    .clipShape(Capsule())
-            }
-            Image(systemName: "chevron.right")
-                .font(.footnote.weight(.bold))
-                .foregroundStyle(.tertiary)
-        }
-        .padding(16)
-        .contentShape(Rectangle())
-    }
-}
-
 private struct RowDivider: View {
     var body: some View {
         Divider().padding(.leading, 66)
     }
 }
 
-// Contrast-checked tints (Assets.xcassets): dark shades carry white text in light mode,
-// light shades carry black text in dark mode. Each pair clears 4.5:1.
+// Pastel palette drawn from the app icon (Assets.xcassets). Every fill pairs with an
+// ink chosen for at least 4.5:1: deep ink on light pastels in light mode, pastel ink on
+// deep tints in dark mode. Mint is the one primary-action fill.
 private extension ShapeStyle where Self == Color {
-    static var relayGreen: Color { Color("RelayGreen") }
-    static var relayOrange: Color { Color("RelayOrange") }
-    static var relayRed: Color { Color("RelayRed") }
-    static var relayBlue: Color { Color("RelayBlue") }
-    static var relayIndigo: Color { Color("RelayIndigo") }
-    static var relayOnTint: Color { Color("RelayOnTint") }
+    static var relayAccent: Color { Color("AccentColor") }
+    static var relayMint: Color { Color("RelayMint") }
+    static var relayOnMint: Color { Color("RelayOnMint") }
+    static var relayAccentInk: Color { Color("RelayAccentInk") }
+    static var relayReadyTint: Color { Color("RelayReadyTint") }
+    static var relayReadyInk: Color { Color("RelayReadyInk") }
+    static var relayWaitingTint: Color { Color("RelayWaitingTint") }
+    static var relayWaitingInk: Color { Color("RelayWaitingInk") }
+    static var relayFailedTint: Color { Color("RelayFailedTint") }
+    static var relayFailedInk: Color { Color("RelayFailedInk") }
     static var relaySecondaryText: Color { Color("RelaySecondaryText") }
+}
+
+/// Status is the only place green, amber and rose appear.
+private enum StatusTone {
+    case ready
+    case waiting
+    case failed
+
+    var tint: Color {
+        switch self {
+        case .ready: .relayReadyTint
+        case .waiting: .relayWaitingTint
+        case .failed: .relayFailedTint
+        }
+    }
+
+    var ink: Color {
+        switch self {
+        case .ready: .relayReadyInk
+        case .waiting: .relayWaitingInk
+        case .failed: .relayFailedInk
+        }
+    }
 }
 
 private enum HealthBridgeSpacing {
@@ -1016,9 +1012,26 @@ private enum HealthBridgeSpacing {
     static let section: CGFloat = 22
 }
 
+/// Cards and the shapes nested in them use one pair of radii, so corners stay concentric.
+private enum HealthBridgeRadius {
+    static let card: CGFloat = 26
+    static let inset: CGFloat = 12
+}
+
 private extension View {
-    func cardStyle(cornerRadius: CGFloat = 24) -> some View {
-        padding(20)
+    /// Liquid Glass capsule on iOS 26 and later; a prominent capsule before that.
+    @ViewBuilder
+    func relayProminentButtonStyle() -> some View {
+        if #available(iOS 26.0, *) {
+            buttonStyle(.glassProminent)
+        } else {
+            buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
+        }
+    }
+
+    func cardStyle(cornerRadius: CGFloat = HealthBridgeRadius.card) -> some View {
+        padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(.secondarySystemGroupedBackground))
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))

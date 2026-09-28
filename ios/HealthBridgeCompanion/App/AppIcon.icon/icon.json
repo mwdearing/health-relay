@@ -1,0 +1,32 @@
+{
+  "fill": {
+    "automatic-gradient": "extended-srgb:0.04314,0.23922,0.29020,1.00000"
+  },
+  "fill-specializations": [
+    {
+      "appearance": "dark",
+      "value": {
+        "automatic-gradient": "extended-srgb:0.10196,0.12941,0.14118,1.00000"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "layers": [
+        {
+          "glass": true,
+          "image-name": "chevron.svg",
+          "name": "chevron"
+        },
+        {
+          "glass": true,
+          "image-name": "pulse.svg",
+          "name": "pulse"
+        }
+      ]
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}
