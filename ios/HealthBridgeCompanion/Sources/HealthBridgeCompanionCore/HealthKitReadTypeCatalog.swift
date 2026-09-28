@@ -39,6 +39,9 @@ public enum HealthKitReadTypeCatalog {
             return HKObjectType.workoutType()
         case .electrocardiogram:
             return HKObjectType.electrocardiogramType()
+        case .medicationDoseEvent:
+            // Per-object authorization only; passing it to requestAuthorization throws.
+            return nil
         }
     }
 

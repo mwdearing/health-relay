@@ -12,6 +12,8 @@ public struct HealthBridgeBatchV1: Codable, Equatable, Sendable {
     /// HealthRelay addition: optional in the contract. Encoded only when non-empty so
     /// batches without ECG data stay byte-identical to upstream's encoding.
     public let electrocardiograms: [HealthBridgeElectrocardiogram]
+    /// HealthRelay addition: optional, encoded only when non-empty.
+    public let medicationDoseEvents: [HealthBridgeMedicationDoseEvent]
     public let sleepSessions: [HealthBridgeSleepSession]
     public let deletedRecords: [HealthBridgeDeletedRecord]
     public let sync: HealthBridgeSyncContext
@@ -26,6 +28,7 @@ public struct HealthBridgeBatchV1: Codable, Equatable, Sendable {
         samples: [HealthBridgeSample],
         workouts: [HealthBridgeWorkout],
         electrocardiograms: [HealthBridgeElectrocardiogram] = [],
+        medicationDoseEvents: [HealthBridgeMedicationDoseEvent] = [],
         sleepSessions: [HealthBridgeSleepSession],
         deletedRecords: [HealthBridgeDeletedRecord],
         sync: HealthBridgeSyncContext
@@ -39,6 +42,7 @@ public struct HealthBridgeBatchV1: Codable, Equatable, Sendable {
         self.samples = samples
         self.workouts = workouts
         self.electrocardiograms = electrocardiograms
+        self.medicationDoseEvents = medicationDoseEvents
         self.sleepSessions = sleepSessions
         self.deletedRecords = deletedRecords
         self.sync = sync
@@ -54,6 +58,7 @@ public struct HealthBridgeBatchV1: Codable, Equatable, Sendable {
         case samples
         case workouts
         case electrocardiograms
+        case medicationDoseEvents = "medication_dose_events"
         case sleepSessions = "sleep_sessions"
         case deletedRecords = "deleted_records"
         case sync
@@ -73,6 +78,10 @@ public struct HealthBridgeBatchV1: Codable, Equatable, Sendable {
             [HealthBridgeElectrocardiogram].self,
             forKey: .electrocardiograms
         ) ?? []
+        medicationDoseEvents = try container.decodeIfPresent(
+            [HealthBridgeMedicationDoseEvent].self,
+            forKey: .medicationDoseEvents
+        ) ?? []
         sleepSessions = try container.decode([HealthBridgeSleepSession].self, forKey: .sleepSessions)
         deletedRecords = try container.decode([HealthBridgeDeletedRecord].self, forKey: .deletedRecords)
         sync = try container.decode(HealthBridgeSyncContext.self, forKey: .sync)
@@ -90,6 +99,9 @@ public struct HealthBridgeBatchV1: Codable, Equatable, Sendable {
         try container.encode(workouts, forKey: .workouts)
         if !electrocardiograms.isEmpty {
             try container.encode(electrocardiograms, forKey: .electrocardiograms)
+        }
+        if !medicationDoseEvents.isEmpty {
+            try container.encode(medicationDoseEvents, forKey: .medicationDoseEvents)
         }
         try container.encode(sleepSessions, forKey: .sleepSessions)
         try container.encode(deletedRecords, forKey: .deletedRecords)
@@ -291,6 +303,66 @@ public struct HealthBridgeElectrocardiogram: Codable, Equatable, Sendable {
         case samplingFrequencyHz = "sampling_frequency_hz"
         case voltageCount = "voltage_count"
         case voltagesMicrovolts = "voltages_microvolts"
+    }
+}
+
+public struct HealthBridgeMedicationDoseEvent: Codable, Equatable, Sendable {
+    public enum Status: String, Codable, Equatable, Sendable {
+        case taken
+        case skipped
+        case notInteracted = "not_interacted"
+        case snoozed
+        case notLogged = "not_logged"
+        case notificationNotSent = "notification_not_sent"
+        case unknown
+    }
+
+    public let clientRecordID: String
+    public let sourceKey: String
+    public let medicationName: String
+    public let medicationConceptKey: String?
+    public let status: Status
+    public let statusRaw: Int
+    public let startTime: String
+    public let scheduledTime: String?
+    public let dose: Double?
+    public let unit: String?
+
+    public init(
+        clientRecordID: String,
+        sourceKey: String,
+        medicationName: String,
+        medicationConceptKey: String? = nil,
+        status: Status,
+        statusRaw: Int,
+        startTime: String,
+        scheduledTime: String? = nil,
+        dose: Double? = nil,
+        unit: String? = nil
+    ) {
+        self.clientRecordID = clientRecordID
+        self.sourceKey = sourceKey
+        self.medicationName = medicationName
+        self.medicationConceptKey = medicationConceptKey
+        self.status = status
+        self.statusRaw = statusRaw
+        self.startTime = startTime
+        self.scheduledTime = scheduledTime
+        self.dose = dose
+        self.unit = unit
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case clientRecordID = "client_record_id"
+        case sourceKey = "source_key"
+        case medicationName = "medication_name"
+        case medicationConceptKey = "medication_concept_key"
+        case status
+        case statusRaw = "status_raw"
+        case startTime = "start_time"
+        case scheduledTime = "scheduled_time"
+        case dose
+        case unit
     }
 }
 

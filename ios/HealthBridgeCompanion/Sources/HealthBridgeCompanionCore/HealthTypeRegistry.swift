@@ -7,6 +7,7 @@ public struct HealthBridgeHealthType: Codable, Equatable, Hashable, Sendable {
         case heart
         case sleep
         case workout
+        case other
     }
 
     public enum Sensitivity: String, Codable, Equatable, Hashable, Sendable {
@@ -103,6 +104,17 @@ public struct HealthBridgeHealthType: Codable, Equatable, Hashable, Sendable {
         aliases: ["HKElectrocardiogramType"]
     )
 
+    /// HealthRelay addition. Per-object authorized in HealthKit, so it is never part of the
+    /// unified `requestAuthorization` set; the foreground medication lane authorizes it itself.
+    public static let medicationDoseEvents = HealthBridgeHealthType(
+        typeCode: "medication_dose_event",
+        displayName: "Medication Dose Event",
+        category: .other,
+        defaultUnit: "event",
+        sensitivity: .high,
+        aliases: ["HKMedicationDoseEventType"]
+    )
+
     public static let canonicalTypes: [HealthBridgeHealthType] = [
         .steps,
         .heartRate,
@@ -110,6 +122,7 @@ public struct HealthBridgeHealthType: Codable, Equatable, Hashable, Sendable {
         .sleepAnalysis,
         .workouts,
         .electrocardiogram,
+        .medicationDoseEvents,
     ]
 
     public static let dedicatedSyncTypes: [HealthBridgeHealthType] = [
