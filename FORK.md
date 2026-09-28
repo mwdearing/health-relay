@@ -24,6 +24,11 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: README redesign and dark-theme lockup. The lockup's ink text was unreadable on
+  GitHub's dark theme; `healthrelay-lockup-dark.png` (same art, text recolored to #F0F6FC/#AEB8C2
+  by `_dark_lockup` in the generator) is served through `<picture>`. README restructured: hero with
+  badges and navigation, fork note as a callout, what-it-adds table, Mermaid flow diagram, route
+  table, collapsible reference detail, grouped documentation table. All pinned setup copy kept.
 - 2026-09-28: HealthRelay pairing scheme `healthrelay://pair` (receiver emits it; app registers it first;
   both sides still accept legacy `healthbridge://pair`), so a scanned QR can no longer open the upstream
   app. ECG and medication lanes honour the selected Apple Health history window on first sync (was a
