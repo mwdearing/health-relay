@@ -97,6 +97,14 @@ jobs:
             echo "Tag or release $tag already exists; releases are never overwritten" >&2
             exit 1
           fi
+          # Never publish a build older than a release that already exists: GitHub shows the
+          # most recently published release as "Latest", so an old build would look like a downgrade.
+          newest="$(gh api "repos/$REPO/git/matching-refs/tags/app-v" --paginate --jq '.[].ref' \
+            | sed 's|^refs/tags/app-v||' | grep -E '^[0-9]+(\.[0-9]+)*$' | sort -V | tail -n 1 || true)"
+          if [ -n "$newest" ] && [ "$(printf '%s\n%s\n' "$newest" "$APP_VERSION" | sort -V | tail -n 1)" != "$APP_VERSION" ]; then
+            echo "Refusing to publish $APP_VERSION: release app-v$newest is already newer" >&2
+            exit 1
+          fi
           {
             echo "## HealthRelay iOS companion ${APP_VERSION} (build ${APP_BUILD})"
             echo
