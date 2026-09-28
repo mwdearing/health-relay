@@ -246,7 +246,7 @@ def test_package_metadata_connects_distribution_to_public_surfaces() -> None:
 def test_readme_makes_own_build_primary_without_exposing_maintainer_operations() -> (
     None
 ):
-    """HealthRelay fork: install path = the user's own build, never the App Store app."""
+    """HealthRelay fork: install path = the user's own build, not the App Store app."""
     readme = Path("README.md").read_text()
     setup_guide = Path("docs/setup.md").read_text()
     primary_navigation = readme.split("</div>", maxsplit=1)[0]
