@@ -8,8 +8,8 @@ INSERT_SYNC_RUN_SQL = (
     "insert into sync_runs (started_at, finished_at, status, schema_id, "
     "schema_version, fixture_name, source_count, health_type_count, sample_count, "
     "workout_count, sleep_session_count, deleted_record_count, sync_cursor_count, "
-    "error_summary, sync_window_start, sync_window_end) "
-    "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "error_summary, sync_window_start, sync_window_end, electrocardiogram_count) "
+    "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 
@@ -43,6 +43,7 @@ def insert_sync_run(
             result.error_summary,
             sync_window_start,
             sync_window_end,
+            result.electrocardiogram_count,
         ),
     )
     sync_run_id = cursor.lastrowid

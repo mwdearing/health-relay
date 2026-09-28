@@ -17,7 +17,7 @@ from health_bridge.contract._delivery_models import (
     OpenedDeliveryV1,
 )
 from health_bridge.contract._hbjcs1 import HBJCS1Error, hbjcs1_decode, hbjcs1_encode
-from health_bridge.contract.batch_v1 import HealthBridgeBatchV1
+from health_bridge.contract.batch_v1 import Electrocardiogram, HealthBridgeBatchV1
 
 __all__ = [
     "AckOpenParams",
@@ -29,6 +29,7 @@ __all__ = [
     "DeliveryProtocolError",
     "DeliveryReceiptV1",
     "DevicePrincipal",
+    "Electrocardiogram",
     "HBJCS1Error",
     "HealthBridgeBatchV1",
     "OpaqueBinding",

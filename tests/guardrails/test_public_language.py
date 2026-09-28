@@ -171,9 +171,7 @@ def test_public_support_privacy_and_security_routes_are_explicit() -> None:
         "https://healthbridge.chanhyo.dev/support",
     ):
         assert url in readme
-    assert (
-        "HealthRelay is a private fork of Apple Health AI Bridge"
-    ) in readme
+    assert ("HealthRelay is a private fork of Apple Health AI Bridge") in readme
     assert "not affiliated with, endorsed by, or sponsored by Apple Inc." in readme
     assert (
         "https://github.com/roian6/apple-health-ai-bridge/security/advisories/new"
@@ -193,9 +191,7 @@ def test_public_support_privacy_and_security_routes_are_explicit() -> None:
 
 
 def test_product_and_project_names_have_an_explicit_relationship() -> None:
-    relationship = (
-        "HealthRelay is a private fork of Apple Health AI Bridge"
-    )
+    relationship = "HealthRelay is a private fork of Apple Health AI Bridge"
     for path in (
         Path("README.md"),
         Path("docs/brand.md"),

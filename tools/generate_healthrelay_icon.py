@@ -8,26 +8,41 @@ right-pointing chevron at the end of the line: data relayed onward.
 Run from the repo root:  python3 tools/generate_healthrelay_icon.py
 Requires Pillow only; no browser rendering.
 """
+
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 BRAND = ROOT / "assets" / "brand"
-ICONSET = ROOT / "ios" / "HealthBridgeCompanion" / "App" / "Assets.xcassets" / "AppIcon.appiconset"
+ICONSET = (
+    ROOT
+    / "ios"
+    / "HealthBridgeCompanion"
+    / "App"
+    / "Assets.xcassets"
+    / "AppIcon.appiconset"
+)
 
-BG_TOP = (11, 61, 74)      # deep teal
-BG_BOTTOM = (7, 34, 46)    # near-navy
+BG_TOP = (11, 61, 74)  # deep teal
+BG_BOTTOM = (7, 34, 46)  # near-navy
 LINE = (255, 255, 255)
-ACCENT = (94, 234, 212)    # mint highlight for the chevron
+ACCENT = (94, 234, 212)  # mint highlight for the chevron
 
 # Pulse polyline in a 1000x1000 design space (x, y); baseline at y=520.
 PULSE = [
-    (110, 520), (300, 520), (360, 520), (410, 330), (470, 720),
-    (530, 430), (570, 520), (700, 520),
+    (110, 520),
+    (300, 520),
+    (360, 520),
+    (410, 330),
+    (470, 720),
+    (530, 430),
+    (570, 520),
+    (700, 520),
 ]
 CHEVRON = [(720, 400), (860, 520), (720, 640)]
 
@@ -46,14 +61,16 @@ def _tile(size: int) -> Image.Image:
         for x in range(s):
             px[x, y] = (r, g, b, 255)
     mask = Image.new("L", (s, s), 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, s - 1, s - 1), radius=round(s * 0.225), fill=255)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        (0, 0, s - 1, s - 1), radius=round(s * 0.225), fill=255
+    )
     img.paste(grad, (0, 0), mask)
     return img
 
 
 def _draw_mark(size: int, *, rounded: bool = True) -> Image.Image:
     s = size * 4
-    img = _tile(size) if rounded else Image.new("RGBA", (s, s), BG_BOTTOM + (255,))
+    img = _tile(size) if rounded else Image.new("RGBA", (s, s), (*BG_BOTTOM, 255))
     d = ImageDraw.Draw(img)
     k = s / 1000.0
     w = max(2, round(44 * k))
@@ -78,7 +95,7 @@ def write_iconset() -> int:
         name = entry["filename"]
         if name in written:
             continue
-        # App Store / home-screen icons must be opaque squares; iOS applies the corner mask.
+        # Icons must be opaque squares; iOS applies the corner mask itself.
         _draw_mark(px, rounded=False).convert("RGB").save(ICONSET / name, "PNG")
         written.add(name)
     return len(written)
@@ -88,16 +105,21 @@ def write_brand() -> None:
     BRAND.mkdir(parents=True, exist_ok=True)
     for n in (1024, 512, 180, 48, 32, 16):
         _draw_mark(n).save(BRAND / f"healthrelay-mark-{n}.png", "PNG")
-    # Lockup: mark + wordmark drawn as simple text (default font keeps this dependency-free).
+    # Lockup: mark + wordmark; falls back through common system TTFs.
     mark = _draw_mark(160)
     lock = Image.new("RGBA", (720, 200), (0, 0, 0, 0))
     lock.paste(mark, (20, 20), mark)
     d = ImageDraw.Draw(lock)
     font = sub = None
-    from PIL import ImageFont
     for bold, regular in (
-        ("/usr/share/fonts/google-noto/NotoSans-Bold.ttf", "/usr/share/fonts/google-noto/NotoSans-Regular.ttf"),
-        ("/usr/share/fonts/liberation-sans-fonts/LiberationSans-Bold.ttf", "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf"),
+        (
+            "/usr/share/fonts/google-noto/NotoSans-Bold.ttf",
+            "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+        ),
+        (
+            "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf",
+        ),
         ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf"),
     ):
         try:
@@ -114,4 +136,6 @@ def write_brand() -> None:
 if __name__ == "__main__":
     n = write_iconset()
     write_brand()
-    print(f"icons written: {n}; brand assets in {BRAND.relative_to(ROOT)}")
+    _ = sys.stdout.write(
+        f"icons written: {n}; brand assets in {BRAND.relative_to(ROOT)}\n"
+    )

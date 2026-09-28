@@ -14,6 +14,7 @@ Tables:
 - `health_type_aliases`: source or platform aliases for a bridge type.
 - `samples`: scalar and interval observations.
 - `workouts`: workout records.
+- `electrocardiograms`: ECG recordings (classification, symptoms status, average heart rate, sampling frequency, voltage count, optional voltages as a JSON array in `voltages_json`; a summary-only replay keeps stored voltages). Added by migration `010_electrocardiograms`, which also adds `sync_runs.electrocardiogram_count`.
 - `sleep_sessions`: sleep session records.
 - `sleep_stage_intervals`: intervals attached to sleep sessions.
 - `deleted_records`: tombstones by record family and client identity.
@@ -37,6 +38,7 @@ Idempotency keys:
 - `health_type_aliases(type_code, alias)`
 - `samples(source_id, type_code, client_record_id)`
 - `workouts(source_id, client_record_id)`
+- `electrocardiograms(source_id, client_record_id)` and `electrocardiograms(source_id, start_time)`
 - `sleep_sessions(source_id, client_record_id)`
 - `sleep_sessions(source_id, start_time)` for logical-session revision
   reconciliation. The anchored iOS lane assigns a never-reused namespaced,

@@ -117,6 +117,12 @@ def _successful_result(batch: HealthBridgeBatchV1) -> IngestResult:
         sync_cursor_count=len(
             {(cursor.source_key, cursor.cursor_kind) for cursor in batch.sync.cursors},
         ),
+        electrocardiogram_count=len(
+            {
+                (ecg.source_key, ecg.client_record_id)
+                for ecg in batch.electrocardiograms
+            },
+        ),
     )
 
 

@@ -43,6 +43,10 @@
       "type": "array",
       "items": { "$ref": "#/$defs/workout" }
     },
+    "electrocardiograms": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/electrocardiogram" }
+    },
     "sleep_sessions": {
       "type": "array",
       "items": { "$ref": "#/$defs/sleepSession" }
@@ -149,6 +153,42 @@
         "distance_meters": { "type": "number", "minimum": 0 }
       }
     },
+    "electrocardiogram": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "client_record_id",
+        "source_key",
+        "start_time",
+        "end_time",
+        "classification",
+        "symptoms_status",
+        "voltage_count"
+      ],
+      "properties": {
+        "client_record_id": { "type": "string", "pattern": "^(synthetic|hk)-[a-z0-9-]+$" },
+        "source_key": { "type": "string", "pattern": "^(synthetic|apple_health)\\.[a-z0-9_.-]+$" },
+        "start_time": { "$ref": "#/$defs/utcTimestamp" },
+        "end_time": { "$ref": "#/$defs/utcTimestamp" },
+        "classification": {
+          "enum": [
+            "not_set",
+            "sinus_rhythm",
+            "atrial_fibrillation",
+            "inconclusive_low_heart_rate",
+            "inconclusive_high_heart_rate",
+            "inconclusive_poor_reading",
+            "inconclusive_other",
+            "unrecognized"
+          ]
+        },
+        "symptoms_status": { "enum": ["not_set", "none", "present"] },
+        "average_heart_rate_bpm": { "type": "number", "minimum": 0 },
+        "sampling_frequency_hz": { "type": "number", "minimum": 0 },
+        "voltage_count": { "type": "integer", "minimum": 0 },
+        "voltages_microvolts": { "type": "array", "items": { "type": "number" } }
+      }
+    },
     "sleepStageInterval": {
       "type": "object",
       "additionalProperties": false,
@@ -179,7 +219,9 @@
       "additionalProperties": false,
       "required": ["record_family", "source_key", "client_record_id", "deleted_at"],
       "properties": {
-        "record_family": { "enum": ["sample", "workout", "sleep_session"] },
+        "record_family": {
+          "enum": ["sample", "workout", "sleep_session", "electrocardiogram"]
+        },
         "source_key": { "type": "string", "pattern": "^(synthetic|apple_health)\\.[a-z0-9_.-]+$" },
         "client_record_id": { "type": "string", "pattern": "^(synthetic|hk)-[a-z0-9-]+$" },
         "deleted_at": { "$ref": "#/$defs/utcTimestamp" }
