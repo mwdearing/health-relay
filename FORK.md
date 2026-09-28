@@ -24,6 +24,14 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: medication dose events, iOS side (B2 step 3b). `HealthBridgeMedicationDoseEvent`
+  batch model (encoded only when non-empty), `HealthKitMedicationDoseEventReader` (iOS 26+:
+  per-object read authorization for the medication and dose-event types, medication list joined
+  by a SHA-256 concept key, dose events by date), `MedicationDoseEventSyncBatchFactory`
+  (`foreground_medication_dose_event_sync`, `hk-meddose-<uuid>`), registry/catalog entries
+  (`medication_dose_event`, category `other`, never in the unified `requestAuthorization` set),
+  view-model lane after ECG, 4 XCTest cases, disclosure-doc note. Ported from
+  HealthDataExporter's `MedicationExporter` (same concept-key scheme).
 - 2026-09-28: medication dose events, contract only (B2 step 3a). Optional top-level
   `medication_dose_events` array (`$defs/medicationDoseEvent`: name, optional concept key,
   status enum + raw, start/scheduled UTC times, optional dose/unit), tombstone family
