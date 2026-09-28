@@ -24,6 +24,11 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: fix: the automatic sync engine scheduled `electrocardiogram` as a quantity lane
+  (found on device: `quantity[electrocardiogram]:attempted/not_run`, cycle deferred). New
+  `supportedAutomaticLaneTypeCodes` = unified read set filtered by catalog `backgroundEligible`;
+  the view model's automatic lane selection uses it. ECG stays in the authorization/disclosure set
+  and syncs through the foreground lane only.
 - 2026-09-28: medication dose events, iOS side (B2 step 3b). `HealthBridgeMedicationDoseEvent`
   batch model (encoded only when non-empty), `HealthKitMedicationDoseEventReader` (iOS 26+:
   per-object read authorization for the medication and dose-event types, medication list joined
