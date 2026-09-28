@@ -78,6 +78,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         case dailyActivity
         case workouts
         case sleep
+        case electrocardiograms
         case supportedQuantities
     }
 
@@ -189,6 +190,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 _ = await viewModel.syncAnchoredWorkoutChanges()
             case .sleep:
                 _ = await viewModel.syncRecentSleepSessions()
+            case .electrocardiograms:
+                await viewModel.syncRecentElectrocardiograms()
             case .supportedQuantities:
                 await viewModel.syncSupportedQuantityMetrics()
             }
@@ -2922,7 +2925,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             succeeded: false,
             summary: "HealthKit background delivery registration requested for \(expectedTypeCount) type(s); active_observers=\(automaticSyncActiveObserverCount)."
         )
-        backgroundSyncStatus = "Automatic sync scope includes steps, workouts, sleep, and \(availableQuantityTypeCount) runtime-available supported quantity types. Background delivery registration is in progress; iOS still decides timing."
+        backgroundSyncStatus = "Automatic sync scope includes steps, workouts, sleep, ECG recordings, and \(availableQuantityTypeCount) runtime-available supported quantity types. Background delivery registration is in progress; iOS still decides timing."
         #endif
     }
 
@@ -4465,6 +4468,105 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         } catch {
             statusIsError = true
             statusMessage = "Workout sync failed: \(describe(error))"
+        }
+        #else
+        statusIsError = true
+        statusMessage = "HealthKit is not available on this platform."
+        #endif
+    }
+
+    /// HealthRelay addition: foreground ECG lane (no background/anchored variant yet).
+    func syncRecentElectrocardiograms() async {
+        guard let url = URL(string: receiverURLString) else {
+            statusIsError = true
+            statusMessage = "Bridge URL is invalid."
+            return
+        }
+
+        #if canImport(HealthKit)
+        do {
+            statusIsError = false
+            statusMessage = "Reading ECG recordings from HealthKit..."
+            try await HealthStoreAuthorizer().requestReadAuthorization(healthTypes: [.electrocardiogram])
+            let now = Date()
+            let calendar = utcCalendar()
+            let end = now
+            let startOfToday = calendar.startOfDay(for: now)
+            let fallbackStart = calendar.date(byAdding: .day, value: -30, to: startOfToday)
+                ?? now.addingTimeInterval(-30 * 24 * 60 * 60)
+            let (cursorStore, progressScope) = try captureReceiverSyncProgressScope()
+            let receiverBindingID = progressScope.receiverBindingID
+            let cursorValue = try cursorStore.cursorValue(
+                receiverBindingID: receiverBindingID,
+                sourceKey: "apple_health.phone",
+                cursorKind: ElectrocardiogramSyncBatchFactory.foregroundCursorKind
+            )
+            let start = ForegroundSyncWindowPolicy.windowStart(
+                fallbackStart: fallbackStart,
+                end: end,
+                cursorValue: cursorValue,
+                replayOverlapDays: 3,
+                alignToStartOfDay: false,
+                calendar: calendar
+            )
+            let recordings = try await HealthKitElectrocardiogramReader().readElectrocardiograms(
+                start: start,
+                end: end
+            )
+            let batch = ElectrocardiogramSyncBatchFactory.makeElectrocardiogramBatch(
+                recordings: recordings,
+                windowStart: start,
+                windowEnd: end,
+                generatedAt: now
+            )
+
+            guard ForegroundSyncUploadPolicy.shouldUpload(batch) else {
+                statusIsError = false
+                statusMessage = "HealthKit returned no ECG sync payload for the selected sync window. Nothing sent."
+                return
+            }
+
+            let uploadDescription = batch.electrocardiograms.isEmpty
+                ? "ECG cursor-only sync"
+                : "\(batch.electrocardiograms.count) ECG recordings"
+            statusMessage = "Uploading \(uploadDescription) to \(url.host() ?? url.absoluteString)..."
+            let data = try encoder.encode(batch)
+            let cursor = batch.sync.cursors.first(where: {
+                $0.sourceKey == "apple_health.phone"
+                    && $0.cursorKind == ElectrocardiogramSyncBatchFactory.foregroundCursorKind
+            })
+            let cursorCheckpoint = cursor.map {
+                FileOutboxCursorCheckpoint(
+                    receiverIdentity: receiverBindingID,
+                    sourceKey: $0.sourceKey,
+                    cursorKind: $0.cursorKind,
+                    cursorValue: $0.cursorValue
+                )
+            }
+            try requireCurrentReceiverSyncProgressScope(progressScope)
+            let deliveryResult = try await uploadPayloadsWithOutbox(
+                [data],
+                to: url,
+                cursorCheckpoint: cursorCheckpoint
+            )
+            try requireCurrentReceiverSyncProgressScope(
+                progressScope,
+                deliveryGeneration: deliveryResult.connectionGeneration
+            )
+            let outboxNotice = lastOutboxNotice
+            statusIsError = false
+            let resultDescription = batch.electrocardiograms.isEmpty
+                ? "Recorded ECG sync cursor"
+                : "Synced \(batch.electrocardiograms.count) ECG recordings"
+            statusMessage = deliveryStatusMessage(
+                deliveryResult,
+                uploadedDescription: resultDescription,
+                queuedDescription: "Queued \(uploadDescription) behind earlier pending upload(s)",
+                outboxNotice: outboxNotice
+            )
+        } catch {
+            statusIsError = true
+            statusMessage = "ECG sync failed: \(describe(error))"
         }
         #else
         statusIsError = true

@@ -24,7 +24,7 @@ final class HealthTypeRegistryTests: XCTestCase {
     func testDedicatedSyncTypesRepresentStructurallyDistinctLanes() {
         XCTAssertEqual(
             HealthBridgeHealthType.dedicatedSyncTypes.map(\.typeCode),
-            ["steps", "workout", "sleep_analysis"]
+            ["steps", "workout", "sleep_analysis", "electrocardiogram"]
         )
     }
 

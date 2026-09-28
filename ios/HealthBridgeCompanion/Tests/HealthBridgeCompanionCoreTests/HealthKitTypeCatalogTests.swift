@@ -5,7 +5,7 @@ final class HealthKitTypeCatalogTests: XCTestCase {
     func testCatalogMarksDedicatedSyncLanesByImplementationStrategy() {
         XCTAssertEqual(
             HealthKitTypeCatalog.dedicatedSyncTypeCodes,
-            ["steps", "workout", "sleep_analysis"]
+            ["steps", "workout", "sleep_analysis", "electrocardiogram"]
         )
     }
 

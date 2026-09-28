@@ -24,6 +24,11 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: ECG app lane. `syncRecentElectrocardiograms()` in the view model (foreground,
+  30-day fallback window, 3-day replay overlap, cursor `foreground_electrocardiogram_sync`),
+  run as a manual-sync lane after sleep; `electrocardiogram` is now a dedicated sync type, so it
+  is part of the unified read authorization set and listed in `docs/supported-health-data.md`.
+  Upload policy counts ECG records. No background/anchored ECG lane yet.
 - 2026-09-28: 38 HealthKit dietary quantity types (all but water, which is `hydration`) added to
   the receiver timeseries catalog, the Swift catalog expansion entries, the disclosure doc and the
   pinned tests; units g/mg/mcg/kcal as in health-insights `dietary_types.py`. Python half by the

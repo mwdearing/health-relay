@@ -205,7 +205,7 @@ public enum HealthKitTypeCatalog {
             canonicalUnit: "recording",
             sensitivity: .high,
             aggregation: .count,
-            usesDedicatedSyncLane: false,
+            usesDedicatedSyncLane: true,
             backgroundEligible: false
         ),
         HealthKitTypeCatalogEntry(
