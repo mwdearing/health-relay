@@ -112,6 +112,7 @@
 		E0C0000000000000000000E1 /* HealthKitElectrocardiogramReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C0000000000000000000F1 /* HealthKitElectrocardiogramReader.swift */; };
 		E0C0000000000000000000E2 /* ElectrocardiogramSyncBatchFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C0000000000000000000F2 /* ElectrocardiogramSyncBatchFactory.swift */; };
 		CCBBDE1F2B7F52E315A65F9E /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = 467E3FC0813C5C5AF9DF0927 /* ZIPFoundation */; };
+		3F18169DE8511DC1251928A3 /* ZIPFoundation in Resources */ = {isa = PBXBuildFile; productRef = 467E3FC0813C5C5AF9DF0927 /* ZIPFoundation */; };
 		FDF432D1A479A49C2787EC13 /* AppleHealthExportLabImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AFAF92C8DA1830DC29A87B7 /* AppleHealthExportLabImporter.swift */; };
 		B870BD82A73FEF81B3931E06 /* LabResultImportBatchFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9840DD2AA83772279714A53 /* LabResultImportBatchFactory.swift */; };
 		B88C522FB864989E97B87DBC /* ExportImportReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71BE4234B403C6FF81370B10 /* ExportImportReviewView.swift */; };
@@ -389,7 +390,7 @@
 
 /* Begin PBXResourcesBuildPhase section */
 		A29074000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		8B0AD72DF5FB9B933D77B1AB /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (F15A00112233445566778899 /* PrivacyInfo.xcprivacy in Resources */, A17D00000000000000000001 /* Assets.xcassets in Resources */, A17D00000000000000000003 /* AppIcon.icon in Resources */); runOnlyForDeploymentPostprocessing = 0; };
+		8B0AD72DF5FB9B933D77B1AB /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (3F18169DE8511DC1251928A3 /* ZIPFoundation in Resources */, F15A00112233445566778899 /* PrivacyInfo.xcprivacy in Resources */, A17D00000000000000000001 /* Assets.xcassets in Resources */, A17D00000000000000000003 /* AppIcon.icon in Resources */); runOnlyForDeploymentPostprocessing = 0; };
 		A25174000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		A27174000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
