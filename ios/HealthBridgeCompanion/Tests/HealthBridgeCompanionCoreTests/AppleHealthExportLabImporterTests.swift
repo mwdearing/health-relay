@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import ZIPFoundation
 @testable import HealthBridgeCompanionCore
 
 final class AppleHealthExportLabImporterTests: XCTestCase {
