@@ -77,7 +77,7 @@ def validate_service(
         str,
         typer.Option(
             "--icloud-container-identifier",
-            help="Expected Health Bridge iCloud container identifier.",
+            help="Expected HealthRelay iCloud container identifier.",
         ),
     ],
     json_output: Annotated[
@@ -121,7 +121,7 @@ def install_service(
         str,
         typer.Option(
             "--icloud-container-identifier",
-            help="Expected Health Bridge iCloud container identifier.",
+            help="Expected HealthRelay iCloud container identifier.",
         ),
     ],
     json_output: Annotated[
@@ -167,7 +167,7 @@ def upgrade_service(
         str,
         typer.Option(
             "--icloud-container-identifier",
-            help="Expected Health Bridge iCloud container identifier.",
+            help="Expected HealthRelay iCloud container identifier.",
         ),
     ],
     json_output: Annotated[
@@ -288,7 +288,7 @@ def restart_service(
 
 @service_app.command(
     "uninstall",
-    help="Stop the service and remove only Health Bridge-owned service files.",
+    help="Stop the service and remove only HealthRelay-owned service files.",
 )
 def uninstall_service(
     json_output: Annotated[
