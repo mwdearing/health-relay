@@ -472,6 +472,16 @@ public enum HealthBridgeBackgroundSync {
         )).sorted()
     }
 
+    /// Type codes the automatic engine may schedule as lanes: the unified read set minus
+    /// catalog entries that are not background-eligible (HealthRelay: electrocardiograms are a
+    /// dedicated read type for authorization and disclosure, but only the foreground lane
+    /// syncs them; scheduling them as a quantity lane can never run and stalls the cycle).
+    public static var supportedAutomaticLaneTypeCodes: [String] {
+        supportedUnifiedReadTypeCodes.filter { typeCode in
+            HealthKitTypeCatalog.entry(for: typeCode)?.backgroundEligible ?? true
+        }
+    }
+
     public static var observedHealthTypes: [HealthBridgeHealthType] {
         defaultObservedHealthTypes
     }

@@ -2876,7 +2876,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     func automaticSyncSelectedEligibleTypeCodes() -> [String] {
         #if canImport(HealthKit)
         return HealthKitReadTypeCatalog.availableTypeCodes(
-            forTypeCodes: enabledHealthPermissionTypeCodes
+            forTypeCodes: HealthBridgeBackgroundSync.supportedAutomaticLaneTypeCodes
         )
         #else
         return []
