@@ -15,6 +15,10 @@ on:
         description: Build configuration
         required: false
         default: Release
+      marketing_version:
+        description: Marketing version to stamp (build number = workflow run number)
+        required: false
+        default: "1.2.0"
 
 permissions:
   contents: read
@@ -44,6 +48,7 @@ jobs:
         env:
           BUNDLE_ID: ${{ inputs.bundle_id }}
           CONFIGURATION: ${{ inputs.configuration }}
+          MARKETING_VERSION: ${{ inputs.marketing_version }}
         run: |
           set -euo pipefail
           BUILD_DIR="$RUNNER_TEMP/build"
@@ -56,6 +61,8 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             "PRODUCT_BUNDLE_IDENTIFIER=$BUNDLE_ID" \
+            "MARKETING_VERSION=$MARKETING_VERSION" \
+            "CURRENT_PROJECT_VERSION=$GITHUB_RUN_NUMBER" \
             "HEALTH_BRIDGE_SOURCE_COMMIT=$GITHUB_SHA" \
             "HEALTH_BRIDGE_ICLOUD_CONTAINER_IDENTIFIER=iCloud.$BUNDLE_ID" \
             build
