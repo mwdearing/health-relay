@@ -83,7 +83,7 @@ final class CompanionUXStateTests: XCTestCase {
     func testReadyPrimaryActionUsesSimpleEndUserCopy() {
         XCTAssertEqual(CompanionSetupState.ready.primaryActionTitle, "Sync Now")
         XCTAssertEqual(CompanionSetupState.degraded.primaryActionTitle, "Sync Now")
-        XCTAssertEqual(CompanionSetupState.unpaired.primaryActionTitle, "Connect Health Bridge")
+        XCTAssertEqual(CompanionSetupState.unpaired.primaryActionTitle, "Connect Your Server")
     }
 
     func testSyncNowCompletionAllowsNoNewRecordsWhenEveryLaneFinishedWithoutError() {
@@ -134,23 +134,23 @@ final class CompanionUXStateTests: XCTestCase {
         )
         XCTAssertEqual(
             CompanionPrimaryStatusMessage.sanitized(from: "Queued upload retry failed: Could not connect to the server. | domain=NSURLErrorDomain | code=-1004", isError: true),
-            "Queued upload failed: Health Bridge is not reachable (NSURLErrorDomain -1004). Start the server, then retry."
+            "Queued upload failed: your server is not reachable (NSURLErrorDomain -1004). Start the server, then retry."
         )
         XCTAssertEqual(
             CompanionPrimaryStatusMessage.sanitized(from: "Finishing the previous pairing attempt failed: The Internet connection appears to be offline. | domain=NSURLErrorDomain | code=-1009", isError: true),
-            "Pairing could not reach Health Bridge (NSURLErrorDomain -1009). Allow Local Network access, check Wi-Fi or VPN routing, make sure the server is running, then retry."
+            "Pairing could not reach your server (NSURLErrorDomain -1009). Allow Local Network access, check Wi-Fi or VPN routing, make sure the server is running, then retry."
         )
         XCTAssertEqual(
             CompanionPrimaryStatusMessage.sanitized(from: "Pairing failed: The request timed out. | domain=NSURLErrorDomain | code=-1001", isError: true),
-            "Pairing could not reach Health Bridge (NSURLErrorDomain -1001). Allow Local Network access, check Wi-Fi or VPN routing, make sure the server is running, then retry."
+            "Pairing could not reach your server (NSURLErrorDomain -1001). Allow Local Network access, check Wi-Fi or VPN routing, make sure the server is running, then retry."
         )
         XCTAssertEqual(
             CompanionPrimaryStatusMessage.sanitized(from: "Sync stopped: Step sync failed: Could not connect to the server. | domain=NSURLErrorDomain | code=-1004", isError: true),
-            "Sync failed: Health Bridge is not reachable (NSURLErrorDomain -1004). Start the server, then retry."
+            "Sync failed: your server is not reachable (NSURLErrorDomain -1004). Start the server, then retry."
         )
         XCTAssertEqual(
-            CompanionPrimaryStatusMessage.sanitized(from: "Apple Health reports these permissions were already reviewed. To change them: Health app > profile picture > Privacy > Apps > Health Bridge.", isError: false),
-            "Permissions already reviewed. Change them in Health > profile picture > Privacy > Apps > Health Bridge."
+            CompanionPrimaryStatusMessage.sanitized(from: "Apple Health reports these permissions were already reviewed. To change them: Health app > profile picture > Privacy > Apps > HealthRelay.", isError: false),
+            "Permissions already reviewed. Change them in Health > profile picture > Privacy > Apps > HealthRelay."
         )
         XCTAssertEqual(
             CompanionPrimaryStatusMessage.sanitized(from: "Sync stopped: HealthBridgeCompanion.ReceiverClientError 0", isError: true),
@@ -162,7 +162,7 @@ final class CompanionUXStateTests: XCTestCase {
         )
         XCTAssertEqual(
             CompanionPrimaryStatusMessage.sanitized(from: "Connection verified. Queued uploads: 0.", isError: false),
-            "Health Bridge connected"
+            "Server connected"
         )
         XCTAssertEqual(
             CompanionPrimaryStatusMessage.sanitized(from: "Cancelled. Any already queued uploads remain available for retry.", isError: false),
@@ -181,7 +181,7 @@ final class CompanionUXStateTests: XCTestCase {
             "Disconnected from server. Queued uploads remain on this iPhone; reconnect from setup link to retry them."
         )
         XCTAssertEqual(
-            CompanionPrimaryStatusMessage.sanitized(from: "Queued upload failed: Health Bridge returned an error. | domain=ReceiverClientError | code=http_502 | HTTP 502", isError: true),
+            CompanionPrimaryStatusMessage.sanitized(from: "Queued upload failed: your server returned an error. | domain=ReceiverClientError | code=http_502 | HTTP 502", isError: true),
             "Queued upload failed (HTTP 502). Reconnect from setup link or retry after the server is back."
         )
         XCTAssertEqual(
@@ -197,7 +197,7 @@ final class CompanionUXStateTests: XCTestCase {
             "Queued uploads updated"
         )
         XCTAssertEqual(
-            CompanionPrimaryStatusMessage.sanitized(from: "Sync stopped: Health Bridge returned an error. | domain=ReceiverClientError | code=http_401 | HTTP 401", isError: true),
+            CompanionPrimaryStatusMessage.sanitized(from: "Sync stopped: your server returned an error. | domain=ReceiverClientError | code=http_401 | HTTP 401", isError: true),
             "Connection key was rejected (HTTP 401). Reconnect from a fresh setup link."
         )
         XCTAssertEqual(
@@ -220,14 +220,14 @@ final class CompanionUXStateTests: XCTestCase {
 
     func testMailboxPreflightStatusPreservesExactSecretFreeFailureClass() {
         let cases = [
-            ("mailbox_key_lost", "Mailbox connection key lifecycle: lost. Pairing stopped before contacting Health Bridge."),
-            ("mailbox_key_revoked", "Mailbox connection key lifecycle: revoked. Pairing stopped before contacting Health Bridge."),
-            ("mailbox_key_locked", "Mailbox connection key lifecycle is unavailable while this iPhone is locked. Pairing stopped before contacting Health Bridge."),
-            ("mailbox_key_access_denied", "Mailbox connection key access was denied. Pairing stopped before contacting Health Bridge."),
-            ("mailbox_key_unavailable", "Mailbox connection key storage is unavailable. Pairing stopped before contacting Health Bridge."),
-            ("mailbox_key_malformed", "Mailbox connection key state is malformed. Pairing stopped before contacting Health Bridge."),
-            ("mailbox_key_stale_identity", "Mailbox connection key identity is stale. Pairing stopped before contacting Health Bridge."),
-            ("mailbox_key_rollback_detected", "Mailbox connection key rollback protection stopped pairing before contacting Health Bridge."),
+            ("mailbox_key_lost", "Mailbox connection key lifecycle: lost. Pairing stopped before contacting your server."),
+            ("mailbox_key_revoked", "Mailbox connection key lifecycle: revoked. Pairing stopped before contacting your server."),
+            ("mailbox_key_locked", "Mailbox connection key lifecycle is unavailable while this iPhone is locked. Pairing stopped before contacting your server."),
+            ("mailbox_key_access_denied", "Mailbox connection key access was denied. Pairing stopped before contacting your server."),
+            ("mailbox_key_unavailable", "Mailbox connection key storage is unavailable. Pairing stopped before contacting your server."),
+            ("mailbox_key_malformed", "Mailbox connection key state is malformed. Pairing stopped before contacting your server."),
+            ("mailbox_key_stale_identity", "Mailbox connection key identity is stale. Pairing stopped before contacting your server."),
+            ("mailbox_key_rollback_detected", "Mailbox connection key rollback protection stopped pairing before contacting your server."),
         ]
         for (code, expected) in cases {
             let raw = "Setup link failed: mailbox preflight. | domain=ReceiverPairingPreflightError | code=\(code)"
@@ -244,14 +244,14 @@ final class CompanionUXStateTests: XCTestCase {
 
     func testPairingCommitBarrierStatusPreservesExactSecretFreeFailureClass() {
         let cases = [
-            ("pairing_commit_cancelled", "Pairing commit was cancelled before contacting Health Bridge. Retry pairing."),
-            ("pairing_commit_generation_failed", "Saved connection generation could not be advanced. Pairing stopped before contacting Health Bridge."),
-            ("pairing_commit_background_cleanup_pending", "Background upload cleanup is incomplete. Pairing stopped before contacting Health Bridge; retry after cleanup finishes."),
-            ("pairing_commit_outbox_unavailable", "Queued-upload storage is unavailable. Pairing stopped before contacting Health Bridge."),
-            ("pairing_commit_outbox_unreadable", "Queued-upload storage could not be read. Pairing stopped before contacting Health Bridge."),
-            ("pairing_commit_outbox_identity_not_ready", "Queued-upload identity admission is not ready. Pairing stopped before contacting Health Bridge."),
-            ("pairing_commit_outbox_not_empty", "Queued uploads must be sent or cleared before pairing can contact Health Bridge."),
-            ("pairing_commit_outbox_clear_pending", "Queued-upload deletion is still pending. Pairing stopped before contacting Health Bridge."),
+            ("pairing_commit_cancelled", "Pairing commit was cancelled before contacting your server. Retry pairing."),
+            ("pairing_commit_generation_failed", "Saved connection generation could not be advanced. Pairing stopped before contacting your server."),
+            ("pairing_commit_background_cleanup_pending", "Background upload cleanup is incomplete. Pairing stopped before contacting your server; retry after cleanup finishes."),
+            ("pairing_commit_outbox_unavailable", "Queued-upload storage is unavailable. Pairing stopped before contacting your server."),
+            ("pairing_commit_outbox_unreadable", "Queued-upload storage could not be read. Pairing stopped before contacting your server."),
+            ("pairing_commit_outbox_identity_not_ready", "Queued-upload identity admission is not ready. Pairing stopped before contacting your server."),
+            ("pairing_commit_outbox_not_empty", "Queued uploads must be sent or cleared before pairing can contact your server."),
+            ("pairing_commit_outbox_clear_pending", "Queued-upload deletion is still pending. Pairing stopped before contacting your server."),
         ]
         for (code, expected) in cases {
             let raw = "Setup link failed before receiver redemption. | domain=ReceiverPairingCommitBarrierError | code=\(code)"
@@ -289,7 +289,7 @@ final class CompanionUXStateTests: XCTestCase {
         XCTAssertEqual(genericStatus, "ReceiverClientError | code=0")
         XCTAssertEqual(
             pairingFailure.message,
-            "Queued uploads must be sent or cleared before pairing can contact Health Bridge."
+            "Queued uploads must be sent or cleared before pairing can contact your server."
         )
         XCTAssertLessThan(pairingFailure.message.utf8.count, 256)
         XCTAssertFalse(pairingFailure.message.contains("https://"))

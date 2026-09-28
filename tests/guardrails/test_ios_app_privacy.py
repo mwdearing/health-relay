@@ -832,7 +832,7 @@ def test_ios_health_permissions_use_native_sheet_for_unified_scope() -> None:
     assert "optionalQuantitySelectionStore" not in view_model
     assert "Apple Health permission request completed" in view_model
     assert 'statusMessage = "Apple Health permission failed."' in view_model
-    assert "Health > profile picture > Privacy > Apps > Health Bridge" in view_model
+    assert "Health > profile picture > Privacy > Apps > HealthRelay" in view_model
     assert "Choose Health Data" not in content_view
     assert "Allow Health Access" in content_view
     assert "Opens Apple Health permission sheet" in content_view
