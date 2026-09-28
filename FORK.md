@@ -31,6 +31,10 @@ receiver-specific parts stay here.
   the manual step names the app's real "Use a code instead" control. CLI help/output and the
   systemd unit description say HealthRelay. MCP output (`# Health Bridge Context`, the database
   error) is unchanged: `fixtures/delivery_compatibility_v1.synthetic.json` pins its bytes.
+- 2026-09-28: HealthRelay pairing scheme `healthrelay://pair` (receiver emits it; app registers it first;
+  both sides still accept legacy `healthbridge://pair`), so a scanned QR can no longer open the upstream
+  app. ECG and medication lanes honour the selected Apple Health history window on first sync (was a
+  fixed 30 days). `ingest-fixture` summary now includes electrocardiograms and medication_dose_events.
 - 2026-09-28: IPA builds stamp marketing version `1.2.<run number>` by default (a distinct version
   string per build, since sideload signers show only the marketing version).
 - 2026-09-28: diagnostics: the ECG and medication lanes prefix their status with `[ECG]` / `[Medication]`

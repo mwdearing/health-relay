@@ -981,7 +981,7 @@ def test_receiver_create_pairing_cli_prints_secret_json_only_with_explicit_flag(
     assert output.receiver_url == receiver_url
     assert output.bearer_token.startswith("hb_")
     assert output.token_prefix == output.bearer_token[:11]
-    assert output.pairing_url.startswith("healthbridge://pair?payload=")
+    assert output.pairing_url.startswith("healthrelay://pair?payload=")
     assert "secret" in output.warning.lower()
     assert authenticate_receiver_token(db_path, output.bearer_token)
     decoded = pairing_bundle_from_deep_link(output.pairing_url)
@@ -1183,7 +1183,7 @@ def test_receiver_create_pairing_cli_can_emit_deep_link_only(tmp_path: Path) -> 
     assert result.returncode == 0, result.stderr
     assert output.label == "ios-companion"
     assert output.pairing_schema_id == "health_bridge.receiver_pairing_invitation.v2"
-    assert output.pairing_url.startswith("healthbridge://pair?payload=")
+    assert output.pairing_url.startswith("healthrelay://pair?payload=")
     decoded = pairing_invitation_from_deep_link(output.pairing_url)
     assert decoded.label == "ios-companion"
     assert decoded.expires_at == output.invitation_expires_at
@@ -1263,7 +1263,7 @@ def test_receiver_create_pairing_cli_can_write_secret_setup_page(
     )
     output = ReceiverPairingSetupPageCliOutput.model_validate_json(result.stdout)
     html = setup_page_path.read_text(encoding="utf-8")
-    pairing_url_match = re.search(r"healthbridge://pair\?payload=[A-Za-z0-9_-]+", html)
+    pairing_url_match = re.search(r"healthrelay://pair\?payload=[A-Za-z0-9_-]+", html)
     assert pairing_url_match is not None
     decoded = pairing_invitation_from_deep_link(pairing_url_match.group(0))
 

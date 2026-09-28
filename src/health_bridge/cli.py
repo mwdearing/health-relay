@@ -245,6 +245,8 @@ def ingest_fixture(
         f"sleep_sessions={result.sleep_session_count}",
         f"deleted_records={result.deleted_record_count}",
         f"sync_cursors={result.sync_cursor_count}",
+        f"electrocardiograms={result.electrocardiogram_count}",
+        f"medication_dose_events={result.medication_dose_event_count}",
     ]
     typer.echo(" ".join(output_parts))
 

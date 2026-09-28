@@ -50,6 +50,7 @@ FORBIDDEN_MEMBER_PARTS = {
 FORBIDDEN_OUTPUT_MARKERS = (
     "bearer_token",
     "healthbridge://pair",
+    "healthrelay://pair",
     "pairing_url",
 )
 

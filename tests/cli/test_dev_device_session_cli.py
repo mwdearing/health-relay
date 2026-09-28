@@ -85,7 +85,7 @@ class DevReceiverSystemdCliOutput(BaseModel):
     warning: str
 
 
-PAIRING_URL_PATTERN: Final = r"healthbridge://pair\?payload=[A-Za-z0-9_-]+"
+PAIRING_URL_PATTERN: Final = r"healthrelay://pair\?payload=[A-Za-z0-9_-]+"
 STDOUT_FORBIDDEN_SECRET_KEYS: Final = (
     "bearer_token",
     "pairing_url",
