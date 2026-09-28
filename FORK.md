@@ -24,6 +24,14 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: iOS display strings and contrast. User-facing "Health Bridge" text becomes
+  "HealthRelay" when it names the app (header, Health permission usage descriptions, the
+  Health app Privacy path) and "your server" when it names the receiver; status classifiers
+  and `CompanionPrimaryStatusMessage` matchers updated in step, with their tests. Added
+  contrast-checked color sets (`RelayGreen`, `RelayOrange`, `RelayRed`, `RelayBlue`,
+  `RelayIndigo`, `RelayOnTint`, `RelaySecondaryText`; every text pair at least 4.5:1 in light
+  and dark) and switched `ContentView` off the system tints and `.secondary` text. Marketing
+  version left at 1.1.1: it moves in lockstep with the receiver release guardrails.
 - 2026-09-28: medication dose events, iOS side (B2 step 3b). `HealthBridgeMedicationDoseEvent`
   batch model (encoded only when non-empty), `HealthKitMedicationDoseEventReader` (iOS 26+:
   per-object read authorization for the medication and dose-event types, medication list joined

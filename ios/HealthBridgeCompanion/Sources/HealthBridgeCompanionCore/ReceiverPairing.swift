@@ -31,7 +31,7 @@ public enum ReceiverPairingBundleError: Error, Equatable, LocalizedError {
         case .unsupportedTransport:
             return "Pairing transport selection is not supported."
         case .invalidDeepLink:
-            return "Pairing link is not a supported Health Bridge link."
+            return "Pairing link is not a supported HealthRelay setup link."
         case .missingPayload:
             return "Pairing link is missing its payload."
         }
