@@ -30,7 +30,9 @@ receiver-specific parts stay here.
   purple and saturated status tints. Every text pair is at least 6.9:1 in light and dark. Standard
   large title, Settings as a toolbar button (was a card), Sync Now and Cancel as a bottom-anchored
   capsule (`glassProminent` on iOS 26+, prominent capsule before), two card radii (26 / 12), 52pt
-  status glyph. Copy and logic unchanged. Not built or run here: no Swift toolchain.
+  status glyph. Copy and logic unchanged. Layered app icon: `AppIcon.icon` (Icon Composer bundle,
+  pulse and chevron as separate SVG layers over a deep-teal gradient, dark-appearance fill) added
+  beside the flat `AppIcon.appiconset`, which stays as the fallback for Xcode 16 and older iOS.
 - 2026-09-28: README redesign and dark-theme lockup. The lockup's ink text was unreadable on
   GitHub's dark theme; `healthrelay-lockup-dark.png` (same art, text recolored to #F0F6FC/#AEB8C2
   by `_dark_lockup` in the generator) is served through `<picture>`. README restructured: hero with
