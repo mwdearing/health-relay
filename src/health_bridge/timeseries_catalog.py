@@ -409,6 +409,64 @@ TIMESERIES_TYPES: Final[tuple[TimeseriesType, ...]] = (
     ),
     TimeseriesType("nike_fuel", "count", "other", "Nike Fuel", "sum"),
     TimeseriesType("hydration", "mL", "other", "Hydration", "sum"),
+    TimeseriesType(
+        "dietary_energy_consumed", "kcal", "other", "Dietary Energy Consumed", "sum"
+    ),
+    TimeseriesType("dietary_fat_total", "g", "other", "Dietary Fat Total", "sum"),
+    TimeseriesType(
+        "dietary_fat_polyunsaturated",
+        "g",
+        "other",
+        "Dietary Fat Polyunsaturated",
+        "sum",
+    ),
+    TimeseriesType(
+        "dietary_fat_monounsaturated",
+        "g",
+        "other",
+        "Dietary Fat Monounsaturated",
+        "sum",
+    ),
+    TimeseriesType(
+        "dietary_fat_saturated", "g", "other", "Dietary Fat Saturated", "sum"
+    ),
+    TimeseriesType("dietary_cholesterol", "mg", "other", "Dietary Cholesterol", "sum"),
+    TimeseriesType(
+        "dietary_carbohydrates", "g", "other", "Dietary Carbohydrates", "sum"
+    ),
+    TimeseriesType("dietary_fiber", "g", "other", "Dietary Fiber", "sum"),
+    TimeseriesType("dietary_sugar", "g", "other", "Dietary Sugar", "sum"),
+    TimeseriesType("dietary_sodium", "mg", "other", "Dietary Sodium", "sum"),
+    TimeseriesType("dietary_protein", "g", "other", "Dietary Protein", "sum"),
+    TimeseriesType("dietary_calcium", "mg", "other", "Dietary Calcium", "sum"),
+    TimeseriesType("dietary_iron", "mg", "other", "Dietary Iron", "sum"),
+    TimeseriesType("dietary_potassium", "mg", "other", "Dietary Potassium", "sum"),
+    TimeseriesType("dietary_vitamin_a", "mcg", "other", "Dietary Vitamin A", "sum"),
+    TimeseriesType("dietary_vitamin_b6", "mg", "other", "Dietary Vitamin B6", "sum"),
+    TimeseriesType("dietary_vitamin_b12", "mcg", "other", "Dietary Vitamin B12", "sum"),
+    TimeseriesType("dietary_vitamin_c", "mg", "other", "Dietary Vitamin C", "sum"),
+    TimeseriesType("dietary_vitamin_d", "mcg", "other", "Dietary Vitamin D", "sum"),
+    TimeseriesType("dietary_vitamin_e", "mg", "other", "Dietary Vitamin E", "sum"),
+    TimeseriesType("dietary_vitamin_k", "mcg", "other", "Dietary Vitamin K", "sum"),
+    TimeseriesType("dietary_thiamin", "mg", "other", "Dietary Thiamin", "sum"),
+    TimeseriesType("dietary_riboflavin", "mg", "other", "Dietary Riboflavin", "sum"),
+    TimeseriesType("dietary_niacin", "mg", "other", "Dietary Niacin", "sum"),
+    TimeseriesType("dietary_folate", "mcg", "other", "Dietary Folate", "sum"),
+    TimeseriesType("dietary_biotin", "mcg", "other", "Dietary Biotin", "sum"),
+    TimeseriesType(
+        "dietary_pantothenic_acid", "mg", "other", "Dietary Pantothenic Acid", "sum"
+    ),
+    TimeseriesType("dietary_phosphorus", "mg", "other", "Dietary Phosphorus", "sum"),
+    TimeseriesType("dietary_iodine", "mcg", "other", "Dietary Iodine", "sum"),
+    TimeseriesType("dietary_magnesium", "mg", "other", "Dietary Magnesium", "sum"),
+    TimeseriesType("dietary_zinc", "mg", "other", "Dietary Zinc", "sum"),
+    TimeseriesType("dietary_selenium", "mcg", "other", "Dietary Selenium", "sum"),
+    TimeseriesType("dietary_copper", "mcg", "other", "Dietary Copper", "sum"),
+    TimeseriesType("dietary_manganese", "mg", "other", "Dietary Manganese", "sum"),
+    TimeseriesType("dietary_chromium", "mcg", "other", "Dietary Chromium", "sum"),
+    TimeseriesType("dietary_molybdenum", "mcg", "other", "Dietary Molybdenum", "sum"),
+    TimeseriesType("dietary_chloride", "mg", "other", "Dietary Chloride", "sum"),
+    TimeseriesType("dietary_caffeine", "mg", "other", "Dietary Caffeine", "sum"),
 )
 
 # Legacy Apple Health Bridge codes kept query-compatible while new work can use
