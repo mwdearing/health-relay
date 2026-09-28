@@ -5,6 +5,7 @@ public enum HealthKitCatalogObjectKind: String, Codable, Equatable, Sendable {
     case category
     case workout
     case electrocardiogram
+    case medicationDoseEvent
 }
 
 public enum HealthKitMetricAggregation: String, Codable, Equatable, Sendable {
@@ -217,6 +218,17 @@ public enum HealthKitTypeCatalog {
             sensitivity: .high,
             aggregation: .count,
             usesDedicatedSyncLane: true,
+            backgroundEligible: false
+        ),
+        HealthKitTypeCatalogEntry(
+            typeCode: "medication_dose_event",
+            displayName: "Medication Dose Event",
+            healthKitIdentifier: "HKMedicationDoseEventType",
+            objectKind: .medicationDoseEvent,
+            canonicalUnit: "event",
+            sensitivity: .high,
+            aggregation: .count,
+            usesDedicatedSyncLane: false,
             backgroundEligible: false
         ),
         HealthKitTypeCatalogEntry(
@@ -437,6 +449,8 @@ public enum HealthKitTypeCatalog {
             return .workout
         case .electrocardiogram:
             return .heart
+        case .medicationDoseEvent:
+            return .other
         case .category:
             if entry.typeCode == "sleep_analysis" {
                 return .sleep

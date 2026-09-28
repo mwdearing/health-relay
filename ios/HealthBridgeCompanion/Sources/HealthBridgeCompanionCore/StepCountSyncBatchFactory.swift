@@ -166,6 +166,7 @@ public enum ForegroundSyncUploadPolicy {
         !batch.samples.isEmpty
             || !batch.workouts.isEmpty
             || !batch.electrocardiograms.isEmpty
+            || !batch.medicationDoseEvents.isEmpty
             || !batch.sleepSessions.isEmpty
             || !batch.deletedRecords.isEmpty
             || !batch.sync.cursors.isEmpty
