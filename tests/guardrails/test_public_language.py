@@ -172,7 +172,7 @@ def test_public_support_privacy_and_security_routes_are_explicit() -> None:
     ):
         assert url in readme
     assert (
-        "Apple Health AI Bridge is the open-source project behind Health Bridge for AI."
+        "HealthRelay is a private fork of Apple Health AI Bridge"
     ) in readme
     assert "not affiliated with, endorsed by, or sponsored by Apple Inc." in readme
     assert (
@@ -194,7 +194,7 @@ def test_public_support_privacy_and_security_routes_are_explicit() -> None:
 
 def test_product_and_project_names_have_an_explicit_relationship() -> None:
     relationship = (
-        "Apple Health AI Bridge is the open-source project behind Health Bridge for AI."
+        "HealthRelay is a private fork of Apple Health AI Bridge"
     )
     for path in (
         Path("README.md"),
