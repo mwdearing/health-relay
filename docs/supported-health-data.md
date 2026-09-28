@@ -115,6 +115,8 @@ This list is the complete requested scope and the public disclosure source for A
 - `workout` — Workout
 - `workout_effort_score` — Workout Effort Score
 
+HealthRelay also reads medication dose events (iOS 26 and later). HealthKit authorizes medications per object through its own medication picker, not through the permission sheet above, so they are not in the list; the app asks for that access only when the medication lane runs, and the names and doses go only to your receiver.
+
 Runtime availability varies by iPhone model, paired devices, region, and iOS version. A type appearing here does not mean the user has granted it or that a record exists. Revoking access in Apple Health prevents future reads of that type; it does not delete records already sent to the user's receiver.
 
 Sleep correction, deletion, reset-epoch, and crash-recovery behavior is documented in [Architecture and trust boundaries](architecture.md#sleep-corrections).

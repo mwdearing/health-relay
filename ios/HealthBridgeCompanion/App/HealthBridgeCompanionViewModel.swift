@@ -79,6 +79,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         case workouts
         case sleep
         case electrocardiograms
+        case medicationDoseEvents
         case supportedQuantities
     }
 
@@ -192,6 +193,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 _ = await viewModel.syncRecentSleepSessions()
             case .electrocardiograms:
                 await viewModel.syncRecentElectrocardiograms()
+            case .medicationDoseEvents:
+                await viewModel.syncRecentMedicationDoseEvents()
             case .supportedQuantities:
                 await viewModel.syncSupportedQuantityMetrics()
             }
@@ -4567,6 +4570,112 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         } catch {
             statusIsError = true
             statusMessage = "ECG sync failed: \(describe(error))"
+        }
+        #else
+        statusIsError = true
+        statusMessage = "HealthKit is not available on this platform."
+        #endif
+    }
+
+    /// HealthRelay addition: foreground medication dose event lane (iOS 26+; per-object authorization).
+    func syncRecentMedicationDoseEvents() async {
+        guard let url = URL(string: receiverURLString) else {
+            statusIsError = true
+            statusMessage = "Bridge URL is invalid."
+            return
+        }
+
+        #if canImport(HealthKit)
+        guard #available(iOS 26.0, *) else {
+            statusIsError = false
+            statusMessage = "Medication dose events need iOS 26 or later. Skipped."
+            return
+        }
+        do {
+            statusIsError = false
+            statusMessage = "Reading medication dose events from HealthKit..."
+            let reader = HealthKitMedicationDoseEventReader()
+            guard try await reader.requestPerObjectReadAuthorization() else {
+                statusIsError = false
+                statusMessage = "Medication access was not granted. Skipped."
+                return
+            }
+            let now = Date()
+            let calendar = utcCalendar()
+            let end = now
+            let startOfToday = calendar.startOfDay(for: now)
+            let fallbackStart = calendar.date(byAdding: .day, value: -30, to: startOfToday)
+                ?? now.addingTimeInterval(-30 * 24 * 60 * 60)
+            let (cursorStore, progressScope) = try captureReceiverSyncProgressScope()
+            let receiverBindingID = progressScope.receiverBindingID
+            let cursorValue = try cursorStore.cursorValue(
+                receiverBindingID: receiverBindingID,
+                sourceKey: "apple_health.phone",
+                cursorKind: MedicationDoseEventSyncBatchFactory.foregroundCursorKind
+            )
+            let start = ForegroundSyncWindowPolicy.windowStart(
+                fallbackStart: fallbackStart,
+                end: end,
+                cursorValue: cursorValue,
+                replayOverlapDays: 3,
+                alignToStartOfDay: false,
+                calendar: calendar
+            )
+            let events = try await reader.readMedicationDoseEvents(start: start, end: end)
+            let batch = MedicationDoseEventSyncBatchFactory.makeMedicationDoseEventBatch(
+                events: events,
+                windowStart: start,
+                windowEnd: end,
+                generatedAt: now
+            )
+
+            guard ForegroundSyncUploadPolicy.shouldUpload(batch) else {
+                statusIsError = false
+                statusMessage = "HealthKit returned no medication sync payload for the selected sync window. Nothing sent."
+                return
+            }
+
+            let uploadDescription = batch.medicationDoseEvents.isEmpty
+                ? "medication cursor-only sync"
+                : "\(batch.medicationDoseEvents.count) medication dose events"
+            statusMessage = "Uploading \(uploadDescription) to \(url.host() ?? url.absoluteString)..."
+            let data = try encoder.encode(batch)
+            let cursor = batch.sync.cursors.first(where: {
+                $0.sourceKey == "apple_health.phone"
+                    && $0.cursorKind == MedicationDoseEventSyncBatchFactory.foregroundCursorKind
+            })
+            let cursorCheckpoint = cursor.map {
+                FileOutboxCursorCheckpoint(
+                    receiverIdentity: receiverBindingID,
+                    sourceKey: $0.sourceKey,
+                    cursorKind: $0.cursorKind,
+                    cursorValue: $0.cursorValue
+                )
+            }
+            try requireCurrentReceiverSyncProgressScope(progressScope)
+            let deliveryResult = try await uploadPayloadsWithOutbox(
+                [data],
+                to: url,
+                cursorCheckpoint: cursorCheckpoint
+            )
+            try requireCurrentReceiverSyncProgressScope(
+                progressScope,
+                deliveryGeneration: deliveryResult.connectionGeneration
+            )
+            let outboxNotice = lastOutboxNotice
+            statusIsError = false
+            let resultDescription = batch.medicationDoseEvents.isEmpty
+                ? "Recorded medication sync cursor"
+                : "Synced \(batch.medicationDoseEvents.count) medication dose events"
+            statusMessage = deliveryStatusMessage(
+                deliveryResult,
+                uploadedDescription: resultDescription,
+                queuedDescription: "Queued \(uploadDescription) behind earlier pending upload(s)",
+                outboxNotice: outboxNotice
+            )
+        } catch {
+            statusIsError = true
+            statusMessage = "Medication sync failed: \(describe(error))"
         }
         #else
         statusIsError = true
