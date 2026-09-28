@@ -257,17 +257,17 @@ def test_release_validate_accepts_exact_component_scoped_project_version() -> No
         "--repo",
         str(ROOT),
         "--tag",
-        "ios-v1.1.1-build.50",
+        "ios-v1.2.0-build.50",
     )
 
     assert completed.returncode == 0, completed.stderr
     output = ValidateOutput.model_validate_json(completed.stdout)
     assert output.model_dump() == {
         "ios_build": _current_ios_build(),
-        "ios_marketing_version": "1.1.1",
+        "ios_marketing_version": "1.2.0",
         "project_version": "1.1.1",
         "release_scope": "ios",
-        "tag": "ios-v1.1.1-build.50",
+        "tag": "ios-v1.2.0-build.50",
     }
 
 
@@ -282,7 +282,7 @@ def test_component_version_index_matches_current_release_surfaces() -> None:
             "schema_id": "health_bridge.batch.v1",
             "version": "1.0.0",
         },
-        "ios_companion": {"build": "50", "marketing_version": "1.1.1"},
+        "ios_companion": {"build": "50", "marketing_version": "1.2.0"},
         "receiver_cli": {"release_tag": "receiver-v1.1.1", "version": "1.1.1"},
         "release_scope": "ios",
         "schema_id": "health_bridge.component_versions.v1",
@@ -346,7 +346,7 @@ def test_release_validate_rejects_noncanonical_or_mismatched_tag(tag: str) -> No
 
     assert completed.returncode == 1
     assert completed.stdout == ""
-    assert "iOS release tag must be ios-v1.1.1-build.50" in completed.stderr
+    assert "iOS release tag must be ios-v1.2.0-build.50" in completed.stderr
 
 
 def test_receiver_and_ios_semver_order_does_not_define_compatibility(

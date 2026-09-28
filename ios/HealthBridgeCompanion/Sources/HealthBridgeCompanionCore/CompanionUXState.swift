@@ -55,7 +55,7 @@ public enum CompanionSetupState: Equatable, Sendable {
     public var title: String {
         switch self {
         case .unpaired:
-            return "Connect Health Bridge"
+            return "Connect Your Server"
         case .pairedNeedsHealthPermission:
             return "Allow Apple Health access"
         case .ready:
@@ -70,7 +70,7 @@ public enum CompanionSetupState: Equatable, Sendable {
     public var primaryActionTitle: String {
         switch self {
         case .unpaired:
-            return "Connect Health Bridge"
+            return "Connect Your Server"
         case .pairedNeedsHealthPermission:
             return "Allow Health access"
         case .ready:
@@ -111,14 +111,14 @@ public enum CompanionPrimaryStatusMessage {
 
         let message = trimmed.lowercased()
         let mailboxPreflightMessages = [
-            "mailbox_key_lost": "Mailbox connection key lifecycle: lost. Pairing stopped before contacting Health Bridge.",
-            "mailbox_key_revoked": "Mailbox connection key lifecycle: revoked. Pairing stopped before contacting Health Bridge.",
-            "mailbox_key_locked": "Mailbox connection key lifecycle is unavailable while this iPhone is locked. Pairing stopped before contacting Health Bridge.",
-            "mailbox_key_access_denied": "Mailbox connection key access was denied. Pairing stopped before contacting Health Bridge.",
-            "mailbox_key_unavailable": "Mailbox connection key storage is unavailable. Pairing stopped before contacting Health Bridge.",
-            "mailbox_key_malformed": "Mailbox connection key state is malformed. Pairing stopped before contacting Health Bridge.",
-            "mailbox_key_stale_identity": "Mailbox connection key identity is stale. Pairing stopped before contacting Health Bridge.",
-            "mailbox_key_rollback_detected": "Mailbox connection key rollback protection stopped pairing before contacting Health Bridge.",
+            "mailbox_key_lost": "Mailbox connection key lifecycle: lost. Pairing stopped before contacting your server.",
+            "mailbox_key_revoked": "Mailbox connection key lifecycle: revoked. Pairing stopped before contacting your server.",
+            "mailbox_key_locked": "Mailbox connection key lifecycle is unavailable while this iPhone is locked. Pairing stopped before contacting your server.",
+            "mailbox_key_access_denied": "Mailbox connection key access was denied. Pairing stopped before contacting your server.",
+            "mailbox_key_unavailable": "Mailbox connection key storage is unavailable. Pairing stopped before contacting your server.",
+            "mailbox_key_malformed": "Mailbox connection key state is malformed. Pairing stopped before contacting your server.",
+            "mailbox_key_stale_identity": "Mailbox connection key identity is stale. Pairing stopped before contacting your server.",
+            "mailbox_key_rollback_detected": "Mailbox connection key rollback protection stopped pairing before contacting your server.",
         ]
         for (code, copy) in mailboxPreflightMessages where message.contains(code) {
             return copy
@@ -127,14 +127,14 @@ public enum CompanionPrimaryStatusMessage {
             return "Mailbox connection key lifecycle: not initialized. Pending and saved pairing state are clear."
         }
         let pairingCommitBarrierMessages = [
-            "pairing_commit_cancelled": "Pairing commit was cancelled before contacting Health Bridge. Retry pairing.",
-            "pairing_commit_generation_failed": "Saved connection generation could not be advanced. Pairing stopped before contacting Health Bridge.",
-            "pairing_commit_background_cleanup_pending": "Background upload cleanup is incomplete. Pairing stopped before contacting Health Bridge; retry after cleanup finishes.",
-            "pairing_commit_outbox_unavailable": "Queued-upload storage is unavailable. Pairing stopped before contacting Health Bridge.",
-            "pairing_commit_outbox_unreadable": "Queued-upload storage could not be read. Pairing stopped before contacting Health Bridge.",
-            "pairing_commit_outbox_identity_not_ready": "Queued-upload identity admission is not ready. Pairing stopped before contacting Health Bridge.",
-            "pairing_commit_outbox_not_empty": "Queued uploads must be sent or cleared before pairing can contact Health Bridge.",
-            "pairing_commit_outbox_clear_pending": "Queued-upload deletion is still pending. Pairing stopped before contacting Health Bridge.",
+            "pairing_commit_cancelled": "Pairing commit was cancelled before contacting your server. Retry pairing.",
+            "pairing_commit_generation_failed": "Saved connection generation could not be advanced. Pairing stopped before contacting your server.",
+            "pairing_commit_background_cleanup_pending": "Background upload cleanup is incomplete. Pairing stopped before contacting your server; retry after cleanup finishes.",
+            "pairing_commit_outbox_unavailable": "Queued-upload storage is unavailable. Pairing stopped before contacting your server.",
+            "pairing_commit_outbox_unreadable": "Queued-upload storage could not be read. Pairing stopped before contacting your server.",
+            "pairing_commit_outbox_identity_not_ready": "Queued-upload identity admission is not ready. Pairing stopped before contacting your server.",
+            "pairing_commit_outbox_not_empty": "Queued uploads must be sent or cleared before pairing can contact your server.",
+            "pairing_commit_outbox_clear_pending": "Queued-upload deletion is still pending. Pairing stopped before contacting your server.",
         ]
         for (code, copy) in pairingCommitBarrierMessages where message.contains(code) {
             return copy
@@ -178,7 +178,7 @@ public enum CompanionPrimaryStatusMessage {
             || message.contains("saved local bridge")
             || message.contains("receiver accepted test")
         {
-            return "Health Bridge connected"
+            return "Server connected"
         }
         if message.contains("opening apple health permissions") {
             return "Opening Apple Health permissions"
@@ -186,7 +186,7 @@ public enum CompanionPrimaryStatusMessage {
         if message.contains("apple health reports these permissions were already reviewed")
             || message.contains("permissions already reviewed")
         {
-            return "Permissions already reviewed. Change them in Health > profile picture > Privacy > Apps > Health Bridge."
+            return "Permissions already reviewed. Change them in Health > profile picture > Privacy > Apps > HealthRelay."
         }
         if message.contains("apple health permission request completed") || message.contains("apple health read permission request completed") || message.contains("apple health permission screen completed") {
             return "Apple Health access updated"
@@ -218,11 +218,11 @@ public enum CompanionPrimaryStatusMessage {
                 return "Connection was refused (HTTP 403). Reconnect from setup link or check server access."
             }
             if message.contains("non_http_response") || message.contains("non-http") || message.contains("code=1") {
-                return "Server response was not valid HTTP. Check Health Bridge, then retry."
+                return "Server response was not valid HTTP. Check your server, then retry."
             }
             if message.contains("http_") || message.contains("code=2") {
                 let diagnostic = diagnosticCode(from: trimmed)
-                return "Sync failed: Health Bridge returned an error\(diagnostic). Check the server, then retry."
+                return "Sync failed: your server returned an error\(diagnostic). Check the server, then retry."
             }
         }
         if message.contains("bridge url is invalid") || message.contains("unsupported url") || message.contains("code=-1002") {
@@ -231,18 +231,18 @@ public enum CompanionPrimaryStatusMessage {
         }
         if isLocalNetworkPairingFailure(message) {
             let diagnostic = diagnosticCode(from: trimmed)
-            return "Pairing could not reach Health Bridge\(diagnostic). Allow Local Network access, check Wi-Fi or VPN routing, make sure the server is running, then retry."
+            return "Pairing could not reach your server\(diagnostic). Allow Local Network access, check Wi-Fi or VPN routing, make sure the server is running, then retry."
         }
         if isServerReachabilityFailure(message) {
             let diagnostic = diagnosticCode(from: trimmed)
             if message.contains("queued upload") || message.contains("outbox") {
-                return "Queued upload failed: Health Bridge is not reachable\(diagnostic). Start the server, then retry."
+                return "Queued upload failed: your server is not reachable\(diagnostic). Start the server, then retry."
             }
-            return "Sync failed: Health Bridge is not reachable\(diagnostic). Start the server, then retry."
+            return "Sync failed: your server is not reachable\(diagnostic). Start the server, then retry."
         }
         if message.contains("status code") || message.contains("bad gateway") || message.contains("http 5") || message.contains("http 4") {
             let diagnostic = diagnosticCode(from: trimmed)
-            return "Sync failed: Health Bridge returned an error\(diagnostic). Check the server, then retry."
+            return "Sync failed: your server returned an error\(diagnostic). Check the server, then retry."
         }
         if message.contains("queued upload") && (message.contains("failed") || message.contains("did not finish")) {
             let diagnostic = diagnosticCode(from: trimmed)
@@ -271,7 +271,7 @@ public enum CompanionPrimaryStatusMessage {
                 let category = syncCategory(from: message)
                 return "Apple Health \(category) sync failed. Review permissions or unlock this iPhone, then retry."
             }
-            if message.contains("bridge") || message.contains("receiver") || message.contains("url") || message.contains("setup link") {
+            if message.contains("bridge") || message.contains("server") || message.contains("receiver") || message.contains("url") || message.contains("setup link") {
                 return "Connection needs attention"
             }
             return "Something needs attention"
@@ -398,10 +398,10 @@ public struct CompanionPairingFailurePresentationState: Equatable, Sendable {
             from: rawFailure,
             isError: true
         )
-        if sanitized.hasPrefix("Pairing could not reach Health Bridge")
-            || sanitized.hasPrefix("Sync failed: Health Bridge is not reachable")
+        if sanitized.hasPrefix("Pairing could not reach your server")
+            || sanitized.hasPrefix("Sync failed: your server is not reachable")
         {
-            message = "Pairing could not reach Health Bridge. Check Local Network access, Wi-Fi or VPN routing, and the server, then retry."
+            message = "Pairing could not reach your server. Check Local Network access, Wi-Fi or VPN routing, and the server, then retry."
         } else if sanitized.hasPrefix("Bridge URL is invalid") {
             message = "The pairing server address is invalid. Retry with a fresh setup link."
         } else if sanitized == "Connection key missing. Reconnect from setup link." {
@@ -410,10 +410,10 @@ public struct CompanionPairingFailurePresentationState: Equatable, Sendable {
             || sanitized.hasPrefix("Connection was refused")
         {
             message = "The pairing invitation was rejected. Retry with a fresh setup link."
-        } else if sanitized == "Server response was not valid HTTP. Check Health Bridge, then retry."
-            || sanitized.hasPrefix("Sync failed: Health Bridge returned an error")
+        } else if sanitized == "Server response was not valid HTTP. Check your server, then retry."
+            || sanitized.hasPrefix("Sync failed: your server returned an error")
         {
-            message = "Pairing could not finish because Health Bridge returned an invalid response. Check the server, then retry."
+            message = "Pairing could not finish because your server returned an invalid response. Check the server, then retry."
         } else {
             message = "Pairing failed. Retry the pending attempt or clear it before starting again."
         }
@@ -484,7 +484,7 @@ public enum CompanionStatusLaneBuilder {
             title: "Connection",
             state: snapshot.hasCompleteReceiverSettings ? "Connected" : "Setup needed",
             detail: snapshot.hasCompleteReceiverSettings
-                ? "Health Bridge connection is saved on this iPhone."
+                ? "Server connection is saved on this iPhone."
                 : "Open or paste a private setup link before syncing.",
             needsAttention: !snapshot.hasCompleteReceiverSettings
         )

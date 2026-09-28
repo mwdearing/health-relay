@@ -40,11 +40,11 @@ struct ContentView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Health Bridge")
+            Text("HealthRelay")
                 .font(.system(size: 36, weight: .bold, design: .rounded))
             Text("Sync Apple Health data from this iPhone to your own local server.")
                 .font(.body)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.relaySecondaryText)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -57,7 +57,7 @@ struct ContentView: View {
                     .font(.title2.weight(.bold))
                 Text(statusSubtitle)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.relaySecondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
@@ -68,7 +68,7 @@ struct ContentView: View {
     private var pairingCard: some View {
         VStack(alignment: .leading, spacing: 16) {
             SectionHeader(
-                title: "Connect Health Bridge",
+                title: "Connect Your Server",
                 subtitle: "Scan the private QR with iPhone Camera, open its setup link, or paste it here. After pairing, the secret key stays on this iPhone."
             )
 
@@ -77,17 +77,17 @@ struct ContentView: View {
                     .font(.headline)
                 Text("Recommended on Linux and Mac. The receiver setup invitation selects this transport by default.")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.relaySecondaryText)
 
                 Label("Encrypted iCloud Mailbox (Beta)", systemImage: "lock.icloud.fill")
                     .font(.headline)
                 Text("No VPN required • Mac only • Best-effort, eventual delivery")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.relaySecondaryText)
 
                 Text("Custom HTTPS remains a Direct connection. Local same-network-only setup is Advanced / Limited.")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.relaySecondaryText)
             }
             .padding(14)
             .background(Color(.tertiarySystemGroupedBackground))
@@ -106,7 +106,7 @@ struct ContentView: View {
                 title: "Connect",
                 subtitle: "Redeem this one-time invitation",
                 systemImage: "link.badge.plus",
-                tint: .accentColor,
+                tint: .relayBlue,
                 isDisabled: !viewModel.canImportPairingText,
                 isLoading: viewModel.isPairing
             ) {
@@ -136,12 +136,12 @@ struct ContentView: View {
                     : "Automatic sync is paused. Retry the saved attempt after fixing the route, or clear it before opening a different setup link."
             )
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.relaySecondaryText)
             if let pairingFailure = viewModel.pairingFailurePresentation {
                 InlineNotice(
                     message: pairingFailure.message,
                     systemImage: "exclamationmark.triangle.fill",
-                    tint: .orange
+                    tint: .relayOrange
                 )
             }
             if viewModel.mailboxKeyDiagnosticState != .lost {
@@ -196,7 +196,7 @@ struct ContentView: View {
                 title: "Connect with Code",
                 subtitle: "Codes expire and work only once",
                 systemImage: "number.square.fill",
-                tint: .blue,
+                tint: .relayBlue,
                 isDisabled: !viewModel.canRedeemManualPairing,
                 isLoading: viewModel.isPairing
             ) {
@@ -212,21 +212,21 @@ struct ContentView: View {
                 subtitle: "Use Apple Health's permission screen to choose what this iPhone can share."
             )
 
-            Text("Health Bridge requests read-only access for every supported type currently available on this iPhone. Choose exactly what to allow in Apple Health.")
+            Text("HealthRelay requests read-only access for every supported type currently available on this iPhone. Choose exactly what to allow in Apple Health.")
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.relaySecondaryText)
                 .fixedSize(horizontal: false, vertical: true)
 
             Text(viewModel.healthPermissionScopeSummary)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.relaySecondaryText)
                 .fixedSize(horizontal: false, vertical: true)
 
             PrimaryButton(
                 title: viewModel.healthPermissionsRequested ? "Review Permissions" : "Allow Health Access",
                 subtitle: "Opens Apple Health permission sheet",
                 systemImage: "checkmark.shield.fill",
-                tint: .green,
+                tint: .relayGreen,
                 isDisabled: false,
                 isLoading: viewModel.isRequestingHealthPermissions
             ) {
@@ -237,7 +237,7 @@ struct ContentView: View {
                 InlineNotice(
                     message: viewModel.healthPermissionNotice,
                     systemImage: viewModel.healthPermissionNoticeIsError ? "exclamationmark.triangle.fill" : "info.circle.fill",
-                    tint: viewModel.healthPermissionNoticeIsError ? .orange : .blue
+                    tint: viewModel.healthPermissionNoticeIsError ? .relayOrange : .relayBlue
                 )
             }
         }
@@ -255,7 +255,7 @@ struct ContentView: View {
                 title: "Sync Now",
                 subtitle: syncActionSubtitle,
                 systemImage: viewModel.syncPresentationIsActive ? "arrow.triangle.2.circlepath" : "arrow.up.arrow.down.circle.fill",
-                tint: .indigo,
+                tint: .relayIndigo,
                 isDisabled: !viewModel.canRunPrimaryAction,
                 isLoading: viewModel.syncPresentationIsActive
             ) {
@@ -267,7 +267,7 @@ struct ContentView: View {
                     title: "Cancel",
                     subtitle: "Stop this sync. Already queued uploads are kept.",
                     systemImage: "xmark.circle.fill",
-                    tint: .orange,
+                    tint: .relayOrange,
                     isDisabled: false
                 ) {
                     Task { await viewModel.cancelCurrentForegroundAction() }
@@ -305,7 +305,7 @@ struct ContentView: View {
                     title: "Automatic Sync",
                     subtitle: viewModel.automaticSyncScopeSummary,
                     systemImage: "arrow.triangle.2.circlepath",
-                    tint: .green
+                    tint: .relayGreen
                 )
             }
             .disabled(!viewModel.canChangeAutomaticSyncSetting)
@@ -321,7 +321,7 @@ struct ContentView: View {
                 title: "Settings",
                 subtitle: "Connection, sync status, and app details",
                 systemImage: "gearshape.fill",
-                tint: .orange
+                tint: .relayOrange
             )
         }
         .buttonStyle(.plain)
@@ -339,7 +339,7 @@ struct ContentView: View {
                 .frame(width: 58, height: 58)
             Image(systemName: statusSymbol)
                 .font(.system(size: 26, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(.relayOnTint)
         }
     }
 
@@ -372,7 +372,7 @@ struct ContentView: View {
             if viewModel.usesMailboxTransport {
                 return "\(viewModel.pendingOutboxCount) pending secure delivery item(s) are waiting for receiver confirmation."
             }
-            return "\(viewModel.pendingOutboxCount) pending sync item(s) will send when Health Bridge is reachable."
+            return "\(viewModel.pendingOutboxCount) pending sync item(s) will send when your server is reachable."
         }
         if viewModel.backgroundSyncEnabled { return viewModel.automaticSyncScopeSummary }
         return "Use Sync Now to update your allowed Apple Health data."
@@ -383,20 +383,20 @@ struct ContentView: View {
         if message.contains("sync") || message.contains("queued upload") || message.contains("outbox") {
             return "Sync Failed"
         }
-        if message.contains("connection") || message.contains("bridge") || message.contains("receiver") {
+        if message.contains("connection") || message.contains("bridge") || message.contains("server") || message.contains("receiver") {
             return "Connection Failed"
         }
         return "Needs Attention"
     }
 
     private var statusColor: Color {
-        if !viewModel.canSendConnectionTest && viewModel.pendingOutboxCount > 0 { return .orange }
-        if !viewModel.canSendConnectionTest { return .red }
-        if viewModel.syncPresentationIsActive { return .green }
-        if viewModel.statusIsError { return .red }
-        if viewModel.pendingOutboxCount > 0 { return .orange }
-        if viewModel.backgroundSyncEnabled || viewModel.healthPermissionsRequested { return .green }
-        return .orange
+        if !viewModel.canSendConnectionTest && viewModel.pendingOutboxCount > 0 { return .relayOrange }
+        if !viewModel.canSendConnectionTest { return .relayRed }
+        if viewModel.syncPresentationIsActive { return .relayGreen }
+        if viewModel.statusIsError { return .relayRed }
+        if viewModel.pendingOutboxCount > 0 { return .relayOrange }
+        if viewModel.backgroundSyncEnabled || viewModel.healthPermissionsRequested { return .relayGreen }
+        return .relayOrange
     }
 
     private var statusSymbol: String {
@@ -471,7 +471,7 @@ private struct ReceiverSettingsView: View {
                         if connectionPreserved, let pendingOutboxCount, pendingOutboxCount > 0 {
                             disconnectFailureMessage = "Queued uploads are waiting on this iPhone. Bring the server back and tap Sync Now to send them, or use Reset Private Sync State in Settings to discard them and rebuild local sync history before disconnecting."
                         } else if connectionPreserved, pendingOutboxCount == nil {
-                            disconnectFailureMessage = "Health Bridge couldn’t verify whether queued uploads remain. Your saved server connection was not removed. Reopen Settings and try again after private storage is available."
+                            disconnectFailureMessage = "HealthRelay couldn’t verify whether queued uploads remain. Your saved server connection was not removed. Reopen Settings and try again after private storage is available."
                         } else {
                             disconnectFailureMessage = CompanionPrimaryStatusMessage.sanitized(
                                 from: message,
@@ -517,7 +517,7 @@ private struct ReceiverSettingsView: View {
         let message = viewModel.statusMessage.lowercased()
         return !viewModel.statusIsError
             && (message.contains("connection check passed")
-                || message.contains("health bridge connected")
+                || message.contains("server connected")
                 || message.contains("local bridge verified")
                 || message.contains("connected to local bridge"))
     }
@@ -537,6 +537,7 @@ private struct ReceiverSettingsView: View {
             || message.contains("receiver")
             || message.contains("bridge url")
             || message.contains("local bridge")
+            || message.contains("your server")
             || message.contains("setup link")
             || message.contains("disconnect")
             || message.contains("queued upload")
@@ -558,12 +559,12 @@ private struct ReceiverSettingsView: View {
                         .font(.headline)
                     Text(viewModel.canSendConnectionTest ? (mailboxFolderIsReady ? "Receiver delivery not verified." : (connectionIsReachable ? "Ready to sync." : "Saved on this iPhone.")) : "Use a setup link to connect.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.relaySecondaryText)
                 }
             } icon: {
                 Image(systemName: viewModel.canSendConnectionTest ? (connectionIsReachable ? "checkmark.circle.fill" : "link.circle.fill") : "xmark.circle.fill")
                     .font(.title3)
-                    .foregroundStyle(viewModel.canSendConnectionTest ? (connectionIsReachable ? .green : .blue) : .red)
+                    .foregroundStyle(viewModel.canSendConnectionTest ? (connectionIsReachable ? .relayGreen : .relayBlue) : .relayRed)
             }
 
             Divider()
@@ -571,12 +572,12 @@ private struct ReceiverSettingsView: View {
             LabeledContent("Mailbox connection key") {
                 Text(viewModel.mailboxKeyLifecycleLabel)
                     .foregroundStyle(
-                        viewModel.mailboxKeyDiagnosticState == .active ? .green : .secondary
+                        viewModel.mailboxKeyDiagnosticState == .active ? .relayGreen : .relaySecondaryText
                     )
             }
             Text(viewModel.mailboxKeyLifecycleDetail)
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.relaySecondaryText)
 
             if viewModel.mailboxKeyDiagnosticState == .lost {
                 Button(role: .destructive) {
@@ -592,9 +593,9 @@ private struct ReceiverSettingsView: View {
 
             PrimaryButton(
                 title: viewModel.usesMailboxTransport ? "Check Mailbox Folder" : "Check Connection",
-                subtitle: viewModel.usesMailboxTransport ? "Verify the encrypted iCloud folder is available" : "Verify Health Bridge is reachable",
+                subtitle: viewModel.usesMailboxTransport ? "Verify the encrypted iCloud folder is available" : "Verify your server is reachable",
                 systemImage: "wifi",
-                tint: .blue,
+                tint: .relayBlue,
                 isDisabled: !viewModel.canSendConnectionTest,
                 isLoading: viewModel.isCheckingConnection
             ) {
@@ -604,7 +605,7 @@ private struct ReceiverSettingsView: View {
             if !connectionNotice.isEmpty {
                 Label(connectionNotice, systemImage: viewModel.statusIsError ? "exclamationmark.triangle.fill" : "info.circle.fill")
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(viewModel.statusIsError ? .orange : .secondary)
+                    .foregroundStyle(viewModel.statusIsError ? .relayOrange : .relaySecondaryText)
                     .padding(.top, 2)
             }
 
@@ -675,7 +676,7 @@ private struct ReceiverSettingsView: View {
                 title: viewModel.canSendConnectionTest ? "Replace Connection" : "Connect from Setup Link",
                 subtitle: "Save connection details securely on this iPhone",
                 systemImage: "link.badge.plus",
-                tint: .accentColor,
+                tint: .relayBlue,
                 isDisabled: !viewModel.canImportPairingText,
                 isLoading: viewModel.isPairing
             ) {
@@ -712,7 +713,7 @@ private struct ReceiverSettingsView: View {
                         title: "Connect with Code",
                         subtitle: "Codes expire and work only once",
                         systemImage: "number.square.fill",
-                        tint: .blue,
+                        tint: .relayBlue,
                         isDisabled: !viewModel.canRedeemManualPairing,
                         isLoading: viewModel.isPairing
                     ) {
@@ -746,9 +747,9 @@ private struct AppDetailsView: View {
             }
 
             Section("Health Permissions") {
-                Text("Apple Health can ask again when supported types become newly available on this iPhone. To review or change what Health Bridge can read, open the Health app > profile picture > Privacy > Apps > Health Bridge.")
+                Text("Apple Health can ask again when supported types become newly available on this iPhone. To review or change what HealthRelay can read, open the Health app > profile picture > Privacy > Apps > HealthRelay.")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.relaySecondaryText)
                 Button("Request Health Access Again") {
                     Task { await viewModel.requestHealthPermissions() }
                 }
@@ -758,7 +759,7 @@ private struct AppDetailsView: View {
             Section("Automatic Sync") {
                 Text(viewModel.automaticSyncCoverageDetail)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.relaySecondaryText)
                 Group {
                     LabeledContent("Current status", value: viewModel.backgroundSyncStatus)
                     LabeledContent("Registration", value: viewModel.automaticSyncRegistrationLine)
@@ -768,11 +769,11 @@ private struct AppDetailsView: View {
                     LabeledContent("Latest lane", value: viewModel.automaticSyncLaneDiagnosticLine)
                 }
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.relaySecondaryText)
                 if !viewModel.mailboxDeliveryDiagnosticLine.isEmpty {
                     Text(viewModel.mailboxDeliveryDiagnosticLine)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.relaySecondaryText)
                 }
             }
 
@@ -795,7 +796,7 @@ private struct AppDetailsView: View {
     }
 
     private var appVersion: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.1"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.0"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "50"
         return "\(version) (\(build))"
     }
@@ -809,7 +810,7 @@ private struct ActivityLogView: View {
             if viewModel.activityLogMessages.isEmpty {
                 Text("No recent activity yet.")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.relaySecondaryText)
             } else {
                 ForEach(Array(viewModel.activityLogMessages.enumerated()), id: \.offset) { _, message in
                     Text(message)
@@ -876,7 +877,7 @@ private struct SettingRowLabel: View {
                 if !subtitle.isEmpty {
                     Text(subtitle)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.relaySecondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -895,7 +896,7 @@ private struct SectionHeader: View {
             if !subtitle.isEmpty {
                 Text(subtitle)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.relaySecondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -919,10 +920,12 @@ private struct PrimaryButton: View {
             } icon: {
                 if isLoading {
                     ProgressView()
+                        .tint(.relayOnTint)
                 } else {
                     Image(systemName: systemImage)
                 }
             }
+            .foregroundStyle(.relayOnTint)
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent)
@@ -968,7 +971,7 @@ private struct CardRow: View {
                     .foregroundStyle(.primary)
                 Text(subtitle)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.relaySecondaryText)
                     .lineLimit(2)
             }
             Spacer(minLength: 0)
@@ -994,6 +997,18 @@ private struct RowDivider: View {
     var body: some View {
         Divider().padding(.leading, 66)
     }
+}
+
+// Contrast-checked tints (Assets.xcassets): dark shades carry white text in light mode,
+// light shades carry black text in dark mode. Each pair clears 4.5:1.
+private extension ShapeStyle where Self == Color {
+    static var relayGreen: Color { Color("RelayGreen") }
+    static var relayOrange: Color { Color("RelayOrange") }
+    static var relayRed: Color { Color("RelayRed") }
+    static var relayBlue: Color { Color("RelayBlue") }
+    static var relayIndigo: Color { Color("RelayIndigo") }
+    static var relayOnTint: Color { Color("RelayOnTint") }
+    static var relaySecondaryText: Color { Color("RelaySecondaryText") }
 }
 
 private enum HealthBridgeSpacing {
