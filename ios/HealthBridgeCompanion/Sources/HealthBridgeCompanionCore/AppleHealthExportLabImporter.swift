@@ -1,14 +1,14 @@
 import CryptoKit
 import Foundation
-import ZIPFoundation
 
 /// HealthRelay addition: parses an Apple Health `export.zip` on-device to find lab
 /// results. This is the export importer's only record family -- ECG and medications
 /// already sync live via HealthKit and never need a manual export (see
 /// `HealthBridgeLabResult`). Only `clinical-records/*.json` entries are read; nothing
-/// else in the zip is opened, and nothing is ever written to disk -- each small member
-/// is streamed straight into memory via ZIPFoundation's consumer closure, matching the
-/// host-side `health_insights.labs` reference parser's field extraction.
+/// else in the zip is opened, and nothing is ever written to disk -- `MinimalZipReader`
+/// streams each small member straight into memory (see that type for why this is a
+/// hand-written reader, not a third-party package), matching the host-side
+/// `health_insights.labs` reference parser's field extraction.
 public enum AppleHealthExportLabImporter {
     /// Distinct from the live HealthKit lanes' `apple_health.phone` so rows are
     /// traceable to a manual export rather than a live sync.
@@ -27,7 +27,10 @@ public enum AppleHealthExportLabImporter {
     }
 
     public static func importLabResults(fromZipAt url: URL) throws -> Summary {
-        guard let archive = try? Archive(url: url, accessMode: .read) else {
+        let entries: [MinimalZipReader.Entry]
+        do {
+            entries = try MinimalZipReader.listEntries(at: url)
+        } catch {
             throw ImportError.cannotOpenArchive
         }
 
@@ -35,21 +38,15 @@ public enum AppleHealthExportLabImporter {
         var observationCount = 0
         var skippedCount = 0
 
-        for entry in archive {
-            guard entry.type == .file,
-                  entry.path.hasPrefix("clinical-records/"),
+        for entry in entries {
+            guard entry.path.hasPrefix("clinical-records/"),
                   entry.path.hasSuffix(".json")
             else {
                 continue
             }
 
-            var data = Data()
-            data.reserveCapacity(Int(entry.uncompressedSize))
-            _ = try? archive.extract(entry) { chunk in
-                data.append(chunk)
-            }
-
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            guard let data = try? MinimalZipReader.readEntryData(entry, from: url),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   (json["resourceType"] as? String) == "Observation"
             else {
                 continue
