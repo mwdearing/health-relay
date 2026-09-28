@@ -1,3 +1,5 @@
+> **HealthRelay** is a private fork of Apple Health AI Bridge (Apache-2.0). See `FORK.md` and `NOTICE`. The upstream README follows; product names, App Store links and website below refer to the upstream project.
+
 <div align="center">
   <img src="assets/brand/health-bridge-lockup.png" alt="Health Bridge for AI" width="520">
   <p><strong>Your Apple Health data, continuously available to your own AI agent.</strong></p>
