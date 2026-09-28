@@ -1,12 +1,10 @@
 name: Python CI
 
+# HealthRelay fork: manual runs only until there is something worth building (2026-09-27).
 on:
   push:
-    branches:
-      - main
     tags:
       - "ios-v*"
-  pull_request:
   workflow_dispatch:
 
 permissions:

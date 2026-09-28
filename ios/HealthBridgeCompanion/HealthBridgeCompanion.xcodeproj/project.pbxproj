@@ -374,7 +374,7 @@
 				INFOPLIST_KEY_CFBundleVersion = 17;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks");
-				PRODUCT_BUNDLE_IDENTIFIER = com.mwdearing.HealthRelayTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.HealthBridgeCompanionAppTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -394,7 +394,7 @@
 				INFOPLIST_KEY_CFBundleVersion = 17;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks");
-				PRODUCT_BUNDLE_IDENTIFIER = com.mwdearing.HealthRelayTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.HealthBridgeCompanionAppTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -543,7 +543,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
 				MARKETING_VERSION = 1.1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.mwdearing.HealthRelay;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.HealthBridgeCompanion;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -579,7 +579,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
 				MARKETING_VERSION = 1.1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.mwdearing.HealthRelay;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.HealthBridgeCompanion;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;

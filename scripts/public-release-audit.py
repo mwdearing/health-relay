@@ -46,14 +46,13 @@ BINARYISH_SUFFIXES = {
 }
 
 INTENTIONAL_BRAND_MEDIA = {
-    Path("assets/brand/health-bridge-lockup.png"),
-    Path("assets/brand/health-bridge-social-card.png"),
-    Path("assets/brand/health-bridge-mark-1024.png"),
-    Path("assets/brand/health-bridge-mark-512.png"),
-    Path("assets/brand/apple-touch-icon.png"),
-    Path("assets/brand/favicon-48.png"),
-    Path("assets/brand/favicon-32.png"),
-    Path("assets/brand/favicon-16.png"),
+    Path("assets/brand/healthrelay-lockup.png"),
+    Path("assets/brand/healthrelay-mark-1024.png"),
+    Path("assets/brand/healthrelay-mark-512.png"),
+    Path("assets/brand/healthrelay-mark-180.png"),
+    Path("assets/brand/healthrelay-mark-48.png"),
+    Path("assets/brand/healthrelay-mark-32.png"),
+    Path("assets/brand/healthrelay-mark-16.png"),
 }
 
 MARKERS = (
