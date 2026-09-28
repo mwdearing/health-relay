@@ -50,6 +50,7 @@ MIGRATION_IDS: Final = (
     DELIVERY_RECEIPT_MIGRATION_ID,
     "009_pairing_transport",
     "010_electrocardiograms",
+    "011_medication_dose_events",
 )
 
 

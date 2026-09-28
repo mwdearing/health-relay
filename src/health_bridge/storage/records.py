@@ -72,6 +72,19 @@ UPSERT_ELECTROCARDIOGRAM_SQL = (
     "electrocardiograms.voltages_json), "
     "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
 )
+UPSERT_MEDICATION_DOSE_EVENT_SQL = (
+    "insert into medication_dose_events (source_id, client_record_id, "
+    "medication_name, medication_concept_key, status, status_raw, "
+    "start_time, scheduled_time, dose, unit) "
+    "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+    "on conflict(source_id, client_record_id) do update set "
+    "medication_name = excluded.medication_name, "
+    "medication_concept_key = excluded.medication_concept_key, "
+    "status = excluded.status, status_raw = excluded.status_raw, "
+    "start_time = excluded.start_time, scheduled_time = excluded.scheduled_time, "
+    "dose = excluded.dose, unit = excluded.unit, "
+    "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
+)
 
 
 def upsert_batch_records(
@@ -83,6 +96,7 @@ def upsert_batch_records(
     _upsert_samples(connection, batch)
     _upsert_workouts(connection, batch)
     _upsert_electrocardiograms(connection, batch)
+    _upsert_medication_dose_events(connection, batch)
     upsert_sleep_sessions(connection, batch, sleep_reset_plan)
     upsert_sync_state(
         connection,
@@ -293,5 +307,35 @@ def _upsert_electrocardiograms(
                 ecg.sampling_frequency_hz,
                 ecg.voltage_count,
                 voltages_json,
+            ),
+        )
+
+
+def _upsert_medication_dose_events(
+    connection: sqlite3.Connection,
+    batch: HealthBridgeBatchV1,
+) -> None:
+    for med in batch.medication_dose_events:
+        current_source_id = source_id(connection, med.source_key)
+        if record_is_tombstoned(
+            connection,
+            source_id_value=current_source_id,
+            record_family="medication_dose_event",
+            client_record_id=med.client_record_id,
+        ):
+            continue
+        _ = connection.execute(
+            UPSERT_MEDICATION_DOSE_EVENT_SQL,
+            (
+                current_source_id,
+                med.client_record_id,
+                med.medication_name,
+                med.medication_concept_key,
+                med.status,
+                med.status_raw,
+                med.start_time,
+                med.scheduled_time,
+                med.dose,
+                med.unit,
             ),
         )
