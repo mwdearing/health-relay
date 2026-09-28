@@ -84,7 +84,7 @@ PurgeIdentity: TypeAlias = tuple[int, int, int, int, int]
 SMOKE_RESPONSE_ADAPTER: Final[TypeAdapter[SmokeResponse]] = TypeAdapter(SmokeResponse)
 PURGE_SIDECAR_SUFFIXES: Final = ("", "-journal", "-wal", "-shm")
 PURGE_WARNING: Final = (
-    "Stop the receiver before confirming. This removes only the local Health Bridge "
+    "Stop the receiver before confirming. This removes only the local HealthRelay "
     "SQLite database and its sidecars; it does not delete Apple Health data."
 )
 
