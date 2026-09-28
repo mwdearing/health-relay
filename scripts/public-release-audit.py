@@ -47,6 +47,7 @@ BINARYISH_SUFFIXES = {
 
 INTENTIONAL_BRAND_MEDIA = {
     Path("assets/brand/healthrelay-lockup.png"),
+    Path("assets/brand/healthrelay-lockup-dark.png"),
     Path("assets/brand/healthrelay-mark-1024.png"),
     Path("assets/brand/healthrelay-mark-512.png"),
     Path("assets/brand/healthrelay-mark-180.png"),

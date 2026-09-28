@@ -15,6 +15,7 @@ XCODE_PROJECT = Path(
 
 CANONICAL_BRAND_PNGS = {
     BRAND / "healthrelay-lockup.png": (720, 200),
+    BRAND / "healthrelay-lockup-dark.png": (720, 200),
     BRAND / "healthrelay-mark-1024.png": (1024, 1024),
     BRAND / "healthrelay-mark-512.png": (512, 512),
     BRAND / "healthrelay-mark-180.png": (180, 180),
@@ -82,6 +83,11 @@ def test_generator_is_pillow_only_and_documented() -> None:
 def test_readme_uses_healthrelay_lockup_and_brand_guide() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
     assert '<img src="assets/brand/healthrelay-lockup.png"' in readme
+    # Dark-theme viewers get the light-text lockup; ink text vanishes on dark.
+    assert (
+        '<source media="(prefers-color-scheme: dark)" '
+        'srcset="assets/brand/healthrelay-lockup-dark.png">'
+    ) in readme
     assert "health-bridge-lockup" not in readme
     assert "docs/brand.md" in readme
 
