@@ -32,6 +32,7 @@ Required fields:
 Optional fields (HealthRelay fork; additive under major version `1`):
 
 - `electrocardiograms`
+- `medication_dose_events`
 
 All timestamps are UTC ISO 8601 strings ending in `Z`. Values are observations
 with source context, not interpretations.
@@ -82,6 +83,18 @@ and `voltages_microvolts`. When `voltages_microvolts` is present its length must
 equal `voltage_count`; a summary-only record omits it. A tombstone uses
 `record_family` `electrocardiogram`. Receivers that predate the field ignore
 the array.
+
+## Medication dose events
+
+Optional array (HealthRelay fork addition). Each record is one HealthKit medication
+dose event: `client_record_id`, `source_key`, `medication_name`, optional
+`medication_concept_key` (a stable hash of the HealthKit concept identifier),
+`status` (`taken`, `skipped`, `not_interacted`, `snoozed`, `not_logged`,
+`notification_not_sent`, `unknown`), `status_raw` (HealthKit's raw log status),
+`start_time`, and optional `scheduled_time`, `dose` and `unit`. A tombstone uses
+`record_family` `medication_dose_event`. Receivers that predate the field ignore the
+array. These records identify medications by name; the receiver stores them locally
+and never forwards them.
 
 ## Sleep
 

@@ -236,6 +236,42 @@ class Electrocardiogram(StrictModel):
         return self
 
 
+MedicationDoseStatus: TypeAlias = Literal[
+    "taken",
+    "skipped",
+    "not_interacted",
+    "snoozed",
+    "not_logged",
+    "notification_not_sent",
+    "unknown",
+]
+
+
+class MedicationDoseEvent(StrictModel):
+    """One HealthKit medication dose event (HealthRelay fork, optional top-level array).
+
+    Names and doses are the user's own records; the receiver stores them as-is and the
+    host decides what may leave it (Telegram gets counts only).
+    """
+
+    client_record_id: SyntheticRecordId
+    source_key: SyntheticSourceKey
+    medication_name: NonEmptyString
+    medication_concept_key: OmittableString = None
+    status: MedicationDoseStatus
+    status_raw: int
+    start_time: UtcTimestamp
+    scheduled_time: OmittableString = None
+    dose: OmittableNonNegativeFloat = None
+    unit: OmittableString = None
+
+    @model_validator(mode="after")
+    def reject_invalid_scheduled_time(self) -> Self:
+        if self.scheduled_time is not None:
+            _ = validate_utc_timestamp(self.scheduled_time)
+        return self
+
+
 class SleepStageInterval(StrictModel):
     stage: Literal["in_bed", "awake", "core", "deep", "rem"]
     start_time: UtcTimestamp
@@ -270,7 +306,13 @@ class SleepSession(StrictModel):
 
 
 class DeletedRecord(StrictModel):
-    record_family: Literal["sample", "workout", "sleep_session", "electrocardiogram"]
+    record_family: Literal[
+        "sample",
+        "workout",
+        "sleep_session",
+        "electrocardiogram",
+        "medication_dose_event",
+    ]
     source_key: SyntheticSourceKey
     client_record_id: SyntheticRecordId
     deleted_at: UtcTimestamp
@@ -297,6 +339,7 @@ class HealthBridgeBatchV1(StrictModel):
     samples: tuple[Sample, ...]
     workouts: tuple[Workout, ...]
     electrocardiograms: tuple[Electrocardiogram, ...] = ()
+    medication_dose_events: tuple[MedicationDoseEvent, ...] = ()
     sleep_sessions: tuple[SleepSession, ...]
     deleted_records: tuple[DeletedRecord, ...]
     sync: SyncContext
