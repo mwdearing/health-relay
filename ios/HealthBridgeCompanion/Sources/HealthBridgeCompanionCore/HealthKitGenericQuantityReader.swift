@@ -133,6 +133,12 @@ public enum HealthKitQuantitySampleMapper {
             return .count()
         case "kcal":
             return .kilocalorie()
+        case "g":
+            return .gram()
+        case "mg":
+            return HKUnit.gramUnit(with: .milli)
+        case "mcg":
+            return HKUnit.gramUnit(with: .micro)
         case "m", "meters":
             return .meter()
         case "mL/kg/min":
