@@ -39,7 +39,13 @@ public enum AppleHealthExportLabImporter {
         var skippedCount = 0
 
         for entry in entries {
-            guard entry.path.hasPrefix("clinical-records/"),
+            // A real export.zip nests everything under a top-level folder (typically
+            // "apple_health_export/"), so "clinical-records/" is a path COMPONENT, not
+            // necessarily a prefix -- matching only the prefix (the original bug found
+            // on a real device 2026-09-28) silently found zero entries. `health_insights.
+            // labs`'s reference parser doesn't even check a directory, just `.json`; this
+            // stays scoped to clinical-records specifically, just not anchored to root.
+            guard entry.path.contains("clinical-records/"),
                   entry.path.hasSuffix(".json")
             else {
                 continue
