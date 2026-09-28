@@ -7,3 +7,9 @@ regexTarget = "secret"
 regexes = [
   '''^(?:Curve25519\.(?:KeyAgreement|Signing)\.PrivateKey|(?:Ed25519|X25519)PrivateKey)$''',
 ]
+[[allowlists]]
+description = "HealthRelay synthetic medication concept keys in tests and fixtures ('c' + 12 hex): a hash label, not a credential"
+regexTarget = "secret"
+regexes = [
+  '''^c[0-9a-f]{12}$''',
+]
