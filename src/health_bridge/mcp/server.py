@@ -237,6 +237,7 @@ def _smoke_context_result(text: str) -> JsonObject:
         "token_hash",
         "bearer_token",
         "healthbridge://pair",
+        "healthrelay://pair",
     )
     forbidden_hits: list[JsonValue] = [
         marker for marker in forbidden_markers if marker in text

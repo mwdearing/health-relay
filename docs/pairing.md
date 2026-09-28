@@ -19,7 +19,7 @@ receiver creates a 20-minute single-use invitation
 → Health permissions and Sync Now happen after pairing
 ```
 
-QR, the `healthbridge://pair` link, and manual server-plus-code entry are delivery methods for the **same invitation**. They are not separate authentication systems.
+QR, the `healthrelay://pair` link (HealthRelay's own scheme; `healthbridge://pair` links from older setup pages still decode), and manual server-plus-code entry are delivery methods for the **same invitation**. They are not separate authentication systems.
 
 Pairing is not proof of sync by itself. A release claim needs a receiver-side sync run and redacted local status/MCP output after the user grants Health read permission and taps the primary sync action.
 
@@ -30,7 +30,7 @@ Use these in order:
 | Method | Best for | Expected reliability | Notes |
 | --- | --- | --- | --- |
 | Setup page QR | Laptop/desktop/tablet screen plus iPhone Camera | Best default | QR contains the temporary invitation secret, not a long-lived receiver credential. |
-| Setup page button | Setup page already open on the iPhone | Good | Uses `healthbridge://pair`; browser/app handoff can vary by iOS/browser state. |
+| Setup page button | Setup page already open on the iPhone | Good | Uses `healthrelay://pair`; browser/app handoff can vary by iOS/browser state. |
 | Paste setup link | QR/button unavailable | Fallback | Paste only inside Health Bridge. The link is private until expiry or redemption. |
 | Server address + invitation code | Camera, browser handoff, accessibility, or one-device fallback | Supported fallback | The grouped code is case-insensitive, expires with the invitation, and works once. |
 | `devicectl --payload-url` | Local development/QA only | Developer shortcut | Not a public onboarding path and not evidence that normal user pairing is understandable. |
@@ -235,7 +235,7 @@ Do not use legacy v1 for normal onboarding. Removal of v1 generation/parsing sho
 
 ## Universal Link boundary
 
-Core parsing accepts a future HTTPS `/pair?payload=...` route in addition to `healthbridge://pair`, and the app has a browsing-activity routing boundary. This does **not** mean Universal Links are currently deployed.
+Core parsing accepts a future HTTPS `/pair?payload=...` route in addition to `healthrelay://pair` (and the legacy `healthbridge://pair`), and the app has a browsing-activity routing boundary. This does **not** mean Universal Links are currently deployed.
 
 A production Universal Link still requires:
 
