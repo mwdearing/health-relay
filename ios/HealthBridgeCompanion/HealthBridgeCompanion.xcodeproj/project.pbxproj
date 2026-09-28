@@ -374,7 +374,7 @@
 				INFOPLIST_KEY_CFBundleVersion = 17;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks");
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.HealthBridgeCompanionAppTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mwdearing.HealthRelayTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -394,7 +394,7 @@
 				INFOPLIST_KEY_CFBundleVersion = 17;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks");
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.HealthBridgeCompanionAppTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mwdearing.HealthRelayTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -533,7 +533,7 @@
 				INFOPLIST_FILE = App/Info.plist;
 				INFOPLIST_PREPROCESS = YES;
 				INFOPLIST_PREPROCESSOR_DEFINITIONS = "HEALTH_BRIDGE_PRODUCTION_DOCUMENTS_CONTAINER=$(HEALTH_BRIDGE_ICLOUD_CONTAINER_IDENTIFIER)";
-				INFOPLIST_KEY_CFBundleDisplayName = "Health Bridge";
+				INFOPLIST_KEY_CFBundleDisplayName = "HealthRelay";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Health Bridge reads selected Apple Health data to send user-owned local batches to your receiver.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Health Bridge does not write data to Apple Health; it only reads selected Apple Health data to sync user-owned local batches to your receiver.";
@@ -543,7 +543,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
 				MARKETING_VERSION = 1.1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.HealthBridgeCompanion;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mwdearing.HealthRelay;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -569,7 +569,7 @@
 				INFOPLIST_FILE = App/Info.plist;
 				INFOPLIST_PREPROCESS = YES;
 				INFOPLIST_PREPROCESSOR_DEFINITIONS = "HEALTH_BRIDGE_PRODUCTION_DOCUMENTS_CONTAINER=$(HEALTH_BRIDGE_ICLOUD_CONTAINER_IDENTIFIER)";
-				INFOPLIST_KEY_CFBundleDisplayName = "Health Bridge";
+				INFOPLIST_KEY_CFBundleDisplayName = "HealthRelay";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Health Bridge reads selected Apple Health data to send user-owned local batches to your receiver.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Health Bridge does not write data to Apple Health; it only reads selected Apple Health data to sync user-owned local batches to your receiver.";
@@ -579,7 +579,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
 				MARKETING_VERSION = 1.1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.HealthBridgeCompanion;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mwdearing.HealthRelay;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
