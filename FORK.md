@@ -30,8 +30,9 @@ receiver-specific parts stay here.
   and `CompanionPrimaryStatusMessage` matchers updated in step, with their tests. Added
   contrast-checked color sets (`RelayGreen`, `RelayOrange`, `RelayRed`, `RelayBlue`,
   `RelayIndigo`, `RelayOnTint`, `RelaySecondaryText`; every text pair at least 4.5:1 in light
-  and dark) and switched `ContentView` off the system tints and `.secondary` text. Marketing
-  version left at 1.1.1: it moves in lockstep with the receiver release guardrails.
+  and dark) and switched `ContentView` off the system tints and `.secondary` text. iOS
+  marketing version 1.1.1 → 1.2.0 (project and the About fallback); Receiver/CLI stays 1.1.1
+  per docs/versioning.md's independent component versions.
 - 2026-09-28: the unsigned-IPA workflow stamps `MARKETING_VERSION` (input, default 1.2.0) and
   `CURRENT_PROJECT_VERSION` = workflow run number at build time, so every build is distinguishable
   on the phone (Michael: the version did not change between installs). The tracked project keeps
