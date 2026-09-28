@@ -24,6 +24,13 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: medication dose events, contract only (B2 step 3a). Optional top-level
+  `medication_dose_events` array (`$defs/medicationDoseEvent`: name, optional concept key,
+  status enum + raw, start/scheduled UTC times, optional dose/unit), tombstone family
+  `medication_dose_event`, `MedicationDoseEvent` pydantic model, fixture
+  `fixtures/health_bridge_batch_v1.medication.synthetic.json`, docs. Receiver storage/ingest
+  (migration 011) and the iOS reader follow as separate steps; until then the receiver parses
+  and ignores the array.
 - 2026-09-28: ECG app lane. `syncRecentElectrocardiograms()` in the view model (foreground,
   30-day fallback window, 3-day replay overlap, cursor `foreground_electrocardiogram_sync`),
   run as a manual-sync lane after sleep; `electrocardiogram` is now a dedicated sync type, so it

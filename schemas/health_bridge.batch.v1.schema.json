@@ -47,6 +47,10 @@
       "type": "array",
       "items": { "$ref": "#/$defs/electrocardiogram" }
     },
+    "medication_dose_events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/medicationDoseEvent" }
+    },
     "sleep_sessions": {
       "type": "array",
       "items": { "$ref": "#/$defs/sleepSession" }
@@ -189,6 +193,40 @@
         "voltages_microvolts": { "type": "array", "items": { "type": "number" } }
       }
     },
+    "medicationDoseEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "client_record_id",
+        "source_key",
+        "medication_name",
+        "status",
+        "status_raw",
+        "start_time"
+      ],
+      "properties": {
+        "client_record_id": { "type": "string", "pattern": "^(synthetic|hk)-[a-z0-9-]+$" },
+        "source_key": { "type": "string", "pattern": "^(synthetic|apple_health)\\.[a-z0-9_.-]+$" },
+        "medication_name": { "type": "string", "minLength": 1 },
+        "medication_concept_key": { "type": "string", "minLength": 1 },
+        "status": {
+          "enum": [
+            "taken",
+            "skipped",
+            "not_interacted",
+            "snoozed",
+            "not_logged",
+            "notification_not_sent",
+            "unknown"
+          ]
+        },
+        "status_raw": { "type": "integer" },
+        "start_time": { "$ref": "#/$defs/utcTimestamp" },
+        "scheduled_time": { "$ref": "#/$defs/utcTimestamp" },
+        "dose": { "type": "number", "minimum": 0 },
+        "unit": { "type": "string", "minLength": 1 }
+      }
+    },
     "sleepStageInterval": {
       "type": "object",
       "additionalProperties": false,
@@ -220,7 +258,13 @@
       "required": ["record_family", "source_key", "client_record_id", "deleted_at"],
       "properties": {
         "record_family": {
-          "enum": ["sample", "workout", "sleep_session", "electrocardiogram"]
+          "enum": [
+            "sample",
+            "workout",
+            "sleep_session",
+            "electrocardiogram",
+            "medication_dose_event"
+          ]
         },
         "source_key": { "type": "string", "pattern": "^(synthetic|apple_health)\\.[a-z0-9_.-]+$" },
         "client_record_id": { "type": "string", "pattern": "^(synthetic|hk)-[a-z0-9-]+$" },
