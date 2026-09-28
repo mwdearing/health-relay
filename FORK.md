@@ -32,6 +32,10 @@ receiver-specific parts stay here.
   `RelayIndigo`, `RelayOnTint`, `RelaySecondaryText`; every text pair at least 4.5:1 in light
   and dark) and switched `ContentView` off the system tints and `.secondary` text. Marketing
   version left at 1.1.1: it moves in lockstep with the receiver release guardrails.
+- 2026-09-28: the unsigned-IPA workflow stamps `MARKETING_VERSION` (input, default 1.2.0) and
+  `CURRENT_PROJECT_VERSION` = workflow run number at build time, so every build is distinguishable
+  on the phone (Michael: the version did not change between installs). The tracked project keeps
+  upstream's 1.1.1/50 so the release guardrails stay untouched.
 - 2026-09-28: fix: the automatic sync engine scheduled `electrocardiogram` as a quantity lane
   (found on device: `quantity[electrocardiogram]:attempted/not_run`, cycle deferred). New
   `supportedAutomaticLaneTypeCodes` = unified read set filtered by catalog `backgroundEligible`;
