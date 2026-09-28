@@ -55,6 +55,7 @@ EXPECTED_TABLES = {
     "sleep_baseline_namespaces",
     "delivery_receipts",
     "electrocardiograms",
+    "medication_dose_events",
 }
 
 
@@ -483,6 +484,7 @@ def test_initialize_database_creates_core_tables_when_database_is_empty(
         ("008_delivery_receipts",),
         ("009_pairing_transport",),
         ("010_electrocardiograms",),
+        ("011_medication_dose_events",),
     ]
 
 
@@ -501,7 +503,7 @@ def test_initialize_database_is_idempotent_when_called_twice(tmp_path: Path) -> 
             "select count(*) from schema_migrations",
         )
 
-    assert migration_count == 10
+    assert migration_count == 11
 
 
 def _create_legacy_sleep_revision_database(db_path: Path) -> None:

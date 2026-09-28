@@ -123,6 +123,12 @@ def _successful_result(batch: HealthBridgeBatchV1) -> IngestResult:
                 for ecg in batch.electrocardiograms
             },
         ),
+        medication_dose_event_count=len(
+            {
+                (med.source_key, med.client_record_id)
+                for med in batch.medication_dose_events
+            },
+        ),
     )
 
 

@@ -24,6 +24,7 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: receiver storage for medication dose events: migration 011 (table + sync_runs count), upsert with tombstone respect, ingest count, tests.
 - 2026-09-28: medication dose events, contract only (B2 step 3a). Optional top-level
   `medication_dose_events` array (`$defs/medicationDoseEvent`: name, optional concept key,
   status enum + raw, start/scheduled UTC times, optional dose/unit), tombstone family
