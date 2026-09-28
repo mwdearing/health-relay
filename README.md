@@ -1,20 +1,56 @@
-> HealthRelay is a private fork of Apple Health AI Bridge (Apache-2.0). See `FORK.md` and `NOTICE`. This README is adapted from upstream's; the upstream product (Health Bridge for AI, on the App Store) is a separate app and is not needed for HealthRelay.
-
 <div align="center">
-  <img src="assets/brand/healthrelay-lockup.png" alt="HealthRelay" width="520">
-  <p><strong>Your Apple Health data, continuously available to your own AI agent.</strong></p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/healthrelay-lockup-dark.png">
+    <img src="assets/brand/healthrelay-lockup.png" alt="HealthRelay: Apple Health to your own receiver" width="520">
+  </picture>
+
+  <h3>Your Apple Health data, continuously available to your own AI agent.</h3>
+
+  <p>Self-hosted receiver · read-only AI access · no hosted relay, no third-party model</p>
+
   <p>
-    <a href="#1-build-and-install-the-iphone-app">Build the iPhone app</a> ·
-    <a href="docs/setup.md">Set up your bridge</a> ·
-    <a href="docs/supported-health-data.md">Supported health data</a>
+    <img alt="iOS 18 or later" src="https://img.shields.io/badge/iOS-18%2B-0F6B78?style=flat-square">
+    <img alt="Receiver/CLI 1.1.1" src="https://img.shields.io/badge/Receiver%2FCLI-1.1.1-0F6B78?style=flat-square">
+    <img alt="MCP read-only" src="https://img.shields.io/badge/MCP-read--only-0F6B78?style=flat-square">
+    <img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-4B5563?style=flat-square">
+  </p>
+
+  <p>
+    <a href="#1-build-and-install-the-iphone-app"><strong>Build the iPhone app</strong></a> ·
+    <a href="docs/setup.md"><strong>Set up your bridge</strong></a> ·
+    <a href="docs/supported-health-data.md"><strong>Supported health data</strong></a> ·
+    <a href="#privacy-and-security"><strong>Privacy</strong></a>
   </p>
 </div>
 
----
+> [!NOTE]
+> **HealthRelay is a private fork of Apple Health AI Bridge** (Apache-2.0). See [`FORK.md`](FORK.md) and [`NOTICE`](NOTICE). This README is adapted from upstream's; the upstream product (Health Bridge for AI, on the App Store) is a separate app and is not needed for HealthRelay.
 
-HealthRelay adds electrocardiograms, the full set of HealthKit dietary nutrients and medication dose events to Apple Health AI Bridge, the open-source project behind Health Bridge for AI. It is built and installed by you; there is no App Store listing.
+## What HealthRelay adds
 
-The project gives you a direct, self-hosted path from Apple Health to the AI tools you choose—without routing it through a hosted intermediary. The iPhone companion continuously sends the HealthKit data you permit to a receiver you control, where read-only CLI and MCP interfaces make it available to compatible agents.
+HealthRelay builds on Apple Health AI Bridge, the open-source project behind Health Bridge for AI, and reads Apple Health data the upstream app leaves out:
+
+| Data | What syncs |
+| --- | --- |
+| **Electrocardiograms** | Apple Watch ECG recordings, synced alongside the rest of your history |
+| **Dietary nutrients** | The full set of HealthKit dietary and nutrient types, not a subset |
+| **Medication dose events** | Logged doses from the Health app's Medications feature (iOS 26 and later) |
+
+It is built and installed by you; there is no App Store listing.
+
+## How it works
+
+```mermaid
+flowchart LR
+    phone["iPhone app<br/>HealthKit, read-only"]
+    receiver["Your receiver<br/>SQLite on your machine"]
+    agent["Your AI agent"]
+    phone -- "private HTTPS or LAN" --> receiver
+    phone -. "iCloud Mailbox, Beta" .-> receiver
+    receiver -- "read-only MCP" --> agent
+```
+
+The project gives you a direct, self-hosted path from Apple Health to the AI tools you choose, without routing it through a hosted intermediary. The iPhone companion continuously sends the HealthKit data you permit to a receiver you control, where read-only CLI and MCP interfaces make it available to compatible agents.
 
 Your health data stays under your control: the receiver and database run on your infrastructure, AI access is read-only, and no hosted relay or third-party model is required.
 
@@ -22,7 +58,7 @@ Automatic background sync is designed for continuous use. iOS controls backgroun
 
 ## Set up the bridge
 
-You need:
+**You need:**
 
 - an iPhone running iOS 18 or later;
 - a macOS or Linux computer that will run the receiver and store the private database; native Windows is not currently supported;
@@ -34,20 +70,24 @@ You need:
 
 HealthRelay is not on the App Store. Build it yourself, then sign and install it with your own Apple developer identity (a sideload signer or Xcode):
 
-- **GitHub Actions:** run the `Build unsigned IPA` workflow (Actions → Build unsigned IPA → Run workflow) with your bundle identifier and marketing version; download the `HealthRelay-unsigned-ipa-*` artifact and sign it on your phone or Mac.
+- **GitHub Actions:** run the `Build unsigned IPA` workflow (Actions → Build unsigned IPA → Run workflow) with your bundle identifier and marketing version, download the `HealthRelay-unsigned-ipa-*` artifact, and sign it on your phone or Mac.
 - **Xcode 16 or later:** follow [docs/self-build.md](docs/self-build.md).
 
-If you previously used the upstream Health Bridge for AI app, remove it before pairing HealthRelay: both apps register the same pairing link, and a scanned QR code would otherwise open the old app.
+> [!TIP]
+> If you previously used the upstream Health Bridge for AI app, remove it before pairing HealthRelay so a scanned pairing QR code opens the right app.
 
 ### 2. Prepare the receiver route
 
 The project does not give you a receiver URL. The URL is the private address by which the iPhone reaches your receiver computer, and it must exist before core setup can create pairing material.
 
-- **Already use Tailscale:** use the private Tailscale Serve HTTPS path documented in the [setup guide](docs/setup.md#route-a-already-use-tailscale). Tailscale is an option for existing users, not a product requirement.
-- **Agent-assisted private HTTPS ingress:** use the setup guide's agent-assisted path. The setup agent must inspect first, show every proposed DNS, tunnel, proxy, firewall, and service change, and wait for approval before applying it.
-- **Local network only:** supported as a deliberate local-only fallback, but automatic sync stops when the iPhone leaves that network.
+| Route | Best for | Notes |
+| --- | --- | --- |
+| **A. Tailscale Serve** | You already use Tailscale | Private HTTPS, documented in the [setup guide](docs/setup.md#route-a-already-use-tailscale). An option for existing users, not a requirement. |
+| **B. Agent-assisted private HTTPS ingress** | Everyone else wanting sync away from home | The setup agent inspects first, shows every proposed DNS, tunnel, proxy, firewall, and service change, and waits for approval before applying it. |
+| **C. Local network only** | A deliberate local-only evaluation | Automatic sync stops when the iPhone leaves that network. |
 
-Do not copy a sample hostname, expose receiver port `8765` directly to the public internet, or publish the pairing page. Follow the complete [receiver setup guide](docs/setup.md) to produce and verify the real route.
+> [!WARNING]
+> Do not copy a sample hostname, expose receiver port `8765` directly to the public internet, or publish the pairing page. Follow the complete [receiver setup guide](docs/setup.md) to produce and verify the real route.
 
 ### 3. Install and run setup
 
@@ -63,7 +103,10 @@ The route-specific guide sets `HEALTH_BRIDGE_RECEIVER_URL` to the exact configur
 health-bridge setup --receiver-url "$HEALTH_BRIDGE_RECEIVER_URL"
 ```
 
-For the deliberate Route C local-network-only fallback, use the same real LAN URL and the required non-loopback bind:
+<details>
+<summary><strong>Route C: local-network-only setup command</strong></summary>
+
+Use the same real LAN URL and the required non-loopback bind:
 
 ```bash
 health-bridge setup \
@@ -72,50 +115,53 @@ health-bridge setup \
   --receiver-port 8765
 ```
 
-`health-bridge setup` creates the private SQLite database and single-use pairing page, prepares the receiver command, emits a canonical same-host stdio MCP descriptor, verifies the local Health Bridge MCP process, and detects client adapters without modifying them.
+</details>
+
+`health-bridge setup` creates the private SQLite database and single-use pairing page, prepares the receiver command, emits a canonical same-host stdio MCP descriptor, verifies the local MCP process, and detects client adapters without modifying them.
 
 A successful local MCP check does not prove receiver readiness or phone reachability. Put the printed receiver command under the host's approved service manager, start it, require `{"status":"ok"}` from the printed local `/health` URL, and then require the same response from the exact phone-facing `/health` URL on the physical iPhone. Routes A and B use HTTPS; Route C uses HTTP only on the same trusted LAN.
 
 Adding a client creates another process that can read the private health database, so setup never does that automatically. Use an explicit `--configure-client <name>` only after choosing the client.
 
-### Delivery transports
+<details>
+<summary><strong>Delivery transports: Direct and Encrypted iCloud Mailbox (Beta)</strong></summary>
 
 Direct is the default transport, including direct private HTTPS and trusted-LAN setups. Encrypted iCloud Mailbox is an explicit opt-in, Mac-only Beta; a Direct failure never switches transports automatically.
 
 The Beta applies application-layer encryption and signatures before an envelope reaches the user's iCloud container. The user's Mac receiver decrypts and commits accepted batches, then returns an encrypted, signed ACK; the app advances committed local progress only after validating a committed ACK. The iCloud container and receiver remain user-owned. Mailbox ACK publication also requires the exact signed, notarized macOS helper published with Receiver/CLI `1.1.1`; users verify and explicitly install it before the optional per-user LaunchAgent. Follow the [mailbox service guide](docs/icloud-mailbox-service.md).
 
+</details>
+
 ### 4. Pair and sync
 
 1. Continue only after the supervised receiver, local health check, and physical-iPhone health check all pass.
-2. On the receiver computer, open the generated pairing HTML on a trusted screen. For a headless receiver, securely copy that one file to a trusted local screen; never publish it or place it on a web server.
-3. Scan the QR with iPhone Camera, open the setup link, and connect the companion app.
-4. Tap **Allow Health Access** and review Apple’s native authorization sheet.
-5. Enable **Automatic Sync**.
+2. On the receiver computer, open the generated pairing page on a trusted screen. For a headless receiver, securely copy that one file to a trusted local screen; never publish it or place it on a web server.
+3. Scan the QR code with iPhone Camera, open the setup link, and connect the app.
+4. Tap **Allow Health Access** and review Apple's native authorization sheet.
+5. Turn on **Automatic Sync**.
 6. Wait for the first successful receiver upload, then ask your agent about your data.
 
-Example prompts:
+**Try asking:**
 
-- “Show yesterday’s workouts and wake-date sleep.”
-- “Which Apple Health metrics have synced recently?”
-- “Summarize my last seven days of activity and mark any source or sync gaps.”
+- "Show yesterday's workouts and wake-date sleep."
+- "Which Apple Health metrics have synced recently?"
+- "Summarize my last seven days of activity and mark any source or sync gaps."
 
-## What is supported
+## What the agent can see
 
-The companion requests every HealthKit type that is both implemented by the app and available on the current iOS runtime. Unsupported or unavailable types remain absent rather than being fabricated.
-
-See the versioned [supported health data reference](docs/supported-health-data.md).
-
-## Agent surface
+The companion requests every HealthKit type that is both implemented by the app and available on the current iOS runtime. Unsupported or unavailable types remain absent rather than being fabricated. See the versioned [supported health data reference](docs/supported-health-data.md).
 
 The MCP server is read-only and exposes bounded, source-grounded tools:
 
-- bridge and sync status;
-- supported and currently synced metric catalogs;
-- time-series observations;
-- workouts;
-- sleep summaries;
-- daily summaries;
-- source provenance.
+| Tool area | What it returns |
+| --- | --- |
+| Status | Bridge and sync status |
+| Catalogs | Supported and currently synced metrics |
+| Time series | Observations for a metric over a range |
+| Workouts | Workout sessions |
+| Sleep | Sleep summaries |
+| Daily | Daily summaries |
+| Provenance | Which source recorded each value |
 
 It does not expose raw SQL, token material, cursor values, or clinical recommendations.
 
@@ -128,15 +174,15 @@ It does not expose raw SQL, token material, cursor values, or clinical recommend
 - Device credentials are stored in the iOS Keychain and hashed at rest by the receiver.
 - Logs and agent status omit health values and credentials by default.
 - The receiver is designed for one trusted user, not mutually untrusted tenants.
-- The developer does not operate or have access to the user's receiver or iCloud container. A “Data Not Collected” App Privacy answer remains valid only while that developer-no-access boundary remains true.
+- The developer does not operate or have access to the user's receiver or iCloud container. A "Data Not Collected" App Privacy answer remains valid only while that developer-no-access boundary remains true.
 
-Do not expose the receiver's loopback port or pairing page to the public internet. For continuous sync away from home, use an existing private-network HTTPS route such as Tailscale Serve or an agent-assisted private HTTPS ingress reviewed for the receiver paths. LAN-only access is a limited fallback.
+> [!IMPORTANT]
+> Do not expose the receiver's loopback port or pairing page to the public internet. For continuous sync away from home, use an existing private-network HTTPS route such as Tailscale Serve or an agent-assisted private HTTPS ingress reviewed for the receiver paths. LAN-only access is a limited fallback.
 
-Report vulnerabilities through GitHub’s private vulnerability reporting flow described in [SECURITY.md](SECURITY.md).
+Report vulnerabilities through GitHub's private vulnerability reporting flow described in [SECURITY.md](SECURITY.md).
 
-Upstream project (attribution, not HealthRelay support): [Website](https://healthbridge.chanhyo.dev/) · [Privacy](https://healthbridge.chanhyo.dev/privacy) · [Support](https://healthbridge.chanhyo.dev/support). Those pages describe the upstream Health Bridge for AI product. HealthRelay issues go to this repository.
-
-### Remove local bridge data
+<details>
+<summary><strong>Remove local bridge data</strong></summary>
 
 Stop the receiver, then inspect the exact deletion scope with the default dry-run:
 
@@ -148,9 +194,11 @@ Run the same command with `--confirm` only after reviewing the listed database a
 
 If the command returns `recovery-required`, do not restart the receiver. Review the structured source, quarantine, and truncated path lists; the command deliberately keeps the private quarantine instead of claiming a rollback after an irreversible partial purge.
 
-## Component versions and releases
+</details>
 
-The repository contains independently released components. Always include the component label rather than referring to an unlabeled “repo version.”
+## Component versions
+
+The repository contains independently released components. Always include the component label rather than referring to an unlabeled "repo version."
 
 | Surface | Current version | Identifier |
 | --- | --- | --- |
@@ -160,26 +208,25 @@ The repository contains independently released components. Always include the co
 
 These numbers do not need to match. Receiver-only fixes must not force an unchanged iOS Companion update, and compatible product patches must not bump the Batch Protocol. The canonical machine-readable mapping is [`component-versions.json`](component-versions.json); see the complete [versioning and compatibility policy](docs/versioning.md).
 
+<details>
+<summary><strong>How receiver releases are published</strong></summary>
+
 User installs are pinned to a signed Receiver/CLI release tag instead of the moving `main` branch. Each GitHub Release publishes the exact-tag wheel and source archive together with the signed mailbox helper and its public manifest, SHA-256 checksums, build provenance, and metadata that ties the Receiver/CLI, compatible iOS Companion, helper source tree, Git tree, and Batch Protocol together. Existing `v1.0.0`, `v1.0.1`, and `receiver-v1.1.0` releases remain immutable; current and future receiver releases use component-scoped tags such as `receiver-v1.1.1`.
 
-## Build from source
-
-Your own build is the only installation path for HealthRelay: the `Build unsigned IPA` workflow (see step 1 above) or Xcode 16 or later following [docs/self-build.md](docs/self-build.md).
+</details>
 
 ## Documentation
 
-- [Setup](docs/setup.md)
-- [Supported health data](docs/supported-health-data.md)
-- [Architecture and trust boundaries](docs/architecture.md)
-- [Brand guide](docs/brand.md)
-- [Batch contract](docs/reference/batch-v1.md)
-- [SQLite schema](docs/reference/sqlite-v1.md)
-- [Build the iOS app](docs/self-build.md)
-- [Contribution ideas](docs/contribution-ideas.md)
-- [Support routes](SUPPORT.md)
-- [Maintainer workflow](docs/maintainer-guide.md)
+| Use HealthRelay | Reference | Contribute |
+| --- | --- | --- |
+| [Setup](docs/setup.md) | [Architecture and trust boundaries](docs/architecture.md) | [Contribution ideas](docs/contribution-ideas.md) |
+| [Build the iOS app](docs/self-build.md) | [Batch contract](docs/reference/batch-v1.md) | [Maintainer workflow](docs/maintainer-guide.md) |
+| [Supported health data](docs/supported-health-data.md) | [SQLite schema](docs/reference/sqlite-v1.md) | [Contributing](CONTRIBUTING.md) |
+| [Support routes](SUPPORT.md) | [Brand guide](docs/brand.md) | [Security policy](SECURITY.md) |
 
 ## Development
+
+Your own build is the only installation path for HealthRelay: the `Build unsigned IPA` workflow (see [step 1](#1-build-and-install-the-iphone-app)) or Xcode 16 or later following [docs/self-build.md](docs/self-build.md). For the receiver:
 
 ```bash
 uv sync --all-extras --dev --locked
@@ -190,8 +237,8 @@ uv run basedpyright
 
 Synthetic fixtures and smoke commands are contributor tools, not part of user onboarding. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Apple Health AI Bridge is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Apple Inc.
+---
 
-## License
+<sub>Upstream project (attribution, not HealthRelay support): [Website](https://healthbridge.chanhyo.dev/) · [Privacy](https://healthbridge.chanhyo.dev/privacy) · [Support](https://healthbridge.chanhyo.dev/support). Those pages describe the upstream Health Bridge for AI product; HealthRelay issues go to this repository.</sub>
 
-Apache-2.0. See [LICENSE](LICENSE).
+<sub>Apple Health AI Bridge is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Apple Inc. Licensed under Apache-2.0; see [LICENSE](LICENSE).</sub>

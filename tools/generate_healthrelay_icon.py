@@ -33,6 +33,13 @@ BG_BOTTOM = (7, 34, 46)  # near-navy
 LINE = (255, 255, 255)
 ACCENT = (94, 234, 212)  # mint highlight for the chevron
 
+# Lockup text. The light lockup suits light backgrounds; the dark lockup swaps only
+# these two colors so the wordmark reads on dark backgrounds (GitHub dark theme).
+LOCKUP_INK = (17, 24, 39)
+LOCKUP_SUB = (75, 85, 99)
+LOCKUP_INK_ON_DARK = (240, 246, 252)  # 17.4:1 on GitHub dark #0d1117
+LOCKUP_SUB_ON_DARK = (174, 184, 194)  # 9.4:1 on GitHub dark #0d1117
+
 # Pulse polyline in a 1000x1000 design space (x, y); baseline at y=520.
 PULSE = [
     (110, 520),
@@ -128,9 +135,30 @@ def write_brand() -> None:
             break
         except OSError:
             continue
-    d.text((210, 52), "HealthRelay", fill=(17, 24, 39), font=font)
-    d.text((214, 136), "Apple Health to your own receiver", fill=(75, 85, 99), font=sub)
+    d.text((210, 52), "HealthRelay", fill=LOCKUP_INK, font=font)
+    d.text((214, 136), "Apple Health to your own receiver", fill=LOCKUP_SUB, font=sub)
     lock.save(BRAND / "healthrelay-lockup.png", "PNG")
+    _dark_lockup(lock).save(BRAND / "healthrelay-lockup-dark.png", "PNG")
+
+
+def _dark_lockup(light: Image.Image) -> Image.Image:
+    """Recolor the lockup's text for dark backgrounds, leaving the mark untouched.
+
+    Pillow draws the text in exactly two RGB values with anti-aliasing carried in
+    alpha, so swapping those values keeps the letterforms identical.
+    """
+    swap = {LOCKUP_INK: LOCKUP_INK_ON_DARK, LOCKUP_SUB: LOCKUP_SUB_ON_DARK}
+    dark = light.copy()
+    px = dark.load()
+    if px is None:
+        msg = "lockup image has no pixel data"
+        raise RuntimeError(msg)
+    for y in range(dark.height):
+        for x in range(200, dark.width):  # the mark ends at x=180
+            r, g, b, a = px[x, y]
+            if a and (r, g, b) in swap:
+                px[x, y] = (*swap[(r, g, b)], a)
+    return dark
 
 
 if __name__ == "__main__":

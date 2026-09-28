@@ -9,7 +9,8 @@ see [`../../NOTICE`](../../NOTICE).
 
 | File | Use |
 | --- | --- |
-| [`healthrelay-lockup.png`](healthrelay-lockup.png) | README header |
+| [`healthrelay-lockup.png`](healthrelay-lockup.png) | README header, light theme |
+| [`healthrelay-lockup-dark.png`](healthrelay-lockup-dark.png) | README header, dark theme (same art, light text) |
 | [`healthrelay-mark-1024.png`](healthrelay-mark-1024.png) | Source mark |
 | [`healthrelay-mark-512.png`](healthrelay-mark-512.png) | Repo avatar |
 | [`healthrelay-mark-180.png`](healthrelay-mark-180.png) | Touch icon |

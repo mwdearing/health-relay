@@ -14,3 +14,10 @@ identifiers only.
 Deep-teal gradient tile (#0B3D4A to #07222E), white ECG-style pulse line, mint (#5EEAD4) chevron.
 Assets and their uses are listed in `assets/brand/README.md`; regenerate with
 `python3 tools/generate_healthrelay_icon.py` (Pillow only).
+
+## Lockup
+Mark plus the **HealthRelay** wordmark and the line "Apple Health to your own receiver".
+Two files share the same art: `healthrelay-lockup.png` (ink #111827, slate #4B5563) for light
+backgrounds and `healthrelay-lockup-dark.png` (#F0F6FC, #AEB8C2) for dark ones. Serve both with a
+`<picture>` element so each viewer gets the readable one; never place the ink lockup on a dark
+background.
