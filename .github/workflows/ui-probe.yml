@@ -1,0 +1,95 @@
+name: UI probe (temporary, scratch branch only)
+
+on:
+  push:
+    branches:
+      - scratch/ui-probe
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes
+
+      - name: Build simulator app
+        working-directory: ios/HealthBridgeCompanion
+        run: |
+          xcodebuild -project HealthBridgeCompanion.xcodeproj \
+            -target HealthBridgeCompanion \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build | tail -5
+
+      - name: Inspect the built icon assets
+        run: |
+          APP="ios/HealthBridgeCompanion/build/Debug-iphonesimulator/HealthBridgeCompanion.app"
+          ls "$APP" | head -40
+          xcrun assetutil --info "$APP/Assets.car" > "$RUNNER_TEMP/assets.json"
+          python3 - "$RUNNER_TEMP/assets.json" <<'PY'
+          import json, sys, collections
+          items = json.load(open(sys.argv[1]))
+          kinds = collections.Counter()
+          for it in items:
+              name = str(it.get("Name", ""))
+              if "icon" in name.lower() or "icon" in str(it.get("AssetType", "")).lower():
+                  kinds[(it.get("AssetType"), name, it.get("Appearance") or it.get("Idiom"))] += 1
+          print("ICON-RELATED ASSET RECORDS:")
+          for k, n in sorted(kinds.items(), key=str):
+              print(" ", n, k)
+          print("ALL ASSET TYPES:", dict(collections.Counter(str(i.get("AssetType")) for i in items)))
+          PY
+
+      - name: Boot an iOS 26 simulator, install, capture
+        run: |
+          set -euo pipefail
+          APP="$PWD/ios/HealthBridgeCompanion/build/Debug-iphonesimulator/HealthBridgeCompanion.app"
+          BUNDLE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist")
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          data = json.load(sys.stdin)["devices"]
+          for runtime, devices in sorted(data.items(), reverse=True):
+              if "iOS-26" in runtime or "iOS-27" in runtime:
+                  for d in devices:
+                      if d["name"].startswith("iPhone") and "Pro" not in d["name"] and "Air" not in d["name"]:
+                          print(d["udid"]); raise SystemExit
+          for runtime, devices in sorted(data.items(), reverse=True):
+              for d in devices:
+                  if d["name"].startswith("iPhone"):
+                      print(d["udid"]); raise SystemExit
+          ')
+          echo "Simulator: $UDID  bundle: $BUNDLE"
+          xcrun simctl list devices | grep "$UDID" || true
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl ui "$UDID" appearance light
+          xcrun simctl install "$UDID" "$APP"
+          xcrun simctl launch "$UDID" "$BUNDLE"
+          sleep 12
+          OUT="$RUNNER_TEMP/shots"; mkdir -p "$OUT"
+          xcrun simctl io "$UDID" screenshot "$OUT/app-light.png"
+          xcrun simctl ui "$UDID" appearance dark; sleep 4
+          xcrun simctl io "$UDID" screenshot "$OUT/app-dark.png"
+          xcrun simctl terminate "$UDID" "$BUNDLE"; sleep 4
+          xcrun simctl io "$UDID" screenshot "$OUT/home-dark.png"
+          xcrun simctl ui "$UDID" appearance light; sleep 4
+          xcrun simctl io "$UDID" screenshot "$OUT/home-light.png"
+          for f in app-light app-dark home-dark home-light; do
+            sips -s format jpeg -s formatOptions 72 -Z 1100 "$OUT/$f.png" --out "$OUT/$f.jpg" >/dev/null
+            echo "@@@BEGIN $f"
+            base64 -i "$OUT/$f.jpg" | fold -w 180
+            echo "@@@END $f"
+          done
