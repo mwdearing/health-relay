@@ -50,6 +50,9 @@ struct ContentView: View {
                 }
             }
         }
+        // Apply the brand accent explicitly. Reading the asset by name is what the other
+        // colors already do, and it does not depend on the global accent plumbing.
+        .tint(.relayAccent)
     }
 
     /// The Sync card only appears once the iPhone is paired and Health access was requested.
@@ -966,6 +969,7 @@ private struct RowDivider: View {
 // ink chosen for at least 4.5:1: deep ink on light pastels in light mode, pastel ink on
 // deep tints in dark mode. Mint is the one primary-action fill.
 private extension ShapeStyle where Self == Color {
+    static var relayAccent: Color { Color("AccentColor") }
     static var relayMint: Color { Color("RelayMint") }
     static var relayOnMint: Color { Color("RelayOnMint") }
     static var relayAccentInk: Color { Color("RelayAccentInk") }
