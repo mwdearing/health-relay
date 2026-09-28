@@ -2846,7 +2846,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     }
 
     func publishAutomaticSyncForegroundCatchUpStarted() {
-        backgroundSyncStatus = "Catching up after Health Bridge opened..."
+        backgroundSyncStatus = "Catching up after HealthRelay opened..."
     }
 
     func publishHealthKitUnavailableForAutomaticSync() {
@@ -3994,7 +3994,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             )
             let authorizer = HealthStoreAuthorizer()
             try await authorizer.requestReadAuthorization(typeCodes: requestedTypeCodes)
-            healthPermissionNotice = "Apple Health permission request completed for \(requestedTypeCodes.count) supported types currently available on this iPhone. Only data you allow in Apple Health can sync. Change individual access in Health > profile picture > Privacy > Apps > Health Bridge."
+            healthPermissionNotice = "Apple Health permission request completed for \(requestedTypeCodes.count) supported types currently available on this iPhone. Only data you allow in Apple Health can sync. Change individual access in Health > profile picture > Privacy > Apps > HealthRelay."
             healthPermissionRequestStore.recordCompletedRequest(
                 runtimeTypeCodes: requestedTypeCodes
             )
@@ -6440,17 +6440,17 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             case .emptyBearerToken:
                 return "Connection key is missing. | domain=ReceiverClientError | code=missing_key"
             case .nonHTTPResponse:
-                return "Health Bridge returned a non-HTTP response. | domain=ReceiverClientError | code=non_http_response"
+                return "Your server returned a non-HTTP response. | domain=ReceiverClientError | code=non_http_response"
             case .sleepBaselineResetEpochConflict(let minimumResetEpoch):
-                return "Health Bridge requires a Sleep reset epoch above \(minimumResetEpoch). | domain=ReceiverClientError | code=sleep_epoch_conflict"
+                return "Your server requires a Sleep reset epoch above \(minimumResetEpoch). | domain=ReceiverClientError | code=sleep_epoch_conflict"
             case .unsuccessfulStatusCode(let statusCode, _):
                 if statusCode == 401 {
-                    return "Health Bridge rejected the saved connection key. Reconnect from a fresh setup link. | domain=ReceiverClientError | code=http_401"
+                    return "Your server rejected the saved connection key. Reconnect from a fresh setup link. | domain=ReceiverClientError | code=http_401"
                 }
                 if statusCode == 403 {
-                    return "Health Bridge refused this saved connection. Reconnect from setup link or check server access. | domain=ReceiverClientError | code=http_403"
+                    return "Your server refused this saved connection. Reconnect from setup link or check server access. | domain=ReceiverClientError | code=http_403"
                 }
-                return "Health Bridge returned HTTP \(statusCode). | domain=ReceiverClientError | code=http_\(statusCode)"
+                return "Your server returned HTTP \(statusCode). | domain=ReceiverClientError | code=http_\(statusCode)"
             }
         }
         if let outboxError = error as? ReceiverOutboxIdentityError {
