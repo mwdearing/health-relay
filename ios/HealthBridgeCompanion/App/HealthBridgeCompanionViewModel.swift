@@ -94,7 +94,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 try await viewModel.runWithExclusiveDirectOutboxTransfer {
                     await self.performManualSync()
                 }
-            } catch is CancellationError { return } catch {
+            } catch is CancellationError {
+                viewModel.statusMessage = "[Manual] lanes cancelled before start"
+                return
+            } catch {
                 viewModel.statusIsError = true
                 viewModel.statusMessage =
                     "Sync could not acquire private storage access: \(viewModel.describe(error))"
@@ -142,15 +145,21 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 }
             }
 
+            viewModel.statusMessage = "[Manual] lanes starting: \(ManualSyncLane.allCases.count)"
             for lane in ManualSyncLane.allCases {
+                viewModel.statusMessage = "[Manual] lane \(lane)"
                 guard !viewModel.hasPendingPairing, !Task.isCancelled else {
                     viewModel.statusIsError = true
                     viewModel.statusMessage =
                         "Sync stopped because pairing recovery is in progress."
                     return
                 }
-                guard await runManualLane(lane) else { return }
+                guard await runManualLane(lane) else {
+                    viewModel.statusMessage = "[Manual] stopped at lane \(lane): \(viewModel.statusMessage)"
+                    return
+                }
             }
+            viewModel.statusMessage = "[Manual] all lanes finished"
 
             let completion = CompanionSyncNowCompletion.summary(
                 pendingOutboxCount: viewModel.pendingOutboxCount
@@ -1124,7 +1133,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         if automaticSyncRuntimeIsReady {
             _ = try? await processPendingTypes()
         }
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled else {
+            statusMessage = "[Manual] skipped: task cancelled after pending types"
+            return
+        }
         await manualSyncProcessor.run()
     }
 
@@ -6288,7 +6300,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         let trimmed = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         // HealthRelay lanes log their own outcome verbatim (counts, cursor state, error code; never a value).
-        let sanitized = trimmed.hasPrefix("[ECG]") || trimmed.hasPrefix("[Medication]")
+        let sanitized = trimmed.hasPrefix("[ECG]") || trimmed.hasPrefix("[Medication]") || trimmed.hasPrefix("[Manual]")
             ? trimmed
             : CompanionPrimaryStatusMessage.sanitized(from: trimmed, isError: isError)
         guard activityLogMessages.last?.hasSuffix(sanitized) != true else { return }
