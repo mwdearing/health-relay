@@ -49,6 +49,7 @@ MIGRATION_IDS: Final = (
     "007_sleep_baseline_namespaces",
     DELIVERY_RECEIPT_MIGRATION_ID,
     "009_pairing_transport",
+    "010_electrocardiograms",
 )
 
 

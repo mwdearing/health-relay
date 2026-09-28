@@ -12,6 +12,9 @@ UPSERT_DELETED_RECORD_SQL: Final = (
 DELETE_SAMPLE_SQL: Final = (
     "delete from samples where source_id = ? and client_record_id = ?"
 )
+DELETE_ELECTROCARDIOGRAM_SQL: Final = (
+    "delete from electrocardiograms where source_id = ? and client_record_id = ?"
+)
 DELETE_WORKOUT_SQL: Final = (
     "delete from workouts where source_id = ? and client_record_id = ?"
 )
@@ -55,6 +58,8 @@ def delete_active_record(
         delete_sql = DELETE_WORKOUT_SQL
     elif record_family == "sleep_session":
         delete_sql = DELETE_SLEEP_SESSION_SQL
+    elif record_family == "electrocardiogram":
+        delete_sql = DELETE_ELECTROCARDIOGRAM_SQL
     else:
         msg = f"Unsupported deleted record family: {record_family}"
         raise ValueError(msg)

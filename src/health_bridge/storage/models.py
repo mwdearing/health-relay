@@ -12,6 +12,7 @@ class IngestResult:
     deleted_record_count: int
     sync_cursor_count: int
     error_summary: str | None = None
+    electrocardiogram_count: int = 0
 
 
 def failed_ingest_result(error_summary: str) -> IngestResult:

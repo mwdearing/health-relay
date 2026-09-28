@@ -29,6 +29,10 @@ Required fields:
 - `deleted_records`
 - `sync`
 
+Optional fields (HealthRelay fork; additive under major version `1`):
+
+- `electrocardiograms`
+
 All timestamps are UTC ISO 8601 strings ending in `Z`. Values are observations
 with source context, not interpretations.
 
@@ -63,6 +67,21 @@ storage.
 Workouts use `client_record_id`, `source_key`, `workout_type`, `start_time`,
 `end_time`, and measured fields such as duration, energy, and distance where
 present.
+
+## Electrocardiograms
+
+Optional array (HealthRelay fork addition; the batch protocol version is bumped
+to `1.1.0` when the iOS companion first sends it). Each record is one Apple Watch ECG:
+`client_record_id`, `source_key`, `start_time`, `end_time`,
+`classification` (Apple's `HKElectrocardiogram.Classification` in snake case:
+`not_set`, `sinus_rhythm`, `atrial_fibrillation`, `inconclusive_low_heart_rate`,
+`inconclusive_high_heart_rate`, `inconclusive_poor_reading`, `inconclusive_other`,
+`unrecognized`), `symptoms_status` (`not_set`, `none`, `present`),
+`voltage_count`, and optional `average_heart_rate_bpm`, `sampling_frequency_hz`
+and `voltages_microvolts`. When `voltages_microvolts` is present its length must
+equal `voltage_count`; a summary-only record omits it. A tombstone uses
+`record_family` `electrocardiogram`. Receivers that predate the field ignore
+the array.
 
 ## Sleep
 

@@ -7,6 +7,10 @@ devices.
 Files:
 
 - `health_bridge_batch_v1.synthetic.json`: canonical synthetic batch fixture.
+- `health_bridge_batch_v1.electrocardiogram.synthetic.json`: the canonical fixture
+  plus one synthetic ECG record (optional `electrocardiograms` array, HealthRelay
+  fork). Eight invented voltage values; not from a device. The canonical fixture
+  stays byte-identical because delivery vectors bind its bytes.
 - `health_bridge_batch_v1.apple-health-smoke.json`: Apple Health-shaped smoke
   fixture using `apple_health.*` source keys and `hk-*` stable record IDs; still
   synthetic, not copied from a device.

@@ -56,6 +56,22 @@ UPSERT_WORKOUT_SQL = (
     "energy_kcal = excluded.energy_kcal, distance_meters = excluded.distance_meters, "
     "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
 )
+UPSERT_ELECTROCARDIOGRAM_SQL = (
+    "insert into electrocardiograms (source_id, client_record_id, start_time, "
+    "end_time, classification, symptoms_status, average_heart_rate_bpm, "
+    "sampling_frequency_hz, voltage_count, voltages_json) "
+    "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+    "on conflict(source_id, client_record_id) do update set "
+    "start_time = excluded.start_time, end_time = excluded.end_time, "
+    "classification = excluded.classification, "
+    "symptoms_status = excluded.symptoms_status, "
+    "average_heart_rate_bpm = excluded.average_heart_rate_bpm, "
+    "sampling_frequency_hz = excluded.sampling_frequency_hz, "
+    "voltage_count = excluded.voltage_count, "
+    "voltages_json = coalesce(excluded.voltages_json, "
+    "electrocardiograms.voltages_json), "
+    "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
+)
 
 
 def upsert_batch_records(
@@ -66,6 +82,7 @@ def upsert_batch_records(
     sleep_reset_plan = plan_sleep_baseline_resets(connection, batch)
     _upsert_samples(connection, batch)
     _upsert_workouts(connection, batch)
+    _upsert_electrocardiograms(connection, batch)
     upsert_sleep_sessions(connection, batch, sleep_reset_plan)
     upsert_sync_state(
         connection,
@@ -241,5 +258,40 @@ def _upsert_workouts(
                 workout.duration_seconds,
                 workout.energy_kcal,
                 workout.distance_meters,
+            ),
+        )
+
+
+def _upsert_electrocardiograms(
+    connection: sqlite3.Connection,
+    batch: HealthBridgeBatchV1,
+) -> None:
+    for ecg in batch.electrocardiograms:
+        current_source_id = source_id(connection, ecg.source_key)
+        if record_is_tombstoned(
+            connection,
+            source_id_value=current_source_id,
+            record_family="electrocardiogram",
+            client_record_id=ecg.client_record_id,
+        ):
+            continue
+        voltages_json = (
+            json.dumps(list(ecg.voltages_microvolts), separators=(",", ":"))
+            if ecg.voltages_microvolts
+            else None
+        )
+        _ = connection.execute(
+            UPSERT_ELECTROCARDIOGRAM_SQL,
+            (
+                current_source_id,
+                ecg.client_record_id,
+                ecg.start_time,
+                ecg.end_time,
+                ecg.classification,
+                ecg.symptoms_status,
+                ecg.average_heart_rate_bpm,
+                ecg.sampling_frequency_hz,
+                ecg.voltage_count,
+                voltages_json,
             ),
         )

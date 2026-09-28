@@ -9,6 +9,9 @@ FIXTURE_PATH = Path("fixtures/health_bridge_batch_v1.synthetic.json")
 APPLE_HEALTH_FIXTURE_PATH = Path(
     "fixtures/health_bridge_batch_v1.apple-health-smoke.json"
 )
+ECG_FIXTURE_PATH = Path(
+    "fixtures/health_bridge_batch_v1.electrocardiogram.synthetic.json"
+)
 
 
 def test_fixture_matches_public_json_schema() -> None:
@@ -26,6 +29,21 @@ def test_fixture_matches_public_json_schema() -> None:
     result = run(command, capture_output=True, text=True, check=False)
 
     # Then
+    assert result.returncode == 0, result.stderr
+
+
+def test_electrocardiogram_fixture_matches_public_json_schema() -> None:
+    command = [
+        "uv",
+        "run",
+        "check-jsonschema",
+        "--schemafile",
+        str(SCHEMA_PATH),
+        str(ECG_FIXTURE_PATH),
+    ]
+
+    result = run(command, capture_output=True, text=True, check=False)
+
     assert result.returncode == 0, result.stderr
 
 

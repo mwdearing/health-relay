@@ -71,8 +71,12 @@ def test_generator_is_pillow_only_and_documented() -> None:
     generator = Path("tools/generate_healthrelay_icon.py").read_text(encoding="utf-8")
     assert "playwright" not in generator.lower()
     assert "from PIL import" in generator
-    assert "generate_healthrelay_icon.py" in Path("docs/brand.md").read_text(encoding="utf-8")
-    assert "generate_healthrelay_icon.py" in (BRAND / "README.md").read_text(encoding="utf-8")
+    assert "generate_healthrelay_icon.py" in Path("docs/brand.md").read_text(
+        encoding="utf-8"
+    )
+    assert "generate_healthrelay_icon.py" in (BRAND / "README.md").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_readme_uses_healthrelay_lockup_and_brand_guide() -> None:

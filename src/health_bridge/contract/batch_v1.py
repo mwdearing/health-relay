@@ -67,6 +67,7 @@ TypeCode: TypeAlias = Annotated[str, StringConstraints(pattern=TYPE_CODE_PATTERN
 NonEmptyString: TypeAlias = Annotated[str, StringConstraints(min_length=1)]
 NonNegativeFloat: TypeAlias = Annotated[float, Field(ge=0)]
 NonNegativeInt: TypeAlias = Annotated[int, Field(ge=0)]
+FiniteFloat: TypeAlias = Annotated[float, Field(allow_inf_nan=False)]
 JsonNumber: TypeAlias = int | float
 
 
@@ -192,6 +193,49 @@ class Workout(StrictModel):
         return self
 
 
+EcgClassification: TypeAlias = Literal[
+    "not_set",
+    "sinus_rhythm",
+    "atrial_fibrillation",
+    "inconclusive_low_heart_rate",
+    "inconclusive_high_heart_rate",
+    "inconclusive_poor_reading",
+    "inconclusive_other",
+    "unrecognized",
+]
+EcgSymptomsStatus: TypeAlias = Literal["not_set", "none", "present"]
+
+
+class Electrocardiogram(StrictModel):
+    """One Apple Watch ECG recording (schema 1.1, optional top-level array).
+
+    Voltages are optional: a sender may ship only the summary. When present,
+    their count must equal ``voltage_count``.
+    """
+
+    client_record_id: SyntheticRecordId
+    source_key: SyntheticSourceKey
+    start_time: UtcTimestamp
+    end_time: UtcTimestamp
+    classification: EcgClassification
+    symptoms_status: EcgSymptomsStatus
+    average_heart_rate_bpm: OmittableNonNegativeFloat = None
+    sampling_frequency_hz: OmittableNonNegativeFloat = None
+    voltage_count: NonNegativeInt
+    voltages_microvolts: tuple[FiniteFloat, ...] = ()
+
+    @model_validator(mode="after")
+    def reject_reversed_interval_and_voltage_mismatch(self) -> Self:
+        validate_order(self.start_time, self.end_time)
+        if (
+            self.voltages_microvolts
+            and len(self.voltages_microvolts) != self.voltage_count
+        ):
+            message = "voltages_microvolts length must equal voltage_count"
+            raise ValueError(message)
+        return self
+
+
 class SleepStageInterval(StrictModel):
     stage: Literal["in_bed", "awake", "core", "deep", "rem"]
     start_time: UtcTimestamp
@@ -226,7 +270,7 @@ class SleepSession(StrictModel):
 
 
 class DeletedRecord(StrictModel):
-    record_family: Literal["sample", "workout", "sleep_session"]
+    record_family: Literal["sample", "workout", "sleep_session", "electrocardiogram"]
     source_key: SyntheticSourceKey
     client_record_id: SyntheticRecordId
     deleted_at: UtcTimestamp
@@ -252,6 +296,7 @@ class HealthBridgeBatchV1(StrictModel):
     health_types: tuple[HealthType, ...] = Field(min_length=1)
     samples: tuple[Sample, ...]
     workouts: tuple[Workout, ...]
+    electrocardiograms: tuple[Electrocardiogram, ...] = ()
     sleep_sessions: tuple[SleepSession, ...]
     deleted_records: tuple[DeletedRecord, ...]
     sync: SyncContext
