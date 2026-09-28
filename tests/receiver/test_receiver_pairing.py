@@ -4,6 +4,7 @@ from typing import Final, TypeAlias
 import pytest
 from pydantic import TypeAdapter
 
+from health_bridge.receiver import pairing
 from health_bridge.receiver.pairing import (
     ReceiverPairingBundleError,
     create_receiver_pairing_bundle,
@@ -189,10 +190,5 @@ def test_v2_pairing_deep_link_rejects_cross_origin_redeem_url(
 
 
 def test_legacy_healthbridge_scheme_still_decodes_but_is_not_emitted() -> None:
-    from health_bridge.receiver.pairing import (
-        ACCEPTED_DEEP_LINK_SCHEMES,
-        PAIRING_DEEP_LINK_SCHEME,
-    )
-
-    assert PAIRING_DEEP_LINK_SCHEME == "healthrelay"
-    assert frozenset({"healthrelay", "healthbridge"}) == ACCEPTED_DEEP_LINK_SCHEMES
+    assert pairing.PAIRING_DEEP_LINK_SCHEME == "healthrelay"
+    assert set(pairing.ACCEPTED_DEEP_LINK_SCHEMES) == {"healthrelay", "healthbridge"}
