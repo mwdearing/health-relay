@@ -198,17 +198,6 @@ public enum HealthKitTypeCatalog {
             backgroundEligible: true
         ),
         HealthKitTypeCatalogEntry(
-            typeCode: "electrocardiogram",
-            displayName: "Electrocardiogram",
-            healthKitIdentifier: "HKElectrocardiogramType",
-            objectKind: .electrocardiogram,
-            canonicalUnit: "recording",
-            sensitivity: .high,
-            aggregation: .count,
-            usesDedicatedSyncLane: true,
-            backgroundEligible: false
-        ),
-        HealthKitTypeCatalogEntry(
             typeCode: "sleep_analysis",
             displayName: "Sleep Analysis",
             healthKitIdentifier: "HKCategoryTypeIdentifierSleepAnalysis",
@@ -218,6 +207,17 @@ public enum HealthKitTypeCatalog {
             aggregation: .duration,
             usesDedicatedSyncLane: true,
             backgroundEligible: true
+        ),
+        HealthKitTypeCatalogEntry(
+            typeCode: "electrocardiogram",
+            displayName: "Electrocardiogram",
+            healthKitIdentifier: "HKElectrocardiogramType",
+            objectKind: .electrocardiogram,
+            canonicalUnit: "recording",
+            sensitivity: .high,
+            aggregation: .count,
+            usesDedicatedSyncLane: true,
+            backgroundEligible: false
         ),
         HealthKitTypeCatalogEntry(
             typeCode: "heart_rate",
