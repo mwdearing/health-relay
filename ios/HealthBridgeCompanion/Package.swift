@@ -21,7 +21,10 @@ let package = Package(
         ),
         .testTarget(
             name: "HealthBridgeCompanionCoreTests",
-            dependencies: ["HealthBridgeCompanionCore"]
+            dependencies: [
+                "HealthBridgeCompanionCore",
+                .product(name: "ZIPFoundation", package: "ZIPFoundation"),
+            ]
         ),
     ]
 )
