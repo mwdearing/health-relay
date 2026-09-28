@@ -24,6 +24,13 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: receiver setup page and CLI copy. Both pairing setup pages (invitation and legacy)
+  now carry the HealthRelay mark and name, share one stylesheet with light and dark palettes
+  (every text pair at least 4.5:1), capsule buttons at least 44px tall, visible focus rings, and a
+  QR plate that stays white in dark mode. "Open in Health Bridge" becomes "Open in HealthRelay";
+  the manual step names the app's real "Use a code instead" control. CLI help/output and the
+  systemd unit description say HealthRelay. MCP output (`# Health Bridge Context`, the database
+  error) is unchanged: `fixtures/delivery_compatibility_v1.synthetic.json` pins its bytes.
 - 2026-09-28: IPA builds stamp marketing version `1.2.<run number>` by default (a distinct version
   string per build, since sideload signers show only the marketing version).
 - 2026-09-28: diagnostics: the ECG and medication lanes prefix their status with `[ECG]` / `[Medication]`
