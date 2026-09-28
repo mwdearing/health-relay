@@ -24,6 +24,20 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: lab-results export.zip importer (B3, labs only -- ECG already syncs live via
+  HealthKit, so a manual export never needs it). Contract: optional `lab_results` array
+  (`LabResult` model, migration 012, `_upsert_lab_results`, `lab_result` deleted-record family
+  and sync_runs count column), uploaded through the existing `/v1/batches` endpoint like every
+  other record family -- no new HTTP surface. iOS: `AppleHealthExportLabImporter` streams
+  `export.zip` via a new ZIPFoundation SPM dependency (Xcode project graph +
+  `Package.swift`), reads only `clinical-records/*.json` entries (never unpacked to disk),
+  parses FHIR Observation fields (LOINC, name, category, date, numeric/text value, reference
+  range including free-text `<`/`>`/`a-b` parsing, multi-component observations like blood
+  pressure). `client_record_id` is a stable SHA-256-derived `hk-labobs-<hex16>` id (FHIR
+  observation ids don't match the receiver's `hk-`/`synthetic-` pattern). New "Import Health
+  Export" card, file picker, and a review sheet showing the parsed count before anything is
+  sent -- on-device only until the user confirms. No cursor: manual, user-initiated, dedup is
+  `client_record_id` uniqueness on the receiver.
 - 2026-09-28: iOS UI for iOS 26/27 design (companion). Pastel palette drawn from the app icon, as
   named color sets (`RelayMint`/`RelayOnMint` for the primary action; `Ready`/`Waiting`/`Failed`
   tint+ink pairs for status; `AccentColor`, set as the global accent), replacing the blue, indigo,
