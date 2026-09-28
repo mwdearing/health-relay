@@ -16,9 +16,9 @@ on:
         required: false
         default: Release
       marketing_version:
-        description: Marketing version to stamp (build number = workflow run number)
+        description: Marketing version to stamp; empty = 1.2.<workflow run number> (build number = run number too)
         required: false
-        default: "1.2.0"
+        default: ""
 
 permissions:
   contents: read
@@ -52,6 +52,8 @@ jobs:
         run: |
           set -euo pipefail
           BUILD_DIR="$RUNNER_TEMP/build"
+          MARKETING_VERSION="${MARKETING_VERSION:-1.2.$GITHUB_RUN_NUMBER}"
+          echo "Stamping version $MARKETING_VERSION build $GITHUB_RUN_NUMBER"
           xcodebuild -project HealthBridgeCompanion.xcodeproj \
             -target HealthBridgeCompanion \
             -sdk iphoneos \
@@ -81,6 +83,7 @@ jobs:
           cp -R "$APP_PATH" "$IPA_OUT/Payload/"
           cd "$IPA_OUT"
           /usr/bin/zip -qry "HealthRelay-unsigned.ipa" Payload
+          echo "$GITHUB_SHA $GITHUB_RUN_NUMBER" > HealthRelay-unsigned.ipa.build.txt
           shasum -a 256 HealthRelay-unsigned.ipa | tee HealthRelay-unsigned.ipa.sha256
 
       - name: Upload unsigned IPA artifact
@@ -90,5 +93,6 @@ jobs:
           path: |
             ${{ runner.temp }}/export/HealthRelay-unsigned.ipa
             ${{ runner.temp }}/export/HealthRelay-unsigned.ipa.sha256
+            ${{ runner.temp }}/export/HealthRelay-unsigned.ipa.build.txt
           retention-days: 14
           if-no-files-found: error
