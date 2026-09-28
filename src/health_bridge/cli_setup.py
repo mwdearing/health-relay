@@ -646,7 +646,7 @@ def build_setup_manifest(request: SetupRequest) -> SetupManifest:
 def verify_local_mcp(manifest: SetupManifest) -> SetupManifest:
     _run_command(
         manifest.local_mcp_self_test_command,
-        "Health Bridge local MCP self-test",
+        "HealthRelay local MCP self-test",
     )
     return manifest.model_copy(update={"local_mcp_status": "verified"})
 
@@ -690,7 +690,7 @@ def render_setup_summary(manifest: SetupManifest) -> str:
     detected = ", ".join(manifest.detected_mcp_clients) or "none"
     configured = ", ".join(manifest.configured_mcp_clients) or "none"
     lines = [
-        "Health Bridge core setup prepared.",
+        "HealthRelay core setup prepared.",
         f"Configured phone-facing health URL: {manifest.receiver_health_url}",
         f"Local MCP self-test: {manifest.local_mcp_status}",
         f"Detected client adapters: {detected} (no configuration is automatic)",

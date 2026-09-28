@@ -535,7 +535,7 @@ def build_dev_receiver_systemd_manifest(
     unit_text = "\n".join(
         [
             "[Unit]",
-            "Description=Health Bridge local receiver",
+            "Description=HealthRelay local receiver",
             "After=network-online.target",
             "",
             "[Service]",
