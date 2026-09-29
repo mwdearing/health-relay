@@ -24,6 +24,11 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-29: Import Health Export UI brought into the pastel system. "Choose Export File" is a quiet
+  capsule (`glass` on iOS 26+, bordered before) so Sync Now is the only mint button; the export path
+  hint is visible text under it (it was only a VoiceOver hint). The review sheet uses the
+  contrast-checked `RelayFailedInk` / `RelaySecondaryText` colors instead of system red and
+  `.secondary`, sets the accent tint explicitly, and drops the ASCII double-dash from its footer.
 - 2026-09-29: `Publish IPA release` takes an optional `bundle_id` dispatch input. An IPA with the
   placeholder `com.example.*` id is still accepted; any other id is accepted only if it equals that
   input exactly, so a real id is never written in the repo.

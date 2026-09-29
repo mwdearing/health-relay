@@ -25,7 +25,7 @@ struct ExportImportReviewView: View {
                 } header: {
                     Text("Review")
                 } footer: {
-                    Text("Only these extracted values are sent -- the export.zip file itself never leaves this iPhone.")
+                    Text("Only these extracted values are sent. The export.zip file itself never leaves this iPhone.")
                 }
 
                 if !summary.labResults.isEmpty {
@@ -36,13 +36,13 @@ struct ExportImportReviewView: View {
                                     .font(.subheadline.weight(.semibold))
                                 Text(previewDetail(for: result))
                                     .font(.footnote)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(Color("RelaySecondaryText"))
                             }
                         }
                         if summary.labResults.count > 5 {
                             Text("and \(summary.labResults.count - 5) more")
                                 .font(.footnote)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color("RelaySecondaryText"))
                         }
                     }
                 }
@@ -51,7 +51,7 @@ struct ExportImportReviewView: View {
                     Section {
                         Label(viewModel.statusMessage, systemImage: viewModel.statusIsError ? "exclamationmark.triangle.fill" : "arrow.up.circle")
                             .font(.footnote.weight(.semibold))
-                            .foregroundStyle(viewModel.statusIsError ? .red : .secondary)
+                            .foregroundStyle(viewModel.statusIsError ? Color("RelayFailedInk") : Color("RelaySecondaryText"))
                     }
                 }
             }
@@ -85,6 +85,8 @@ struct ExportImportReviewView: View {
                 }
             }
         }
+        // Sheets do not reliably inherit the presenting view's tint.
+        .tint(Color("AccentColor"))
     }
 
     private func previewDetail(for result: HealthBridgeLabResult) -> String {
