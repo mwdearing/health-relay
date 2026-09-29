@@ -22,6 +22,6 @@ Use the **Feature request** form. Describe the user need and the impact on Healt
 
 ## Response times
 
-This is a small, best-effort project. There are no response-time commitments for issues, security reports or pull requests.
+This is a small, best-effort project. There are no response-time commitments for issues or pull requests. Security reports have the best-effort targets in [SECURITY.md](SECURITY.md).
 
 HealthRelay is a fork of [apple-health-ai-bridge](https://github.com/roian6/apple-health-ai-bridge) by roian6; upstream is credited for attribution only and is not a support or reporting channel for this project.
