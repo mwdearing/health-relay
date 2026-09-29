@@ -648,6 +648,10 @@ public struct LastSyncedStore {
     public func record(_ date: Date) {
         userDefaults.set(date.timeIntervalSince1970, forKey: Self.key)
     }
+
+    public func clear() {
+        userDefaults.removeObject(forKey: Self.key)
+    }
 }
 
 public enum LastSyncedFormatter {

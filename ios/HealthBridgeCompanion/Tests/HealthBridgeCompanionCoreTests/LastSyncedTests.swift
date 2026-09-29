@@ -37,5 +37,8 @@ final class LastSyncedTests: XCTestCase {
         XCTAssertNil(store.lastSyncedAt)
         store.record(now)
         XCTAssertEqual(LastSyncedStore(userDefaults: defaults).lastSyncedAt, now)
+
+        store.clear()
+        XCTAssertNil(LastSyncedStore(userDefaults: defaults).lastSyncedAt)
     }
 }

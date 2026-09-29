@@ -360,7 +360,7 @@ struct ContentView: View {
                 title: "Sync Now",
                 subtitle: syncActionSubtitle,
                 systemImage: viewModel.syncPresentationIsActive ? "arrow.triangle.2.circlepath" : "arrow.up.arrow.down.circle.fill",
-                isDisabled: !viewModel.canRunPrimaryAction,
+                isDisabled: !viewModel.canRunPrimaryAction || viewModel.isReadingExport,
                 isLoading: viewModel.syncPresentationIsActive
             ) {
                 Task { await viewModel.performPrimaryAction() }

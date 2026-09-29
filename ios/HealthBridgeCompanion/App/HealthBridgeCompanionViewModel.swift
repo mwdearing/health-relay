@@ -1016,6 +1016,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             hasPendingPairing = ((try? pairingCoordinator.hasPendingPairing()) ?? false)
                 || cancellationCleanupRecoveryRequired
             mailboxDeliveryDiagnosticLine = ""
+            clearLastSuccessfulSync()
             backgroundSyncStatus = "Automatic sync is off. Sync Now still works."
             refreshPendingOutboxCount()
             if cancellationCleanupRecoveryRequired || transition.postCommitRecoveryRequired {
@@ -2614,6 +2615,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         activateAutomaticSyncIfReady(scheduleOutbox: !connectionChanged)
         if connectionChanged {
             reschedulePendingBackgroundOutboxUploadsAfterReceiverChange()
+            clearLastSuccessfulSync()
         }
         if outboxIdentityMigrationReady {
             statusIsError = false
@@ -3580,6 +3582,12 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             hasTransientPrivateStorageFailure = true
             return false
         }
+    }
+
+    /// The last-synced time belongs to one receiver; forget it when the connection changes.
+    private func clearLastSuccessfulSync() {
+        LastSyncedStore().clear()
+        lastSuccessfulSyncAt = nil
     }
 
     /// Records a successful sync for the status card's "Last synced" line.
