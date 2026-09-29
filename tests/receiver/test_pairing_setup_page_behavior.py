@@ -131,3 +131,23 @@ def test_dark_form_border_and_print_reset(page: str) -> None:
     print_block = style.split("@media print", 1)[1]
     assert "--card: #FFFFFF" in print_block
     assert "--ink: #000000" in print_block
+
+
+def test_print_resets_every_dark_token(page: str) -> None:
+    style = page.split("<style>", 1)[1].split("</style>", 1)[0]
+    print_block = style.split("@media print", 1)[1]
+    for token in (
+        "--secondary",
+        "--on-secondary",
+        "--warn-bg",
+        "--warn-ink",
+        "--fail-bg",
+        "--fail-ink",
+    ):
+        assert f"{token}:" in print_block
+
+
+def test_mailbox_renewal_uses_the_public_transport_name() -> None:
+    source = Path("src/health_bridge/receiver/pairing_setup_page.py").read_text()
+    assert "--transport icloud-mailbox" in source
+    assert "--transport mailbox" not in source

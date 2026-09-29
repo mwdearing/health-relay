@@ -161,6 +161,9 @@ _SETUP_PAGE_STYLE: Final = """
         --bg: #FFFFFF; --card: #FFFFFF; --inset: #FFFFFF; --ink: #000000;
         --muted: #3C3C43; --line: #C6C6C8; --field: #8E8E93;
         --primary: #5EEAD4; --on-primary: #07222E; --accent: #0F6B78;
+        --secondary: #E3F1F0; --on-secondary: #0B3D4A;
+        --warn-bg: #FFE6CC; --warn-ink: #7A3E00;
+        --fail-bg: #FFDCD8; --fail-ink: #8A1C14;
       }
       body { background: #FFFFFF; color: #000000; }
       main { border: none; padding: 0; }
@@ -197,9 +200,8 @@ def _renewal_command(bundle: ReceiverPairingInvitationBundle) -> str:
         f"--receiver-url {shlex.quote(bundle.receiver_url)}",
     ]
     if bundle.transport == ReceiverTransport.MAILBOX:
-        parts.append(
-            "--transport mailbox --mailbox-root <your HealthBridgeMailbox/v1 path>"
-        )
+        parts.append("--transport icloud-mailbox")
+        parts.append("--mailbox-root <your HealthBridgeMailbox/v1 path>")
     parts.append(_CMD_PAGE)
     return html.escape(" ".join(parts), quote=True)
 
