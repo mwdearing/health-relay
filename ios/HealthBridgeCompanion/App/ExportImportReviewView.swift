@@ -1,13 +1,18 @@
 import SwiftUI
 
 /// HealthRelay addition: reviews the on-device parse of an Apple Health export.zip
-/// before anything is sent to the receiver.
+/// before anything is sent to the receiver. Stays open until the send actually
+/// finishes -- previously it dismissed the instant Send was tapped, before the
+/// (fire-and-forget) upload had even started, so a failure was invisible (Michael,
+/// 2026-09-28: "hit send, it went back to the main app screen", nothing landed
+/// server-side; traced to this plus the [Export] activity-log sanitizer gap).
 struct ExportImportReviewView: View {
+    @ObservedObject var viewModel: HealthBridgeCompanionViewModel
     let summary: AppleHealthExportLabImporter.Summary
-    let onConfirm: () -> Void
     let onCancel: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @State private var isSending = false
 
     var body: some View {
         NavigationStack {
@@ -41,6 +46,14 @@ struct ExportImportReviewView: View {
                         }
                     }
                 }
+
+                if isSending || viewModel.statusMessage.hasPrefix("[Export]") {
+                    Section {
+                        Label(viewModel.statusMessage, systemImage: viewModel.statusIsError ? "exclamationmark.triangle.fill" : "arrow.up.circle")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(viewModel.statusIsError ? .red : .secondary)
+                    }
+                }
             }
             .navigationTitle("Import Health Export")
             .navigationBarTitleDisplayMode(.inline)
@@ -50,13 +63,25 @@ struct ExportImportReviewView: View {
                         onCancel()
                         dismiss()
                     }
+                    .disabled(isSending)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Send") {
-                        onConfirm()
-                        dismiss()
+                    if isSending {
+                        ProgressView()
+                    } else {
+                        Button("Send") {
+                            isSending = true
+                            Task {
+                                await viewModel.confirmPendingAppleHealthExportImport()
+                                isSending = false
+                                // Success clears pendingExportImportSummary, which the
+                                // presenting view's binding turns into a dismiss; on
+                                // failure it stays non-nil so this sheet stays open with
+                                // the error shown above, ready to retry or cancel.
+                            }
+                        }
+                        .disabled(summary.labResults.isEmpty)
                     }
-                    .disabled(summary.labResults.isEmpty)
                 }
             }
         }

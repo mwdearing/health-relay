@@ -6376,7 +6376,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         let trimmed = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         // HealthRelay lanes log their own outcome verbatim (counts, cursor state, error code; never a value).
-        let sanitized = trimmed.hasPrefix("[ECG]") || trimmed.hasPrefix("[Medication]") || trimmed.hasPrefix("[Manual]")
+        let sanitized = trimmed.hasPrefix("[ECG]") || trimmed.hasPrefix("[Medication]")
+            || trimmed.hasPrefix("[Manual]") || trimmed.hasPrefix("[Export]")
             ? trimmed
             : CompanionPrimaryStatusMessage.sanitized(from: trimmed, isError: isError)
         guard activityLogMessages.last?.hasSuffix(sanitized) != true else { return }

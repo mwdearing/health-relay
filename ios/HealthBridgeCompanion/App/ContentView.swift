@@ -82,8 +82,8 @@ struct ContentView: View {
         )) {
             if let summary = viewModel.pendingExportImportSummary {
                 ExportImportReviewView(
+                    viewModel: viewModel,
                     summary: summary,
-                    onConfirm: { Task { await viewModel.confirmPendingAppleHealthExportImport() } },
                     onCancel: { viewModel.cancelPendingAppleHealthExportImport() }
                 )
             }
