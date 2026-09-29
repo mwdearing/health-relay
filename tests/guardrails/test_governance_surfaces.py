@@ -73,7 +73,7 @@ def test_contribution_and_maintainer_workflow_is_versioned() -> None:
     pull_request = Path(".github/pull_request_template.md").read_text(encoding="utf-8")
     maintainer = Path("docs/maintainer-guide.md").read_text(encoding="utf-8")
 
-    for branch_prefix in ("`fix/`", "`feat/`", "`docs/`", "`chore/`"):
+    for branch_prefix in ("`bugfix/`", "`feature/`", "`docs/`", "`chore/`"):
         assert branch_prefix in contributing
     assert "maintainer decision before implementation" in contributing
     assert "HealthKit permissions" in contributing
