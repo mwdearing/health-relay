@@ -1,6 +1,6 @@
 # HealthRelay visual identity
 
-HealthRelay is a private fork of Apple Health AI Bridge (see `FORK.md`, `NOTICE`). The upstream names
+HealthRelay is a fork of Apple Health AI Bridge (see `FORK.md`, `NOTICE`). The upstream names
 "Apple Health AI Bridge", "Health Bridge for AI" and "Health Bridge" and their brand assets are not
 licensed to this fork and are not used for the product. `health_bridge` / `health-bridge` remain code
 identifiers only.

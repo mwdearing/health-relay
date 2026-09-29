@@ -24,7 +24,7 @@
 </div>
 
 > [!NOTE]
-> **HealthRelay is a private fork of Apple Health AI Bridge** (Apache-2.0). See [`FORK.md`](FORK.md) and [`NOTICE`](NOTICE). This README is adapted from upstream's; the upstream product (Health Bridge for AI, on the App Store) is a separate app and is not needed for HealthRelay.
+> **HealthRelay is a fork of Apple Health AI Bridge** (Apache-2.0). See [`FORK.md`](FORK.md) and [`NOTICE`](NOTICE). This README is adapted from upstream's; the upstream product (Health Bridge for AI, on the App Store) is a separate app and is not needed for HealthRelay.
 
 ## What HealthRelay adds
 
