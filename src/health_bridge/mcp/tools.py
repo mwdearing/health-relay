@@ -140,105 +140,111 @@ SUPPORTED_TIMESERIES_INPUT_SCHEMA: Final[JsonObject] = {
 }
 _READ_ONLY: Final = "Read-only, no clinical interpretation."
 _DATE_RULES: Final = (
-    "Dates use YYYY-MM-DD and are UTC days. start_date is inclusive and "
-    "end_date is EXCLUSIVE, so for one day set end_date to the next day "
-    "(2026-06-03 to 2026-06-04); start_date equal to end_date is an empty window. "
-    "Results cap at 500 rows and set truncated: true when cut off. "
+    "Dates use YYYY-MM-DD and are UTC days. "
+    "start_date is inclusive and end_date is EXCLUSIVE, so for one day set "
+    "end_date to the next day (2026-06-03 to 2026-06-04); "
+    "start_date equal to end_date is an empty window. "
+    "Results cap at 500 rows and set truncated: true when cut off."
 )
+
+
+def _describe(*sentences: str) -> str:
+    return " ".join((*sentences, _READ_ONLY))
+
+
 MCP_TOOL_DEFINITIONS: Final[tuple[ToolDefinition, ...]] = (
     ToolDefinition(
         name="get_bridge_status",
-        description=(
-            "Answers whether the receiver is syncing: latest sync status, record "
-            "counts, per-metric counts and sync cursor kinds. Redacted: omits "
-            "sample values, cursor values and token material. Start here to check "
-            "that data is arriving. " + _READ_ONLY
+        description=_describe(
+            "Answers whether the receiver is syncing: latest sync status, record",
+            "counts, per-metric counts and sync cursor kinds.",
+            "Redacted: omits sample values, cursor values and token material.",
+            "Start here to check that data is arriving.",
         ),
         input_schema=EMPTY_INPUT_SCHEMA,
     ),
     ToolDefinition(
         name="get_bridge_context_markdown",
-        description=(
-            "Returns a short redacted Markdown overview of the store (counts and "
-            "redaction notes) for pasting into agent context or a wiki. Omits "
-            "sample values, cursor values and token material. " + _READ_ONLY
+        description=_describe(
+            "Returns a short redacted Markdown overview of the store (counts and",
+            "redaction notes) for pasting into agent context or a wiki.",
+            "Omits sample values, cursor values and token material.",
         ),
         input_schema=EMPTY_INPUT_SCHEMA,
     ),
     ToolDefinition(
         name="list_supported_timeseries_types",
-        description=(
-            "Answers which metric types the bridge knows about (type code, unit, "
-            "category, aggregation, iOS support), whether or not any data has "
-            "synced. Optional category filter; valid categories: activity, "
-            "blood_respiratory, body, environmental, fitness, heart, other, "
-            "provider_specific. To see what THIS store actually holds, call "
-            "list_synced_metrics instead. Metadata only, no health values. "
-            + _READ_ONLY
+        description=_describe(
+            "Answers which metric types the bridge knows about (type code, unit,",
+            "category, aggregation, iOS support), whether or not any data has synced.",
+            "Optional category filter; valid categories: activity,",
+            "blood_respiratory, body, environmental, fitness, heart, other,",
+            "provider_specific.",
+            "To see what THIS store actually holds, call list_synced_metrics instead.",
+            "Metadata only, no health values.",
         ),
         input_schema=SUPPORTED_TIMESERIES_INPUT_SCHEMA,
     ),
     ToolDefinition(
         name="list_synced_metrics",
-        description=(
-            "Answers which metric types have data in this store and how many "
-            "records each has, with provenance and missing-data caveats. Call "
-            "this first: the type_code values it returns are the only valid "
-            "type_codes for get_timeseries. " + _READ_ONLY
+        description=_describe(
+            "Answers which metric types have data in this store and how many",
+            "records each has, with provenance and missing-data caveats.",
+            "Call this first: the type_code values it returns are the only valid",
+            "type_codes for get_timeseries.",
         ),
         input_schema=EMPTY_INPUT_SCHEMA,
     ),
     ToolDefinition(
         name="get_timeseries",
-        description=(
-            "Returns raw samples (value, unit, source) for one or more metric "
-            "types in a time range. type_codes must come from list_synced_metrics "
-            "(for example steps, heart_rate, weight); unknown codes return no "
-            "points plus a note. start_time and end_time are UTC timestamps ending "
-            "in Z, such as 2026-06-01T00:00:00Z; a sample is included when its "
-            "start_time is at or after start_time and before end_time. "
-            "Results cap at 500 points and set truncated: true when cut off; "
-            "narrow the range or fewer types to see the rest, and prefer "
-            "get_daily_summary for long ranges. " + _READ_ONLY
+        description=_describe(
+            "Returns raw samples (value, unit, source) for one or more metric",
+            "types in a time range.",
+            "type_codes must come from list_synced_metrics (for example steps,",
+            "heart_rate, weight); unknown codes return no points plus a note.",
+            "start_time and end_time are UTC timestamps ending in Z, such as",
+            "2026-06-01T00:00:00Z; a sample is included when its start is at or",
+            "after start_time and before end_time.",
+            "Results cap at 500 points and set truncated: true when cut off;",
+            "narrow the range or ask for fewer types to see the rest, and prefer",
+            "get_daily_summary for long ranges.",
         ),
         input_schema=TIMESERIES_INPUT_SCHEMA,
     ),
     ToolDefinition(
         name="get_workouts",
-        description=(
-            "Answers what workouts started in a date range (type, times, "
-            "duration, energy, distance, source). " + _DATE_RULES + _READ_ONLY
+        description=_describe(
+            "Answers what workouts started in a date range (type, times,",
+            "duration, energy, distance, source).",
+            _DATE_RULES,
         ),
         input_schema=DATE_RANGE_INPUT_SCHEMA,
     ),
     ToolDefinition(
         name="get_sleep_summary",
-        description=(
-            "Answers how much sleep was recorded in a date range: session count "
-            "and total seconds per sleep stage, with source. "
-            + _DATE_RULES
-            + _READ_ONLY
+        description=_describe(
+            "Answers how much sleep was recorded in a date range: session count",
+            "and total seconds per sleep stage, with source.",
+            _DATE_RULES,
         ),
         input_schema=DATE_RANGE_INPUT_SCHEMA,
     ),
     ToolDefinition(
         name="get_daily_summary",
-        description=(
-            "Answers what each day looked like across metrics: sum-safe "
-            "sample_totals for additive metrics (such as steps) and "
-            "sample_statistics for non-summable metrics (such as heart rate or "
-            "weight), per UTC day. The best tool for week or month questions. "
-            + _DATE_RULES
-            + _READ_ONLY
+        description=_describe(
+            "Answers what each day looked like across metrics: sum-safe",
+            "sample_totals for additive metrics (such as steps) and",
+            "sample_statistics for non-summable metrics (such as heart rate or",
+            "weight), per UTC day. The best tool for week or month questions.",
+            _DATE_RULES,
         ),
         input_schema=DATE_RANGE_INPUT_SCHEMA,
     ),
     ToolDefinition(
         name="explain_sources",
-        description=(
-            "Answers where the data came from: the devices and apps (sources) "
-            "and sync cursors behind the store, with missing-data caveats. "
-            + _READ_ONLY
+        description=_describe(
+            "Answers where the data came from: the devices and apps (sources)",
+            "and sync cursors behind the store, with missing-data caveats.",
         ),
         input_schema=EMPTY_INPUT_SCHEMA,
     ),
