@@ -12,7 +12,7 @@ import re
 import subprocess
 import sys
 
-AGENT_WORDS = r"(claude|anthropic|codex|openai|chatgpt|hermes|nousresearch)"
+AGENT_WORDS = r"(claude|anthropic|codex|openai|chatgpt|copilot|hermes|nousresearch)"
 CO_AUTHOR = re.compile(r"^\s*co-authored-by:(?P<who>.*)$", re.IGNORECASE | re.MULTILINE)
 TEXT_PATTERNS = [
     (
@@ -21,7 +21,7 @@ TEXT_PATTERNS = [
     ),
     (
         "'Generated with/by <agent>' line",
-        re.compile(rf"generated (with|by) \[?{AGENT_WORDS}", re.IGNORECASE),
+        re.compile(rf"generated (with|by) \[?(github )?{AGENT_WORDS}", re.IGNORECASE),
     ),
     ("claude.ai/code session link", re.compile(r"claude\.ai/code", re.IGNORECASE)),
 ]
@@ -29,13 +29,14 @@ TEXT_PATTERNS = [
 # so a person named Claude or Codex is not flagged.
 AGENT_NAME = re.compile(
     r"^(claude( code| opus| sonnet| haiku)?( [0-9][0-9.]*)?|codex"
-    r"|hermes( agent| backup bot)?|chatgpt.*"
-    r"|.*(claude|codex|chatgpt|hermes|openai|anthropic).*\[bot\])$",
+    r"|hermes( agent| backup bot)?|chatgpt.*|(github )?copilot|copilot-swe-agent.*"
+    r"|.*(claude|codex|chatgpt|copilot|hermes|openai|anthropic).*\[bot\])$",
     re.IGNORECASE,
 )
 # Known bot mailboxes only: an employee at one of these companies is a person.
 AGENT_EMAIL = re.compile(
-    r"^(noreply@(anthropic|openai)\.com|codex@openai\.com|hermes@nousresearch\.com"
+    r"^(noreply@(anthropic|openai)\.com|codex@openai\.com|copilot@github\.com"
+    r"|[0-9]+\+copilot@users\.noreply\.github\.com|hermes@nousresearch\.com"
     r"|(codex|hermes|hermes-backup)@(fedora\.local|localhost))$",
     re.IGNORECASE,
 )
