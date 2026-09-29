@@ -24,6 +24,9 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-29: `Publish IPA release` takes an optional `bundle_id` dispatch input. An IPA with the
+  placeholder `com.example.*` id is still accepted; any other id is accepted only if it equals that
+  input exactly, so a real id is never written in the repo.
 - 2026-09-28: `Publish IPA release` refuses a build whose version is not newer than the newest
   existing `app-v*` tag, so publishing an older build can no longer land on top as "Latest".
 - 2026-09-28: iOS: disabled `PrimaryButton`s no longer get a second 0.65 fade on top of the system's
