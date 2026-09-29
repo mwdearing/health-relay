@@ -3,7 +3,7 @@ name: Attribution check
 # Fails a pull request that shows tool/agent attribution in its title, body,
 # commit messages or commit identities, or whose head branch is not
 # <type>/<slug> (type: feature, bugfix, hotfix, docs, chore, refactor, ci, test)
-# or a dependabot/ branch. Not a required check unless the ruleset says so.
+# or a dependabot/ branch opened by Dependabot itself. Not a required check unless the ruleset says so.
 #
 # Runs on pull_request_target so the scanner always comes from the base branch,
 # never from the pull request under test. The job checks out the base branch,
@@ -43,6 +43,7 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           HEAD_REF: ${{ github.head_ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}

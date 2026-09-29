@@ -35,10 +35,11 @@ AGENT_NAME = re.compile(
 )
 # Known bot mailboxes only: an employee at one of these companies is a person.
 AGENT_EMAIL = re.compile(
-    r"^(noreply@(anthropic|openai)\.com|hermes@nousresearch\.com"
+    r"^(noreply@(anthropic|openai)\.com|codex@openai\.com|hermes@nousresearch\.com"
     r"|(codex|hermes|hermes-backup)@(fedora\.local|localhost))$",
     re.IGNORECASE,
 )
+DEPENDABOT_BRANCH = re.compile(r"^dependabot/[a-z0-9][a-z0-9._/-]*$")
 IDENTITY_PARTS = re.compile(r"^\s*(?P<name>.*?)\s*(<(?P<email>[^>]*)>)?\s*$")
 BRANCH_ALLOWED = re.compile(
     r"^(feature|bugfix|hotfix|docs|chore|refactor|ci|test)/[a-z0-9][a-z0-9._-]*$"
@@ -64,8 +65,10 @@ def is_agent_identity(text: str) -> bool:
     return bool(AGENT_NAME.match(name.strip()) or AGENT_EMAIL.search(email.strip()))
 
 
-def branch_problem(head_ref: str) -> str | None:
-    if BRANCH_ALLOWED.match(head_ref) or head_ref.startswith("dependabot/"):
+def branch_problem(head_ref: str, author: str = "") -> str | None:
+    if BRANCH_ALLOWED.match(head_ref):
+        return None
+    if author.lower() == "dependabot[bot]" and DEPENDABOT_BRANCH.match(head_ref):
         return None
     return (
         f"branch '{head_ref}' must be <type>/<slug> with type feature, bugfix, "
@@ -86,7 +89,9 @@ def check_text(label: str, text: str | None) -> list[str]:
 
 def main() -> int:
     problems = []
-    branch = branch_problem(os.environ.get("HEAD_REF", ""))
+    branch = branch_problem(
+        os.environ.get("HEAD_REF", ""), os.environ.get("PR_AUTHOR", "")
+    )
     if branch:
         problems.append(branch)
     problems += check_text("PR title", os.environ.get("PR_TITLE", ""))

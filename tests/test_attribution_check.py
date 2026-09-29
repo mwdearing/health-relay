@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 # Built from parts so the public-release audit does not see real addresses.
 _ANTHROPIC = "anthropic" + ".com"
 _NOUS = "nousresearch" + ".com"
+_OPENAI = "openai" + ".com"
 _LOCAL_HOST = "fedora" + ".local"
 
 _SCRIPT = Path(__file__).parents[1] / ".github" / "scripts" / "attribution_check.py"
@@ -19,25 +20,25 @@ assert _SPEC.loader is not None
 attribution_check = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(attribution_check)
 
-branch_problem = cast("Callable[[str], str | None]", attribution_check.branch_problem)
+branch_problem = cast(
+    "Callable[[str, str], str | None]", attribution_check.branch_problem
+)
 is_agent_identity = cast("Callable[[str], bool]", attribution_check.is_agent_identity)
 check_text = cast(
     "Callable[[str, str | None], list[str]]", attribution_check.check_text
 )
 
 
-@pytest.mark.parametrize(
-    "name", ["feature/x", "dependabot/pip/x", "ci/attribution-check"]
-)
+@pytest.mark.parametrize("name", ["feature/x", "ci/attribution-check"])
 def test_allowed_branch_names_pass(name: str) -> None:
-    assert branch_problem(name) is None
+    assert branch_problem(name, "someone") is None
 
 
 @pytest.mark.parametrize(
     "name", ["claude/x", "mwd/x", "feature/Bad", "feature/", "main"]
 )
 def test_other_branch_names_fail_with_the_message(name: str) -> None:
-    assert branch_problem(name) == (
+    assert branch_problem(name, "someone") == (
         f"branch '{name}' must be <type>/<slug> with type feature, bugfix, "
         "hotfix, docs, chore, refactor, ci or test"
     )
@@ -49,6 +50,7 @@ def test_other_branch_names_fail_with_the_message(name: str) -> None:
         f"Claude <noreply@{_ANTHROPIC}>",
         f"Claude Opus 4.5 <noreply@{_ANTHROPIC}>",
         f"Codex <codex@{_LOCAL_HOST}>",
+        f"OpenAI Codex <codex@{_OPENAI}>",
         "Hermes Agent <someone@example.com>",
         f"Someone <hermes@{_NOUS}>",
         "chatgpt-codex-connector[bot] <x@example.com>",
@@ -88,3 +90,10 @@ def test_attribution_text_is_flagged(text: str) -> None:
 
 def test_human_co_author_is_not_flagged() -> None:
     assert not check_text("body", "Co-Authored-By: Claude Dupont <c@example.com>")
+
+
+def test_dependabot_branch_needs_dependabot_as_author() -> None:
+    assert branch_problem("dependabot/pip/x", "dependabot[bot]") is None
+    assert branch_problem("dependabot/pip/x", "someone") is not None
+    assert branch_problem("dependabot/", "dependabot[bot]") is not None
+    assert branch_problem("dependabot/UPPER", "dependabot[bot]") is not None
