@@ -31,7 +31,7 @@ Use these in order:
 | --- | --- | --- | --- |
 | Setup page QR | Laptop/desktop/tablet screen plus iPhone Camera | Best default | QR contains the temporary invitation secret, not a long-lived receiver credential. |
 | Setup page button | Setup page already open on the iPhone | Good | Uses `healthrelay://pair`; browser/app handoff can vary by iOS/browser state. |
-| Paste setup link | QR/button unavailable | Fallback | Paste only inside Health Bridge. The link is private until expiry or redemption. |
+| Paste setup link | QR/button unavailable | Fallback | Paste only inside HealthRelay. The link is private until expiry or redemption. |
 | Server address + invitation code | Camera, browser handoff, accessibility, or one-device fallback | Supported fallback | The grouped code is case-insensitive, expires with the invitation, and works once. |
 | `devicectl --payload-url` | Local development/QA only | Developer shortcut | Not a public onboarding path and not evidence that normal user pairing is understandable. |
 

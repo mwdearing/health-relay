@@ -21,8 +21,7 @@ Use synthetic fixtures and redacted aggregate counts instead.
 Do not file sensitive vulnerabilities, secrets, or personal health data in a
 public GitHub issue.
 
-1. Prefer [GitHub private vulnerability reporting](https://github.com/roian6/apple-health-ai-bridge/security/advisories/new).
-2. If private reporting is unavailable, email `healthbridge@chanhyo.dev` with the subject prefix `[SECURITY]`.
+Use [GitHub private vulnerability reporting](https://github.com/mwdearing/health-relay/security/advisories/new) on this repository.
 
 Start with the minimum information needed to coordinate privately. Do not attach
 real HealthKit values, tokens, pairing material, setup pages, receiver databases,
@@ -38,7 +37,9 @@ A useful report should include:
 - whether HealthKit permissions, receiver authentication, local outbox storage, or MCP output are involved;
 - no real tokens, no real health values, and no pairing material.
 
-For non-security setup and product questions, use the [support page](https://healthbridge.chanhyo.dev/support). See the public [privacy policy](https://healthbridge.chanhyo.dev/privacy) for the current Health Bridge privacy statement.
+For non-security setup and product questions, open a [GitHub issue](https://github.com/mwdearing/health-relay/issues). See the [privacy policy](PRIVACY.md) for the current privacy statement.
+
+HealthRelay is a fork of [apple-health-ai-bridge](https://github.com/roian6/apple-health-ai-bridge) by roian6; upstream is credited for attribution only and is not a support or reporting channel for this project.
 
 ## Supported Versions
 
