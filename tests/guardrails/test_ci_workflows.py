@@ -97,3 +97,21 @@ def test_publish_ipa_release_refuses_older_builds() -> None:
     assert "git/matching-refs/tags/app-v" in text
     assert "|| true" not in text  # a failed tag listing must abort publication
     assert "is already the same or newer" in text
+
+
+PROMOTE_WORKFLOW = Path(".github/workflows/promote-ipa-release.yml")
+
+
+def test_publish_creates_only_gated_betas() -> None:
+    text = PUBLISH_WORKFLOW.read_text()
+    assert "--prerelease" in text
+    assert "--latest=false" in text
+    assert "Require green CI on the exact build commit" in text
+
+
+def test_promotion_is_approval_gated_and_ci_checked() -> None:
+    text = PROMOTE_WORKFLOW.read_text()
+    assert "environment: stable" in text
+    assert "--prerelease=false --latest" in text
+    assert "Require green CI on the released commit" in text
+    assert "uses:" not in text  # gh CLI only, like the publish workflow

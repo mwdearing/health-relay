@@ -1,8 +1,9 @@
 name: Publish IPA release
 
 # HealthRelay fork: manual only. Turns the artifact of a finished "Build unsigned IPA" run into a
-# GitHub Release (tag app-v<version>, the unsigned IPA and its SHA-256), in the same format as the
-# earlier releases. The build workflows stay read-only; write access exists only in this job.
+# GitHub PRE-RELEASE (beta; tag app-v<version>, the unsigned IPA and its SHA-256). A beta never becomes
+# "Latest" and is never linked as the download for users; it becomes stable only through the manual,
+# approval-gated "Promote IPA release" workflow after it has been verified on a device. The build workflows stay read-only; write access exists only in this job.
 #
 # Guards: the run must be a successful "Build unsigned IPA" run on main, the IPA must carry the
 # neutral com.example.* bundle id or exactly the bundle_id passed at dispatch (the real id is never
@@ -63,6 +64,18 @@ jobs:
             echo "BUILD_SHA=$(jq -r .head_sha <<<"$run_json")"
             echo "BUILD_NUMBER=$(jq -r .run_number <<<"$run_json")"
           } >> "$GITHUB_ENV"
+
+      - name: Require green CI on the exact build commit
+        run: |
+          set -euo pipefail
+          for wf in ios.yml python.yml; do
+            ok="$(gh api "repos/$REPO/actions/workflows/$wf/runs?head_sha=$BUILD_SHA&status=completed" \
+              --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')"
+            if [ "$ok" -lt 1 ]; then
+              echo "No successful $wf run on $BUILD_SHA; run it on that commit first" >&2
+              exit 1
+            fi
+          done
 
       - name: Download and verify the IPA
         run: |
@@ -134,6 +147,9 @@ jobs:
           {
             echo "## HealthRelay iOS companion ${APP_VERSION} (build ${APP_BUILD})"
             echo
+            echo "> [!WARNING]"
+            echo "> **Beta.** Not yet verified on a device. Use the latest stable release unless you are testing this build. <!--beta-banner-->"
+            echo
             if [ -n "$HIGHLIGHTS" ]; then
               echo "### What's new"
               echo
@@ -157,7 +173,9 @@ jobs:
             ipa/HealthRelay-unsigned.ipa.sha256 \
             --repo "$REPO" \
             --target "$BUILD_SHA" \
-            --title "HealthRelay ${APP_VERSION} (unsigned IPA)" \
+            --title "HealthRelay ${APP_VERSION} (beta, unsigned IPA)" \
+            --prerelease \
+            --latest=false \
             --notes-file notes.md \
             --verify-tag=false
-          echo "Published $tag" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published beta $tag (pre-release). Promote it with the Promote IPA release workflow after device verification." >> "$GITHUB_STEP_SUMMARY"

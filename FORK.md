@@ -24,6 +24,11 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-29: beta/stable release channels. `Publish IPA release` now creates only GitHub
+  pre-releases (never "Latest"), requires a successful `iOS CI` and `Python CI` run on the exact build
+  commit, and marks the notes as beta. New `Promote IPA release` workflow (manual, runs in the
+  approval-gated `stable` environment) turns a verified beta into the stable "Latest" release after
+  re-checking CI on the tagged commit. The README download link points at `/releases/latest`.
 - 2026-09-29: Import Health Export UI brought into the pastel system. "Choose Export File" is a quiet
   capsule (`glass` on iOS 26+, bordered before) so Sync Now is the only mint button; the export path
   hint is visible text under it (it was only a VoiceOver hint). The review sheet uses the
