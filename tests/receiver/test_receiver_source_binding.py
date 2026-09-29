@@ -105,7 +105,10 @@ def with_source_key(batch: HealthBridgeBatchV1, source_key: str) -> HealthBridge
 def post_batch(url: str, token: str, batch: HealthBridgeBatchV1) -> int:
     request = Request(
         url,
-        data=batch.model_dump_json().encode(),
+        # exclude_none: several optional fields (e.g. LabResult.value_text) are
+        # omittable but reject an explicit null, so a plain round-trip dump of
+        # a batch containing one would fail schema validation on the way back in.
+        data=batch.model_dump_json(exclude_none=True).encode(),
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -198,6 +201,83 @@ def test_v2_tokens_bind_all_claimed_sources_to_the_paired_installation(
     )
     assert len(samples_by_source) == 2
     assert a_target_count == (1,)
+
+
+def test_apple_health_export_source_is_always_accepted_and_kept_as_is(
+    tmp_path: Path,
+) -> None:
+    """Regression for the B3 export bug found 2026-09-29: every lab-results
+    export send was rejected forever with 403 source_principal_mismatch (and
+    blocked every other queued item behind it, since it sat at the outbox
+    head) because this file's allowlist only ever recognized the
+    apple_health.phone[.<installation>] family -- it never accounted for the
+    export importer's deliberately distinct, unscoped source key."""
+    db_path = tmp_path / "receiver.sqlite"
+    pair(db_path, installation_id=INSTALLATION_A, token=TOKEN_A, suffix="a")
+    fixture = HealthBridgeBatchV1.model_validate_json(
+        Path("fixtures/health_bridge_batch_v1.lab_result.synthetic.json").read_bytes()
+    )
+    export_batch = fixture.model_copy(
+        update={
+            "sources": tuple(
+                source
+                for source in fixture.sources
+                if source.source_key == "apple_health.export"
+            ),
+            "samples": (),
+            "deleted_records": (),
+        }
+    )
+    assert len(export_batch.sources) == 1
+
+    with running_receiver(db_path) as url:
+        assert post_batch(url, TOKEN_A, export_batch) == 202
+
+    with sqlite3.connect(db_path) as connection:
+        source_keys = connection.execute(
+            "select source_key from sources"
+        ).fetchall()
+        lab_result_source_keys = connection.execute(
+            """
+            select sources.source_key
+            from lab_results join sources using (source_id)
+            """
+        ).fetchall()
+
+    # Unlike a phone lane's source key, the export claim is NOT rewritten to
+    # the paired installation's canonical key -- it stays traceable as a
+    # manual import, and (unlike the phone family) is accepted even though it
+    # carries no per-device claim to verify.
+    assert source_keys == [("apple_health.export",)]
+    assert lab_result_source_keys == [("apple_health.export",)]
+
+
+def test_apple_health_export_source_is_accepted_from_an_unmapped_token(
+    tmp_path: Path,
+) -> None:
+    """Same fix as above, for a token with no installation binding at all --
+    the export claim must not be treated like an unbound legacy phone claim
+    (which IS rejected in this situation, see the test below)."""
+    db_path = tmp_path / "receiver.sqlite"
+    token = "hb_" + "d" * 64
+    _ = create_receiver_token(db_path, label="unmapped", token=token)
+    fixture = HealthBridgeBatchV1.model_validate_json(
+        Path("fixtures/health_bridge_batch_v1.lab_result.synthetic.json").read_bytes()
+    )
+    export_batch = fixture.model_copy(
+        update={
+            "sources": tuple(
+                source
+                for source in fixture.sources
+                if source.source_key == "apple_health.export"
+            ),
+            "samples": (),
+            "deleted_records": (),
+        }
+    )
+
+    with running_receiver(db_path) as url:
+        assert post_batch(url, token, export_batch) == 202
 
 
 def test_unmapped_legacy_token_cannot_claim_private_phone_namespace(
