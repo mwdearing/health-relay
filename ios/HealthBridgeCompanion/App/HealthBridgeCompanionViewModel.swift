@@ -166,6 +166,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             )
             viewModel.statusIsError = completion.isError
             viewModel.statusMessage = completion.message
+            if !completion.isError {
+                viewModel.noteSuccessfulSync()
+            }
         }
 
         private func runManualLane(_ lane: ManualSyncLane) async -> Bool {
@@ -250,6 +253,15 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     /// HealthRelay addition: the export importer's on-device parse, held for review
     /// before the user confirms sending it. Nil once sent, cancelled, or never parsed.
     @Published private(set) var pendingExportImportSummary: AppleHealthExportLabImporter.Summary?
+    /// True while the chosen export file is being read (which may include an iCloud download).
+    @Published private(set) var isReadingExport = false
+    /// One-line confirmation shown on the main screen after the export sheet has sent and
+    /// closed. Cleared when the person dismisses it or picks another file.
+    @Published private(set) var exportSendNotice: String?
+    /// Time of the last successful sync (manual or automatic), persisted across launches.
+    @Published private(set) var lastSuccessfulSyncAt: Date? = LastSyncedStore().lastSyncedAt
+    private var exportReadTask: Task<Result<AppleHealthExportLabImporter.Summary, Error>, Never>?
+    private var exportReadGeneration = 0
     @Published var pairingImportText = ""
     @Published var manualPairingServer = ""
     @Published var manualPairingCode = ""
@@ -3547,11 +3559,20 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 succeeded: succeeded,
                 summary: summary
             )
+            if outcome == .completed, succeeded, let finishedAt {
+                noteSuccessfulSync(at: finishedAt)
+            }
             return true
         } catch {
             hasTransientPrivateStorageFailure = true
             return false
         }
+    }
+
+    /// Records a successful sync for the status card's "Last synced" line.
+    func noteSuccessfulSync(at date: Date = Date()) {
+        LastSyncedStore().record(date)
+        lastSuccessfulSyncAt = date
     }
 
     func processAutomaticSyncType(
@@ -4719,29 +4740,75 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     /// Parses `url` (a `.fileImporter`-picked export.zip) entirely on-device and holds
     /// the result in `pendingExportImportSummary` for review. Nothing is sent yet.
     func parseAppleHealthExport(from url: URL) {
+        exportReadTask?.cancel()
+        exportReadGeneration += 1
+        let generation = exportReadGeneration
+        exportSendNotice = nil
         statusIsError = false
         statusMessage = "[Export] Reading export.zip..."
-        let didStartAccess = url.startAccessingSecurityScopedResource()
-        defer {
-            if didStartAccess {
-                url.stopAccessingSecurityScopedResource()
+        isReadingExport = true
+        // The read can block on an iCloud download and the parse walks a large archive, so
+        // it runs off the main actor; the security-scoped access is held for its duration.
+        let work = Task.detached(priority: .userInitiated) {
+            () -> Result<AppleHealthExportLabImporter.Summary, Error> in
+            let didStartAccess = url.startAccessingSecurityScopedResource()
+            defer {
+                if didStartAccess {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+            return Result {
+                try AppleHealthExportLabImporter.importLabResultsCoordinated(fromZipAt: url)
             }
         }
-        do {
-            let summary = try AppleHealthExportLabImporter.importLabResults(fromZipAt: url)
+        exportReadTask = work
+        Task { @MainActor [weak self] in
+            let result = await work.value
+            self?.finishAppleHealthExportRead(result, generation: generation)
+        }
+    }
+
+    private func finishAppleHealthExportRead(
+        _ result: Result<AppleHealthExportLabImporter.Summary, Error>,
+        generation: Int
+    ) {
+        // A cancelled or superseded read never publishes.
+        guard generation == exportReadGeneration else { return }
+        isReadingExport = false
+        exportReadTask = nil
+        switch result {
+        case let .success(summary):
             pendingExportImportSummary = summary
+            let unreadable = summary.unreadableNotice.map { " \($0)" } ?? ""
             if summary.labResults.isEmpty {
-                statusMessage = summary.observationCount == 0
+                let base = summary.observationCount == 0
                     ? "[Export] No clinical records found in that export."
                     : "[Export] Found \(CompanionCopy.count(summary.observationCount, "clinical record")) but none had a usable value or date. Nothing to send."
+                statusMessage = base + unreadable
             } else {
-                statusMessage = "[Export] Found \(CompanionCopy.count(summary.labResults.count, "lab result")). Review and confirm to send."
+                statusMessage = "[Export] Found \(CompanionCopy.count(summary.labResults.count, "lab result")). Review and confirm to send." + unreadable
             }
-        } catch {
+        case let .failure(error):
             pendingExportImportSummary = nil
+            if error is CancellationError { return }
             statusIsError = true
             statusMessage = "[Export] Could not read that file: \(describe(error))"
         }
+    }
+
+    /// Stops reading the chosen export file; any result that arrives later is discarded.
+    func cancelAppleHealthExportRead() {
+        guard isReadingExport else { return }
+        exportReadGeneration += 1
+        exportReadTask?.cancel()
+        exportReadTask = nil
+        isReadingExport = false
+        statusIsError = false
+        statusMessage = "[Export] Reading cancelled."
+    }
+
+    func dismissExportSendNotice() {
+        exportSendNotice = nil
     }
 
     /// Sends the previously parsed, user-reviewed lab results to the receiver.
@@ -4769,6 +4836,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 queuedDescription: "Queued \(CompanionCopy.count(summary.labResults.count, "lab result")) behind earlier pending uploads",
                 outboxNotice: outboxNotice
             )
+            let count = CompanionCopy.count(summary.labResults.count, "lab result")
+            exportSendNotice = deliveryResult.directUpload != nil
+                ? "Sent \(count) to your server."
+                : "\(count) queued. They will send when your server confirms."
         } catch {
             statusIsError = true
             statusMessage = "[Export] Send failed: \(describe(error))"
@@ -4783,6 +4854,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             return
         }
         pendingExportImportSummary = nil
+        exportSendNotice = nil
         statusIsError = true
         statusMessage = "[Export] Could not open that file: \(describe(error))"
     }
