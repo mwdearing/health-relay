@@ -28,15 +28,26 @@
 
 ## What HealthRelay adds
 
-HealthRelay builds on Apple Health AI Bridge, the open-source project behind Health Bridge for AI, and reads Apple Health data the upstream app leaves out:
+HealthRelay builds on Apple Health AI Bridge, the open-source project behind Health Bridge for AI. It keeps the upstream design (HealthKit read-only, your own receiver, read-only MCP) and adds the pieces below. Each one changes the batch contract, the receiver schema and the iPhone app together, which is why they live in a fork rather than in a configuration of the upstream app. The full, dated list is in [`FORK.md`](FORK.md).
 
-| Data | What syncs |
-| --- | --- |
-| **Electrocardiograms** | Apple Watch ECG recordings, synced alongside the rest of your history |
-| **Dietary nutrients** | The full set of HealthKit dietary and nutrient types, not a subset |
-| **Medication dose events** | Logged doses from the Health app's Medications feature (iOS 26 and later) |
+| Capability | Upstream app | HealthRelay |
+| --- | --- | --- |
+| **Electrocardiograms** | Not read | Apple Watch ECG recordings with voltage traces, synced through a dedicated foreground lane (new `electrocardiograms` batch field, receiver migration 010) |
+| **Dietary nutrients** | Partial set | All 38 HealthKit dietary quantity types, with g / mg / mcg / kcal units |
+| **Medication dose events** | Not read | Logged doses from the Health app's Medications feature (iOS 26 and later), with per-object read authorization (new `medication_dose_events` field, migration 011) |
+| **Lab results from an Apple Health export** | Not supported | "Import Health Export" reads `export.zip` on the phone, parses only the FHIR clinical records, shows a count for review, and sends only after you confirm. Nothing is unpacked to disk and the zip never leaves the device (new `lab_results` field, migration 012) |
+| **First-sync history window** | Fixed presets | Adds a 7-day option, and the ECG and medication lanes honor the chosen window |
+| **Activity Log** | Generic status labels | Names the lane on each row and collapses runs of empty results into one counted line, so a manual sync reads as a short sequence instead of dozens of identical rows |
+| **Own identity and pairing** | Shares the upstream app's scheme | `healthrelay://pair` scheme, own name, icon and bundle id, so a scanned pairing code cannot open the upstream app |
+| **Release path** | App Store build | Unsigned IPA built by CI and published as a GitHub Release with a SHA-256, for you to sign with your own certificate |
 
-It is built and installed by you; there is no App Store listing.
+Fixes found by running the fork against a real receiver and phone (all in [`FORK.md`](FORK.md)):
+
+- The Cancel button now stops the always-on Automatic Sync engine and appears during automatic-only runs.
+- The receiver no longer permanently rejects Apple Health export uploads with HTTP 403; because the outbox is strictly first-in-first-out, that one rejected item used to block every lane queued behind it.
+- ECG is kept out of the automatic background lane set, where its foreground-only type stalled the whole sync cycle.
+
+The generic pieces (ECG, dietary types, workouts) are intended to be offered upstream as pull requests. The medication, lab-import and receiver-specific parts stay here. HealthRelay is built and installed by you; there is no App Store listing.
 
 ## How it works
 
