@@ -670,3 +670,53 @@ public enum LastSyncedFormatter {
         return "\(days) days ago"
     }
 }
+
+/// The status card's and connection card's decisions about the current status text.
+/// These are the original substring rules, moved out of the views unchanged.
+public enum CompanionStatusPresentation {
+    public static func syncErrorTitle(message rawMessage: String) -> String {
+        let message = rawMessage.lowercased()
+        if message.contains("sync") || message.contains("queued upload") || message.contains("outbox") {
+            return "Sync Failed"
+        }
+        if message.contains("connection") || message.contains("bridge") || message.contains("server") || message.contains("receiver") {
+            return "Connection Failed"
+        }
+        return "Needs Attention"
+    }
+
+    public static func connectionIsReachable(message rawMessage: String, isError: Bool) -> Bool {
+        let message = rawMessage.lowercased()
+        return !isError
+            && (message.contains("connection check passed")
+                || message.contains("server connected")
+                || message.contains("local bridge verified")
+                || message.contains("connected to local bridge"))
+    }
+
+    public static func mailboxFolderIsReady(message: String, isError: Bool, usesMailbox: Bool) -> Bool {
+        !isError && usesMailbox && message.contains("Mailbox folder is ready")
+    }
+
+    public static func connectionNotice(message: String, isError: Bool) -> String {
+        let rawMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let message = rawMessage.lowercased()
+        guard !rawMessage.isEmpty else { return "" }
+        guard !message.contains("permission"), !message.contains("apple health") else { return "" }
+        guard message.contains("connection")
+            || message.contains("receiver")
+            || message.contains("bridge url")
+            || message.contains("local bridge")
+            || message.contains("your server")
+            || message.contains("setup link")
+            || message.contains("disconnect")
+            || message.contains("queued upload")
+            || message.contains("private sync")
+            || message.contains("mailbox")
+        else {
+            return ""
+        }
+        return CompanionPrimaryStatusMessage.sanitized(from: rawMessage, isError: isError)
+    }
+}
+

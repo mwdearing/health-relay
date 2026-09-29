@@ -502,14 +502,7 @@ struct ContentView: View {
     }
 
     private var syncErrorTitle: String {
-        let message = viewModel.statusMessage.lowercased()
-        if message.contains("sync") || message.contains("queued upload") || message.contains("outbox") {
-            return "Sync Failed"
-        }
-        if message.contains("connection") || message.contains("bridge") || message.contains("server") || message.contains("receiver") {
-            return "Connection Failed"
-        }
-        return "Needs Attention"
+        CompanionStatusPresentation.syncErrorTitle(message: viewModel.statusMessage)
     }
 
     private var statusTone: StatusTone {
@@ -642,39 +635,23 @@ private struct ReceiverSettingsView: View {
     }
 
     private var connectionIsReachable: Bool {
-        let message = viewModel.statusMessage.lowercased()
-        return !viewModel.statusIsError
-            && (message.contains("connection check passed")
-                || message.contains("server connected")
-                || message.contains("local bridge verified")
-                || message.contains("connected to local bridge"))
+        CompanionStatusPresentation.connectionIsReachable(
+            message: viewModel.statusMessage,
+            isError: viewModel.statusIsError
+        )
     }
 
     private var mailboxFolderIsReady: Bool {
-        !viewModel.statusIsError
-            && viewModel.usesMailboxTransport
-            && viewModel.statusMessage.contains("Mailbox folder is ready")
+        CompanionStatusPresentation.mailboxFolderIsReady(
+            message: viewModel.statusMessage,
+            isError: viewModel.statusIsError,
+            usesMailbox: viewModel.usesMailboxTransport
+        )
     }
 
     private var connectionNotice: String {
-        let rawMessage = viewModel.statusMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-        let message = rawMessage.lowercased()
-        guard !rawMessage.isEmpty else { return "" }
-        guard !message.contains("permission"), !message.contains("apple health") else { return "" }
-        guard message.contains("connection")
-            || message.contains("receiver")
-            || message.contains("bridge url")
-            || message.contains("local bridge")
-            || message.contains("your server")
-            || message.contains("setup link")
-            || message.contains("disconnect")
-            || message.contains("queued upload")
-            || message.contains("private sync")
-            || message.contains("mailbox")
-        else {
-            return "" }
-        return CompanionPrimaryStatusMessage.sanitized(
-            from: rawMessage,
+        CompanionStatusPresentation.connectionNotice(
+            message: viewModel.statusMessage,
             isError: viewModel.statusIsError
         )
     }
