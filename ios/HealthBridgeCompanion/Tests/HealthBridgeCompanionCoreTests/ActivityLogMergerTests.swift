@@ -86,3 +86,24 @@ final class ActivityLogMergerTests: XCTestCase {
         XCTAssertEqual(entries.first, "08:00 — Step 10")
     }
 }
+
+final class ActivityLogRowIdentityTests: XCTestCase {
+    func testIdenticalEntriesGetDistinctIDs() {
+        let rows = ActivityLogMerger.identifiedRows(from: ["a", "b", "a"])
+
+        XCTAssertEqual(Set(rows.map(\.id)).count, 3)
+        XCTAssertEqual(rows.map(\.text), ["a", "b", "a"])
+    }
+
+    func testTrimmingOldestEntryKeepsRemainingRowIDs() {
+        let before = ActivityLogMerger.identifiedRows(from: ["10:00 — x", "10:01 — y", "10:02 — z"])
+        let after = ActivityLogMerger.identifiedRows(from: ["10:01 — y", "10:02 — z", "10:03 — w"])
+
+        XCTAssertEqual(before[1].id, after[0].id)
+        XCTAssertEqual(before[2].id, after[1].id)
+    }
+
+    func testEmptyListYieldsNoRows() {
+        XCTAssertTrue(ActivityLogMerger.identifiedRows(from: []).isEmpty)
+    }
+}

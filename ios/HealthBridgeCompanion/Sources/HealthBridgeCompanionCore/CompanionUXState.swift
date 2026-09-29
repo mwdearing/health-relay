@@ -629,3 +629,44 @@ public enum CompanionCopy {
         return "\(version) (\(build))"
     }
 }
+
+/// Persists the time of the last successful sync so the status card can show it after a
+/// relaunch. Presentation only: nothing here influences what or when anything is sent.
+public struct LastSyncedStore {
+    private static let key = "healthRelay.lastSuccessfulSyncAt"
+    private let userDefaults: UserDefaults
+
+    public init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+    }
+
+    public var lastSyncedAt: Date? {
+        guard let seconds = userDefaults.object(forKey: Self.key) as? Double else { return nil }
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    public func record(_ date: Date) {
+        userDefaults.set(date.timeIntervalSince1970, forKey: Self.key)
+    }
+}
+
+public enum LastSyncedFormatter {
+    /// "Last synced 5 minutes ago", or nil when nothing has synced yet.
+    public static func line(lastSyncedAt: Date?, now: Date) -> String? {
+        guard let lastSyncedAt else { return nil }
+        return "Last synced \(relative(from: lastSyncedAt, to: now))"
+    }
+
+    static func relative(from date: Date, to now: Date) -> String {
+        let seconds = now.timeIntervalSince(date)
+        // A clock that moved backwards must never produce a negative age.
+        if seconds < 60 { return "just now" }
+        let minutes = Int(seconds / 60)
+        if minutes < 60 { return "\(CompanionCopy.count(minutes, "minute")) ago" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(CompanionCopy.count(hours, "hour")) ago" }
+        let days = hours / 24
+        if days == 1 { return "yesterday" }
+        return "\(days) days ago"
+    }
+}

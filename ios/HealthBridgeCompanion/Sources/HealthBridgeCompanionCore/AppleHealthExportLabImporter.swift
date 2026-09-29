@@ -15,7 +15,8 @@ public enum AppleHealthExportLabImporter {
     public static let sourceKey = "apple_health.export"
 
     public enum ImportError: Error, Equatable {
-        case cannotOpenArchive
+        /// `reason` is the plain-language description of what is wrong with the archive.
+        case cannotOpenArchive(reason: String)
     }
 
     public struct Summary: Equatable, Sendable {
@@ -24,6 +25,49 @@ public enum AppleHealthExportLabImporter {
         /// produced a usable lab result (e.g. missing effective_date is skipped).
         public let observationCount: Int
         public let skippedCount: Int
+        /// Clinical-record entries that could not be read at all (encrypted, damaged or
+        /// using an unsupported compression method). Reported, never silently dropped.
+        public let unreadableEntryCount: Int
+
+        public init(
+            labResults: [HealthBridgeLabResult],
+            observationCount: Int,
+            skippedCount: Int,
+            unreadableEntryCount: Int = 0
+        ) {
+            self.labResults = labResults
+            self.observationCount = observationCount
+            self.skippedCount = skippedCount
+            self.unreadableEntryCount = unreadableEntryCount
+        }
+
+        /// Person-facing note about entries that could not be read; nil when none.
+        public var unreadableNotice: String? {
+            guard unreadableEntryCount > 0 else { return nil }
+            return "\(CompanionCopy.count(unreadableEntryCount, "clinical record file")) could not be read (encrypted or damaged) and \(unreadableEntryCount == 1 ? "was" : "were") skipped."
+        }
+    }
+
+    /// Reads the archive inside a coordinated read (`NSFileCoordinator`), which also asks
+    /// iCloud to download a file that is not on the device yet. Blocking: call it off the
+    /// main actor. Cooperative cancellation is honored between entries.
+    public static func importLabResultsCoordinated(fromZipAt url: URL) throws -> Summary {
+        var coordinationError: NSError?
+        var outcome: Result<Summary, Error>?
+        NSFileCoordinator(filePresenter: nil).coordinate(
+            readingItemAt: url,
+            options: [.withoutChanges],
+            error: &coordinationError
+        ) { readURL in
+            outcome = Result { try importLabResults(fromZipAt: readURL) }
+        }
+        if let outcome {
+            return try outcome.get()
+        }
+        if let coordinationError {
+            throw coordinationError
+        }
+        throw ImportError.cannotOpenArchive(reason: "The file could not be read.")
     }
 
     public static func importLabResults(fromZipAt url: URL) throws -> Summary {
@@ -31,12 +75,13 @@ public enum AppleHealthExportLabImporter {
         do {
             entries = try MinimalZipReader.listEntries(at: url)
         } catch {
-            throw ImportError.cannotOpenArchive
+            throw ImportError.cannotOpenArchive(reason: error.localizedDescription)
         }
 
         var labResults: [HealthBridgeLabResult] = []
         var observationCount = 0
         var skippedCount = 0
+        var unreadableEntryCount = 0
 
         for entry in entries {
             // A real export.zip nests everything under a top-level folder (typically
@@ -51,8 +96,21 @@ public enum AppleHealthExportLabImporter {
                 continue
             }
 
-            guard let data = try? MinimalZipReader.readEntryData(entry, from: url),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            try Task.checkCancellation()
+
+            let data: Data
+            do {
+                data = try MinimalZipReader.readEntryData(entry, from: url)
+            } catch {
+                unreadableEntryCount += 1
+                continue
+            }
+            guard let parsed = try? JSONSerialization.jsonObject(with: data) else {
+                unreadableEntryCount += 1
+                continue
+            }
+            // A readable JSON file that is not an Observation is simply not a lab result.
+            guard let json = parsed as? [String: Any],
                   (json["resourceType"] as? String) == "Observation"
             else {
                 continue
@@ -69,7 +127,8 @@ public enum AppleHealthExportLabImporter {
         return Summary(
             labResults: labResults,
             observationCount: observationCount,
-            skippedCount: skippedCount
+            skippedCount: skippedCount,
+            unreadableEntryCount: unreadableEntryCount
         )
     }
 
@@ -239,5 +298,14 @@ public enum AppleHealthExportLabImporter {
             return (low, high)
         }
         return nil
+    }
+}
+
+extension AppleHealthExportLabImporter.ImportError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case let .cannotOpenArchive(reason):
+            return reason
+        }
     }
 }
