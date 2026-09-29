@@ -4778,6 +4778,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     /// Called when the system file picker fails (not when it is cancelled). Presentation
     /// only: surfaces the failure in the status card and the activity log.
     func reportAppleHealthExportPickerFailure(_ error: Error) {
+        // Some iOS versions report Cancel as an error; that is not a failure to show.
+        if let cocoaError = error as? CocoaError, cocoaError.code == .userCancelled {
+            return
+        }
         pendingExportImportSummary = nil
         statusIsError = true
         statusMessage = "[Export] Could not open that file: \(describe(error))"
