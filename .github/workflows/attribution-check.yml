@@ -1,8 +1,9 @@
 name: Attribution check
 
 # Fails a pull request that shows tool/agent attribution in its title, body,
-# commit messages, commit identities or branch name (mwd/<slug> is the branch
-# convention). Not a required check unless the ruleset says so.
+# commit messages or commit identities, or whose head branch is not
+# <type>/<slug> (type: feature, bugfix, hotfix, docs, chore, refactor, ci, test)
+# or a dependabot/ branch. Not a required check unless the ruleset says so.
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]

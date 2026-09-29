@@ -28,6 +28,9 @@ TEXT_PATTERNS = [
     ),
     ("claude.ai/code session link", re.compile(r"claude\.ai/code", re.IGNORECASE)),
 ]
+BRANCH_ALLOWED = re.compile(
+    r"^(feature|bugfix|hotfix|docs|chore|refactor|ci|test)/[a-z0-9][a-z0-9._-]*$"
+)
 IDENTITY = re.compile(rf"noreply@anthropic\.com|{AGENTS}", re.IGNORECASE)
 
 
@@ -41,17 +44,24 @@ def git(*args: str) -> str:
     return result.stdout
 
 
+def branch_problem(head_ref: str) -> str | None:
+    if BRANCH_ALLOWED.match(head_ref) or head_ref.startswith("dependabot/"):
+        return None
+    return (
+        f"branch '{head_ref}' must be <type>/<slug> with type feature, bugfix, "
+        "hotfix, docs, chore, refactor, ci or test"
+    )
+
+
 def check_text(label: str, text: str | None) -> list[str]:
     return [f"{label}: {name}" for name, pat in TEXT_PATTERNS if pat.search(text or "")]
 
 
 def main() -> int:
     problems = []
-    head_ref = os.environ.get("HEAD_REF", "")
-    if head_ref.startswith("claude/"):
-        problems.append(
-            f"branch name '{head_ref}' starts with claude/ (use mwd/<slug>)"
-        )
+    branch = branch_problem(os.environ.get("HEAD_REF", ""))
+    if branch:
+        problems.append(branch)
     problems += check_text("PR title", os.environ.get("PR_TITLE", ""))
     problems += check_text("PR body", os.environ.get("PR_BODY", ""))
     base, head = os.environ["BASE_SHA"], os.environ["HEAD_SHA"]
