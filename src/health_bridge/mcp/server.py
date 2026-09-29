@@ -33,7 +33,10 @@ DATE_HINT: Final = "must be a date like 2026-06-01 (YYYY-MM-DD)"
 TIMESTAMP_FIELDS: Final = frozenset({"start_time", "end_time"})
 DATE_FIELDS: Final = frozenset({"start_date", "end_date"})
 MAX_FIELD_NAME_LENGTH: Final = 40
-DATABASE_HINT: Final = "Check the path in ~/.config/healthrelay/db-path."
+DATABASE_HINT: Final = (
+    "Check the database path this server was started with "
+    "(the healthrelay plugin reads it from ~/.config/healthrelay/db-path)."
+)
 
 Handler: TypeAlias = Callable[[Path, "JsonRpcRequest"], JsonObject]
 
@@ -273,7 +276,7 @@ def _database_failure_reason(db_path: Path, error: Exception) -> str:
         or "locked" in message
     ):
         return "locked"
-    if "not a database" in message or "no such table" in message:
+    if "not a database" in message:
         return "not a HealthRelay database"
     return "other"
 

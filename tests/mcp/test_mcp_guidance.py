@@ -20,7 +20,10 @@ EMPTY_WINDOW_NOTE = (
     "For one day, set end_date to the next day."
 )
 UNKNOWN_CODE_HINT = "call list_synced_metrics for valid codes"
-DB_HINT = "Check the path in ~/.config/healthrelay/db-path."
+DB_HINT = (
+    "Check the database path this server was started with "
+    "(the healthrelay plugin reads it from ~/.config/healthrelay/db-path)."
+)
 
 
 class GuidanceModel(BaseModel):
@@ -297,3 +300,16 @@ def test_every_description_leads_with_what_it_answers_and_states_read_only() -> 
         assert not tool.description.startswith("Read-only")
         assert tool.description.count("no clinical interpretation") == 1
         assert tool.description.rstrip().endswith("no clinical interpretation.")
+
+
+def test_row_cap_is_claimed_only_where_it_applies() -> None:
+    assert "500" in _description("get_workouts")
+    assert "500" not in _description("get_sleep_summary")
+    assert "500" not in _description("get_daily_summary")
+
+
+def test_timeseries_description_routes_sessions_to_their_own_tools() -> None:
+    description = _description("get_timeseries")
+
+    assert "workout" in description
+    assert "sleep_analysis" in description

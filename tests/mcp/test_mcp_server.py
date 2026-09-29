@@ -145,7 +145,10 @@ TOOL_CALL_SHAPE_MESSAGE = (
     "Invalid tool call: params must be an object like "
     '{"name": "<tool>", "arguments": {...}}.'
 )
-DB_HINT = "Check the path in ~/.config/healthrelay/db-path."
+DB_HINT = (
+    "Check the database path this server was started with "
+    "(the healthrelay plugin reads it from ~/.config/healthrelay/db-path)."
+)
 DB_NOT_FOUND = f"HealthRelay database could not be read (not found). {DB_HINT}"
 DB_LOCKED = f"HealthRelay database could not be read (locked). {DB_HINT}"
 DB_OTHER = f"HealthRelay database could not be read (other). {DB_HINT}"

@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 from typing import Final, TypeAlias
 
@@ -28,7 +29,9 @@ LEGACY_QUERY_TYPE_CODES: Final[dict[str, tuple[str, ...]]] = {
     "energy": ("active_energy",),
     "weight": ("body_mass",),
 }
-STORED_TYPE_CODES_SQL: Final = "select distinct type_code from samples"
+STORED_TYPE_CODES_SQL: Final = (
+    "select distinct type_code from samples where type_code in ({placeholders})"
+)
 STORED_TYPE_CODES_ADAPTER: Final[TypeAdapter[list[tuple[str]]]] = TypeAdapter(
     list[tuple[str]],
 )
@@ -71,12 +74,7 @@ def get_timeseries(
                 parameters,
             ).fetchall(),
         )
-        stored_type_codes = {
-            row[0]
-            for row in STORED_TYPE_CODES_ADAPTER.validate_python(
-                connection.execute(STORED_TYPE_CODES_SQL).fetchall(),
-            )
-        }
+        unknown_notes = _unknown_type_code_notes(connection, type_codes)
     truncated = len(rows) > limit
     limited_rows = tuple(rows[:limit])
     points = tuple(_point_from_row(row) for row in limited_rows)
@@ -86,7 +84,7 @@ def get_timeseries(
         points=points,
         sources_used=unique_sources(point.source for point in points),
         missing_data_notes=(
-            *_unknown_type_code_notes(type_codes, stored_type_codes),
+            *unknown_notes,
             *notes_for_count(len(points)),
         ),
         truncated=truncated,
@@ -94,17 +92,31 @@ def get_timeseries(
 
 
 def _unknown_type_code_notes(
+    connection: sqlite3.Connection,
     type_codes: tuple[str, ...],
-    stored_type_codes: set[str],
 ) -> tuple[str, ...]:
     known = {
         *TIMESERIES_BY_TYPE_CODE,
         *LEGACY_SAMPLE_TYPE_CODE_ALIASES,
         *LEGACY_SAMPLE_TYPE_CODE_ALIASES.values(),
         *LEGACY_QUERY_TYPE_CODES,
-        *stored_type_codes,
     }
-    unknown = tuple(dict.fromkeys(code for code in type_codes if code not in known))
+    candidates = tuple(
+        dict.fromkeys(code for code in type_codes if code not in known),
+    )
+    if not candidates:
+        return ()
+    placeholders = ",".join("?" for _code in candidates)
+    stored = {
+        row[0]
+        for row in STORED_TYPE_CODES_ADAPTER.validate_python(
+            connection.execute(
+                STORED_TYPE_CODES_SQL.format(placeholders=placeholders),
+                candidates,
+            ).fetchall(),
+        )
+    }
+    unknown = tuple(code for code in candidates if code not in stored)
     if not unknown:
         return ()
     names = ", ".join(unknown)

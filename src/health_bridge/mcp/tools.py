@@ -140,12 +140,12 @@ SUPPORTED_TIMESERIES_INPUT_SCHEMA: Final[JsonObject] = {
 }
 _READ_ONLY: Final = "Read-only, no clinical interpretation."
 _DATE_RULES: Final = (
-    "Dates use YYYY-MM-DD and are UTC days. "
+    "Dates use YYYY-MM-DD and range bounds are UTC midnights. "
     "start_date is inclusive and end_date is EXCLUSIVE, so for one day set "
     "end_date to the next day (2026-06-03 to 2026-06-04); "
-    "start_date equal to end_date is an empty window. "
-    "Results cap at 500 rows and set truncated: true when cut off."
+    "start_date equal to end_date is an empty window."
 )
+_ROW_CAP: Final = "Results cap at 500 rows and set truncated: true when cut off."
 
 
 def _describe(*sentences: str) -> str:
@@ -190,8 +190,9 @@ MCP_TOOL_DEFINITIONS: Final[tuple[ToolDefinition, ...]] = (
         description=_describe(
             "Answers which metric types have data in this store and how many",
             "records each has, with provenance and missing-data caveats.",
-            "Call this first: the type_code values it returns are the only valid",
-            "type_codes for get_timeseries.",
+            "Call this first: the type_code values it returns are the valid",
+            "type_codes for get_timeseries, except workout (use get_workouts)",
+            "and sleep_analysis (use get_sleep_summary).",
         ),
         input_schema=EMPTY_INPUT_SCHEMA,
     ),
@@ -201,7 +202,8 @@ MCP_TOOL_DEFINITIONS: Final[tuple[ToolDefinition, ...]] = (
             "Returns raw samples (value, unit, source) for one or more metric",
             "types in a time range.",
             "type_codes must come from list_synced_metrics (for example steps,",
-            "heart_rate, weight); unknown codes return no points plus a note.",
+            "heart_rate, weight; not workout or sleep_analysis, which have their",
+            "own tools); unknown codes return no points plus a note.",
             "start_time and end_time are UTC timestamps ending in Z, such as",
             "2026-06-01T00:00:00Z; a sample is included when its start is at or",
             "after start_time and before end_time.",
@@ -217,6 +219,7 @@ MCP_TOOL_DEFINITIONS: Final[tuple[ToolDefinition, ...]] = (
             "Answers what workouts started in a date range (type, times,",
             "duration, energy, distance, source).",
             _DATE_RULES,
+            _ROW_CAP,
         ),
         input_schema=DATE_RANGE_INPUT_SCHEMA,
     ),
@@ -235,7 +238,9 @@ MCP_TOOL_DEFINITIONS: Final[tuple[ToolDefinition, ...]] = (
             "Answers what each day looked like across metrics: sum-safe",
             "sample_totals for additive metrics (such as steps) and",
             "sample_statistics for non-summable metrics (such as heart rate or",
-            "weight), per UTC day. The best tool for week or month questions.",
+            "weight), per day. A day is the device's calendar day when the app",
+            "recorded one, otherwise the UTC day.",
+            "The best tool for week or month questions.",
             _DATE_RULES,
         ),
         input_schema=DATE_RANGE_INPUT_SCHEMA,
