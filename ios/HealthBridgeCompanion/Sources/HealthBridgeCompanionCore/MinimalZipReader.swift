@@ -196,14 +196,26 @@ enum MinimalZipReader {
         }
 
         // ZIP64 locator: 20 bytes immediately before the EOCD.
-        guard eocdFileOffset >= 20 else {
-            throw ZipError.invalidZip64Structure
+        var locatorData: Data?
+        if eocdFileOffset >= 20 {
+            try handle.seek(toOffset: UInt64(eocdFileOffset - 20))
+            if let candidate = try handle.read(upToCount: 20), candidate.count == 20,
+               Array(candidate.prefix(4)) == zip64LocatorSignature {
+                locatorData = candidate
+            }
         }
-        try handle.seek(toOffset: UInt64(eocdFileOffset - 20))
-        guard let locator = try handle.read(upToCount: 20), locator.count == 20,
-              Array(locator.prefix(4)) == zip64LocatorSignature
-        else {
-            throw ZipError.invalidZip64Structure
+        guard let locator = locatorData else {
+            // Only the entry count is capped (a classic archive with 65535 entries, or a
+            // writer that caps it without ZIP64 records): size and offset are real, so
+            // the classic values are still correct. A sentinel size/offset without a
+            // locator is genuinely broken.
+            guard size32 != sentinel32, offset32 != sentinel32 else {
+                throw ZipError.invalidZip64Structure
+            }
+            return EndOfCentralDirectory(
+                centralDirectoryOffset: Int(offset32),
+                centralDirectorySize: Int(size32)
+            )
         }
         let totalDisks = readUInt32(locator, at: 16)
         let recordOffset = readUInt64(locator, at: 8)
