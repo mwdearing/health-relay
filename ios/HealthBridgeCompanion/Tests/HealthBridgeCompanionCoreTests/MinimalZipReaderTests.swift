@@ -17,6 +17,7 @@ import XCTest
 ///   with 0xFFFF / 0xFFFFFFFF sentinels in the classic EOCD.
 /// - `cappedCount`: `normal` layout with the EOCD entry count set to 0xFFFF and no
 ///   ZIP64 records (sizes and offsets are real, so it must still open).
+/// - `cappedCountMultiDisk`: `cappedCount` with non-zero disk fields (must be rejected).
 /// - `encrypted`, `unknownMethod`, `multiDisk`: the `normal` layout with the
 ///   encryption flag set, compression method 12 (bzip2), or a nonzero disk number.
 final class MinimalZipReaderTests: XCTestCase {
@@ -27,6 +28,7 @@ final class MinimalZipReaderTests: XCTestCase {
     private static let encryptedBase64 = "UEsDBBQAAQAIAAAAIQC6Hat+OAAAANQAAAATAAAAZXhwb3J0L25vdGVzL2EuanNvbqtWKkotzi8tSk4NqSxIVbJSUPJPKk4tKkssyczPU9JRUMpMAQkWV+aVZKSWZCbrGirVclUPbk0AUEsDBBQAAQAAAAAAIQB0yRA1FwAAABcAAAASAAAAZXhwb3J0L25vdGVzL2IudHh0c3ludGhldGljIHN0b3JlZCBlbnRyeQpQSwECFAAUAAEACAAAACEAuh2rfjgAAADUAAAAEwAAAAAAAAAAAAAAAAAAAAAAZXhwb3J0L25vdGVzL2EuanNvblBLAQIUABQAAQAAAAAAIQB0yRA1FwAAABcAAAASAAAAAAAAAAAAAAAAAGkAAABleHBvcnQvbm90ZXMvYi50eHRQSwUGAAAAAAIAAgCBAAAAsAAAAAAA"
     private static let unknownMethodBase64 = "UEsDBBQAAAAIAAAAIQC6Hat+OAAAANQAAAATAAAAZXhwb3J0L25vdGVzL2EuanNvbqtWKkotzi8tSk4NqSxIVbJSUPJPKk4tKkssyczPU9JRUMpMAQkWV+aVZKSWZCbrGirVclUPbk0AUEsDBBQAAAAAAAAAIQB0yRA1FwAAABcAAAASAAAAZXhwb3J0L25vdGVzL2IudHh0c3ludGhldGljIHN0b3JlZCBlbnRyeQpQSwECFAAUAAAADAAAACEAuh2rfjgAAADUAAAAEwAAAAAAAAAAAAAAAAAAAAAAZXhwb3J0L25vdGVzL2EuanNvblBLAQIUABQAAAAMAAAAIQB0yRA1FwAAABcAAAASAAAAAAAAAAAAAAAAAGkAAABleHBvcnQvbm90ZXMvYi50eHRQSwUGAAAAAAIAAgCBAAAAsAAAAAAA"
     private static let cappedCountBase64 = "UEsDBBQAAAAIAAAAIQC6Hat+OAAAANQAAAATAAAAZXhwb3J0L25vdGVzL2EuanNvbqtWKkotzi8tSk4NqSxIVbJSUPJPKk4tKkssyczPU9JRUMpMAQkWV+aVZKSWZCbrGirVclUPbk0AUEsDBBQAAAAAAAAAIQB0yRA1FwAAABcAAAASAAAAZXhwb3J0L25vdGVzL2IudHh0c3ludGhldGljIHN0b3JlZCBlbnRyeQpQSwECFAAUAAAACAAAACEAuh2rfjgAAADUAAAAEwAAAAAAAAAAAAAAAAAAAAAAZXhwb3J0L25vdGVzL2EuanNvblBLAQIUABQAAAAAAAAAIQB0yRA1FwAAABcAAAASAAAAAAAAAAAAAAAAAGkAAABleHBvcnQvbm90ZXMvYi50eHRQSwUGAAAAAP////+BAAAAsAAAAAAA"
+    private static let cappedCountMultiDiskBase64 = "UEsDBBQAAAAIAAAAIQC6Hat+OAAAANQAAAATAAAAZXhwb3J0L25vdGVzL2EuanNvbqtWKkotzi8tSk4NqSxIVbJSUPJPKk4tKkssyczPU9JRUMpMAQkWV+aVZKSWZCbrGirVclUPbk0AUEsDBBQAAAAAAAAAIQB0yRA1FwAAABcAAAASAAAAZXhwb3J0L25vdGVzL2IudHh0c3ludGhldGljIHN0b3JlZCBlbnRyeQpQSwECFAAUAAAACAAAACEAuh2rfjgAAADUAAAAEwAAAAAAAAAAAAAAAAAAAAAAZXhwb3J0L25vdGVzL2EuanNvblBLAQIUABQAAAAAAAAAIQB0yRA1FwAAABcAAAASAAAAAAAAAAAAAAAAAGkAAABleHBvcnQvbm90ZXMvYi50eHRQSwUGAQABAP////+BAAAAsAAAAAAA"
     private static let multiDiskBase64 = "UEsDBBQAAAAIAAAAIQC6Hat+OAAAANQAAAATAAAAZXhwb3J0L25vdGVzL2EuanNvbqtWKkotzi8tSk4NqSxIVbJSUPJPKk4tKkssyczPU9JRUMpMAQkWV+aVZKSWZCbrGirVclUPbk0AUEsDBBQAAAAAAAAAIQB0yRA1FwAAABcAAAASAAAAZXhwb3J0L25vdGVzL2IudHh0c3ludGhldGljIHN0b3JlZCBlbnRyeQpQSwECFAAUAAAACAAAACEAuh2rfjgAAADUAAAAEwAAAAAAAAAAAAAAAAAAAAAAZXhwb3J0L25vdGVzL2EuanNvblBLAQIUABQAAAAAAAAAIQB0yRA1FwAAABcAAAASAAAAAAAAAAAAAAAAAGkAAABleHBvcnQvbm90ZXMvYi50eHRQSwUGAQABAAIAAgCBAAAAsAAAAAAA"
 
     private static let jsonEntry = String(
@@ -104,6 +106,13 @@ final class MinimalZipReaderTests: XCTestCase {
         XCTAssertThrowsError(try MinimalZipReader.listEntries(at: url)) { error in
             XCTAssertEqual(error as? MinimalZipReader.ZipError, .multiDiskArchive)
             XCTAssertTrue(error.localizedDescription.contains("multiple disks"))
+        }
+    }
+
+    func testCappedCountMultiDiskArchiveIsRejected() throws {
+        let url = try writeZip(Self.cappedCountMultiDiskBase64)
+        XCTAssertThrowsError(try MinimalZipReader.listEntries(at: url)) { error in
+            XCTAssertEqual(error as? MinimalZipReader.ZipError, .multiDiskArchive)
         }
     }
 
