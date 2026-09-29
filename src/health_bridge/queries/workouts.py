@@ -7,6 +7,7 @@ from health_bridge.queries._common import (
     DEFAULT_LIMIT,
     connect_readonly,
     date_bounds,
+    empty_window_notes,
     notes_for_count,
     source_from_row,
     unique_sources,
@@ -59,7 +60,10 @@ def get_workouts(
         period=Period(start=start_date, end=end_date),
         workouts=workouts,
         sources_used=unique_sources(workout.source for workout in workouts),
-        missing_data_notes=notes_for_count(len(workouts)),
+        missing_data_notes=(
+            *empty_window_notes(start_date, end_date),
+            *notes_for_count(len(workouts)),
+        ),
         truncated=truncated,
     )
 
