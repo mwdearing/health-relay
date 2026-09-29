@@ -7,7 +7,7 @@ HealthRelay moves Apple Health data from an iPhone to a receiver you run yoursel
 | Component | Supported |
 |---|---|
 | iOS app | The release marked **Latest** and the current beta pre-release on the [Releases page](https://github.com/mwdearing/health-relay/releases). Older builds are not patched; update instead. |
-| Receiver, CLI and MCP server | The `main` branch. Its version is in `pyproject.toml`. |
+| Receiver, CLI and MCP server | The `main` branch of this repository. Its version is in `pyproject.toml`. Fixes land here and are not backported to upstream tags, so install from this repository's `main` rather than a pinned upstream receiver tag. |
 | Batch protocol | `health_bridge.batch.v1` |
 
 ## Reporting a vulnerability
@@ -63,15 +63,15 @@ Out of scope:
 
 ## Verify what you install
 
-- Download the app only from the [Releases page](https://github.com/mwdearing/health-relay/releases).
-- Check the IPA against the attached checksum: `sha256sum -c HealthRelay-unsigned.ipa.sha256` (on macOS: `shasum -a 256 -c HealthRelay-unsigned.ipa.sha256`).
+- Get the app only from the [Releases page](https://github.com/mwdearing/health-relay/releases), from a `Build unsigned IPA` workflow run in this repository, or by building it yourself from a checkout you trust.
+- For a release download, check the IPA against the attached checksum (workflow artifacts include one too): `sha256sum -c HealthRelay-unsigned.ipa.sha256` (on macOS: `shasum -a 256 -c HealthRelay-unsigned.ipa.sha256`).
 - Each release names the commit and the "Build unsigned IPA" workflow run that built it.
 - You sign the IPA with your own Apple developer certificate. Keep that signing identity private.
 
 ## Deploy the receiver safely
 
-- Run the receiver on localhost, a LAN, or a private network such as a tailnet. Do not open a public port without separate hardening.
-- The setup page is a private file (mode 0600) holding an invitation that is valid for 20 minutes and works once. Open it only on a trusted screen and delete it after pairing.
+- Run the receiver on localhost or a private network such as a tailnet. A same-LAN setup uses plain HTTP, so health payloads and the device credential are visible to that network: use it only on a trusted, isolated LAN, never a shared or guest network. Do not open a public port without separate hardening.
+- The setup page is a private file (mode 0600) holding an invitation that is valid for 20 minutes and works once. Open it only on a trusted screen and delete it after pairing. A legacy pairing (`--legacy-v1`) instead holds a long-lived credential that does not expire: revoke it when you no longer need it.
 - The device credential is stored in the iPhone Keychain.
 - Protect the receiver database file like any health record.
 
