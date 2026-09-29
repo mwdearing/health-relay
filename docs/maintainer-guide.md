@@ -50,7 +50,7 @@ Require an accepted issue and maintainer decision before implementation when a c
 
 ## Pull requests
 
-- Use `fix/`, `feat/`, `docs/`, or `chore/` branch prefixes.
+- Use `feature/`, `bugfix/`, `hotfix/`, `docs/`, `chore/`, `refactor/`, `ci/` or `test/` branch prefixes (`<prefix>/<slug>`, lowercase slug).
 - Keep each pull request focused on one change.
 - Use synthetic fixtures and redact all public evidence.
 - Run the Python gates in `CONTRIBUTING.md` and the relevant Swift/Xcode gates for iOS changes.
