@@ -341,8 +341,8 @@ def _render_invitation_setup_page(
     </p>
     <h2 id="scan-heading">Scan with iPhone Camera</h2>
     <ol class="steps">
-      <li>Open <strong>HealthRelay</strong> on your iPhone.</li>
-      <li>Point the <strong>Camera</strong> at the QR code below.</li>
+      <li>Open the <strong>Camera</strong> app on your iPhone.</li>
+      <li>Point it at the QR code below.</li>
       <li>Tap the <strong>banner</strong> that appears to open HealthRelay.</li>
     </ol>
     <details id="qr-details" open>
