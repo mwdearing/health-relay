@@ -4,8 +4,13 @@ name: Attribution check
 # commit messages or commit identities, or whose head branch is not
 # <type>/<slug> (type: feature, bugfix, hotfix, docs, chore, refactor, ci, test)
 # or a dependabot/ branch. Not a required check unless the ruleset says so.
+#
+# Runs on pull_request_target so the scanner always comes from the base branch,
+# never from the pull request under test. The job checks out the base branch,
+# only fetches the PR's commits as data and never executes anything from them.
+# A PR that edits this workflow or the script is judged by the base versions.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, edited, synchronize, reopened]
     branches:
       - main
@@ -29,7 +34,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Scan title, body, commits and branch name
+      - name: Fetch the pull request commits (data only)
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head"
+
+      - name: Scan title, body, commits and branch name (base-branch scanner)
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}

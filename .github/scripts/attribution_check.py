@@ -12,26 +12,34 @@ import re
 import subprocess
 import sys
 
-AGENTS = r"(claude|anthropic|codex|openai|hermes|nousresearch)"
+AGENT_WORDS = r"(claude|anthropic|codex|openai|chatgpt|hermes|nousresearch)"
+CO_AUTHOR = re.compile(r"^\s*co-authored-by:(?P<who>.*)$", re.IGNORECASE | re.MULTILINE)
 TEXT_PATTERNS = [
-    (
-        "Co-Authored-By trailer naming an agent",
-        re.compile(rf"^\s*co-authored-by:.*{AGENTS}", re.IGNORECASE | re.MULTILINE),
-    ),
     (
         "Claude-Session trailer",
         re.compile(r"^\s*claude-session:", re.IGNORECASE | re.MULTILINE),
     ),
     (
-        "'Generated with/by Claude Code' line",
-        re.compile(r"generated (with|by) \[?claude code", re.IGNORECASE),
+        "'Generated with/by <agent>' line",
+        re.compile(rf"generated (with|by) \[?{AGENT_WORDS}", re.IGNORECASE),
     ),
     ("claude.ai/code session link", re.compile(r"claude\.ai/code", re.IGNORECASE)),
 ]
+# Bot identities are matched by canonical name or address, never by substring,
+# so a person named Claude or Codex is not flagged.
+AGENT_NAME = re.compile(
+    r"^(claude( code| opus| sonnet| haiku)?( [0-9][0-9.]*)?|codex"
+    r"|hermes( agent| backup bot)?|chatgpt.*|.*\[bot\])$",
+    re.IGNORECASE,
+)
+AGENT_EMAIL = re.compile(
+    r"@(anthropic|openai|nousresearch)\.com$|^(codex|hermes|hermes-backup)@(fedora\.local|localhost)$",
+    re.IGNORECASE,
+)
+IDENTITY_PARTS = re.compile(r"^\s*(?P<name>.*?)\s*(<(?P<email>[^>]*)>)?\s*$")
 BRANCH_ALLOWED = re.compile(
     r"^(feature|bugfix|hotfix|docs|chore|refactor|ci|test)/[a-z0-9][a-z0-9._-]*$"
 )
-IDENTITY = re.compile(rf"noreply@anthropic\.com|{AGENTS}", re.IGNORECASE)
 
 
 def git(*args: str) -> str:
@@ -44,6 +52,15 @@ def git(*args: str) -> str:
     return result.stdout
 
 
+def is_agent_identity(text: str) -> bool:
+    match = IDENTITY_PARTS.match(text)
+    if not match:
+        return False
+    name = match.group("name") or ""
+    email = match.group("email") or ""
+    return bool(AGENT_NAME.match(name.strip()) or AGENT_EMAIL.search(email.strip()))
+
+
 def branch_problem(head_ref: str) -> str | None:
     if BRANCH_ALLOWED.match(head_ref) or head_ref.startswith("dependabot/"):
         return None
@@ -54,7 +71,14 @@ def branch_problem(head_ref: str) -> str | None:
 
 
 def check_text(label: str, text: str | None) -> list[str]:
-    return [f"{label}: {name}" for name, pat in TEXT_PATTERNS if pat.search(text or "")]
+    found = [
+        f"{label}: Co-Authored-By trailer naming an agent"
+        for m in CO_AUTHOR.finditer(text or "")
+        if is_agent_identity(m.group("who"))
+    ][:1]
+    return found + [
+        f"{label}: {name}" for name, pat in TEXT_PATTERNS if pat.search(text or "")
+    ]
 
 
 def main() -> int:
@@ -72,7 +96,7 @@ def main() -> int:
         )
         for role, fmt in (("author", "%an <%ae>"), ("committer", "%cn <%ce>")):
             ident = git("log", "-1", f"--format={fmt}", sha).strip()
-            if IDENTITY.search(ident):
+            if is_agent_identity(ident):
                 problems.append(f"commit {short} {role} identity: {ident}")
     if problems:
         print("Attribution check failed:")  # noqa: T201

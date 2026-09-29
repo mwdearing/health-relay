@@ -47,10 +47,13 @@ Real-device HealthKit validation is useful, but any reported evidence must be re
 
 Use a short branch name with one of these prefixes:
 
-- `fix/` for defects;
-- `feat/` for accepted features;
+- `bugfix/` for defects (`hotfix/` for urgent ones);
+- `feature/` for accepted features;
 - `docs/` for documentation;
-- `chore/` for maintenance and repository operations.
+- `chore/` for maintenance and repository operations;
+- `refactor/`, `ci/` or `test/` for the matching kind of change.
+
+Branch names are `<prefix>/<slug>` with a lowercase slug (letters, digits, `.`, `_`, `-`). The "No AI attribution" check rejects any other branch name (Dependabot's own `dependabot/` branches are allowed).
 
 Get a maintainer decision before implementation when a change affects HealthKit permissions or read/write scope, receiver authentication or pairing, disconnect/reset/deletion behavior, outbox or cursor semantics, public/hosted network paths, telemetry, analytics, advertising, third-party AI calls, privacy copy, entitlements, or App Review disclosures.
 
