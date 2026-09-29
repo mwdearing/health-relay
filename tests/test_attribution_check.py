@@ -62,6 +62,9 @@ def test_agent_identities_are_flagged(identity: str) -> None:
     "identity",
     [
         "Jane Doe <jane@example.com>",
+        f"Jane Doe <jane@{_ANTHROPIC}>",
+        f"Jane Doe <jane@{_NOUS}>",
+        "dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
         "Claude Dupont <claude@example.com>",
         "Codex Smith <smith@example.com>",
     ],

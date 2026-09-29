@@ -29,11 +29,14 @@ TEXT_PATTERNS = [
 # so a person named Claude or Codex is not flagged.
 AGENT_NAME = re.compile(
     r"^(claude( code| opus| sonnet| haiku)?( [0-9][0-9.]*)?|codex"
-    r"|hermes( agent| backup bot)?|chatgpt.*|.*\[bot\])$",
+    r"|hermes( agent| backup bot)?|chatgpt.*"
+    r"|.*(claude|codex|chatgpt|hermes|openai|anthropic).*\[bot\])$",
     re.IGNORECASE,
 )
+# Known bot mailboxes only: an employee at one of these companies is a person.
 AGENT_EMAIL = re.compile(
-    r"@(anthropic|openai|nousresearch)\.com$|^(codex|hermes|hermes-backup)@(fedora\.local|localhost)$",
+    r"^(noreply@(anthropic|openai)\.com|hermes@nousresearch\.com"
+    r"|(codex|hermes|hermes-backup)@(fedora\.local|localhost))$",
     re.IGNORECASE,
 )
 IDENTITY_PARTS = re.compile(r"^\s*(?P<name>.*?)\s*(<(?P<email>[^>]*)>)?\s*$")
