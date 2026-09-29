@@ -68,8 +68,8 @@ struct ContentView: View {
                 if let url = urls.first {
                     viewModel.parseAppleHealthExport(from: url)
                 }
-            case .failure:
-                break
+            case let .failure(error):
+                viewModel.reportAppleHealthExportPickerFailure(error)
             }
         }
         .sheet(isPresented: Binding(
@@ -274,7 +274,7 @@ struct ContentView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             PrimaryButton(
-                title: viewModel.healthPermissionsRequested ? "Review Permissions" : "Allow Health Access",
+                title: "Allow Health Access",
                 subtitle: "Opens Apple Health permission sheet",
                 systemImage: "checkmark.shield.fill",
                 isDisabled: false,
@@ -334,6 +334,11 @@ struct ContentView: View {
                 )
             }
             .disabled(!viewModel.canChangeAutomaticSyncSetting)
+
+            Text("If nothing syncs, check that HealthRelay is allowed to read your data: Health app > profile picture > Privacy > Apps > HealthRelay.")
+                .font(.footnote)
+                .foregroundStyle(.relaySecondaryText)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .cardStyle()
     }
@@ -397,6 +402,12 @@ struct ContentView: View {
             .controlSize(.large)
             .disabled(!viewModel.canRunPrimaryAction)
 
+            if !viewModel.canRunPrimaryAction {
+                Text("Available when sync finishes.")
+                    .font(.footnote)
+                    .foregroundStyle(.relaySecondaryText)
+            }
+
             // Visible, not just a VoiceOver hint: people need to know where the file comes from.
             Text("In the Health app: profile picture \u{2192} Export All Health Data.")
                 .font(.footnote)
@@ -442,10 +453,10 @@ struct ContentView: View {
         if !viewModel.canSendConnectionTest { return "Connect this iPhone before syncing." }
         if viewModel.setupState == .pairedNeedsHealthPermission { return "Open Apple Health and allow the data you want to sync." }
         if viewModel.pendingOutboxCount > 0 {
-            if viewModel.usesMailboxTransport {
-                return "\(viewModel.pendingOutboxCount) pending secure delivery item(s) are waiting for receiver confirmation."
-            }
-            return "\(viewModel.pendingOutboxCount) pending sync item(s) will send when your server is reachable."
+            return CompanionCopy.pendingUploadsSentence(
+                count: viewModel.pendingOutboxCount,
+                usesMailbox: viewModel.usesMailboxTransport
+            )
         }
         if viewModel.backgroundSyncEnabled { return viewModel.automaticSyncScopeSummary }
         return "Use Sync Now to update your allowed Apple Health data."
@@ -524,6 +535,11 @@ private struct ReceiverSettingsView: View {
 
                 if !viewModel.receiverSettingsSaved {
                     manualSettingsCard
+                        .padding(.horizontal, HealthBridgeSpacing.screen)
+                }
+
+                if showsDangerZone {
+                    dangerZoneCard
                         .padding(.horizontal, HealthBridgeSpacing.screen)
                 }
             }
@@ -681,17 +697,6 @@ private struct ReceiverSettingsView: View {
                     .padding(.top, 2)
             }
 
-            if viewModel.canSendConnectionTest {
-                Button(role: .destructive) {
-                    showDisconnectConfirmation = true
-                } label: {
-                    Label("Disconnect from Server", systemImage: "rectangle.portrait.and.arrow.right")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-            }
-
             if viewModel.hasTransientPrivateStorageFailure {
                 Button {
                     Task { await viewModel.retryPrivateStorage() }
@@ -702,7 +707,27 @@ private struct ReceiverSettingsView: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
             }
+        }
+        .cardStyle()
+    }
 
+    private var dangerZoneCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Disconnect and Reset")
+                .font(.headline)
+            Text("These actions change or remove this iPhone's saved connection. Apple Health data is never deleted.")
+                .font(.footnote)
+                .foregroundStyle(.relaySecondaryText)
+            if viewModel.canSendConnectionTest {
+                Button(role: .destructive) {
+                    showDisconnectConfirmation = true
+                } label: {
+                    Label("Disconnect from Server", systemImage: "rectangle.portrait.and.arrow.right")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+            }
             if viewModel.pendingOutboxCount > 0
                 || viewModel.hasPendingSleepTransition
                 || viewModel.hasPendingOutboxDeletion
@@ -728,6 +753,15 @@ private struct ReceiverSettingsView: View {
             }
         }
         .cardStyle()
+    }
+
+    private var showsDangerZone: Bool {
+        viewModel.canSendConnectionTest
+            || viewModel.pendingOutboxCount > 0
+            || viewModel.hasPendingSleepTransition
+            || viewModel.hasPendingOutboxDeletion
+            || viewModel.hasPendingPrivateStorageRecovery
+            || viewModel.hasPendingPairing
     }
 
     private var setupLinkCard: some View {
@@ -803,8 +837,8 @@ private struct ReceiverSettingsView: View {
 private struct AppDetailsView: View {
     @ObservedObject var viewModel: HealthBridgeCompanionViewModel
 
-    private static let privacyPolicyURL = URL(string: "https://healthbridge.chanhyo.dev/privacy/")!
-    private static let supportURL = URL(string: "https://healthbridge.chanhyo.dev/support/")!
+    private static let privacyPolicyURL = URL(string: "https://github.com/mwdearing/health-relay/blob/main/PRIVACY.md")!
+    private static let supportURL = URL(string: "https://github.com/mwdearing/health-relay/issues")!
 
     var body: some View {
         List {
@@ -830,20 +864,13 @@ private struct AppDetailsView: View {
                 Text(viewModel.automaticSyncCoverageDetail)
                     .font(.footnote)
                     .foregroundStyle(.relaySecondaryText)
-                Group {
-                    LabeledContent("Current status", value: viewModel.backgroundSyncStatus)
-                    LabeledContent("Registration", value: viewModel.automaticSyncRegistrationLine)
-                    LabeledContent("BG request", value: viewModel.automaticSyncScheduleLine)
-                    LabeledContent("Last wake", value: viewModel.automaticSyncWakeLine)
-                    LabeledContent("Last run", value: viewModel.automaticSyncRunLine)
-                    LabeledContent("Latest lane", value: viewModel.automaticSyncLaneDiagnosticLine)
-                }
+                LabeledContent("Current status", value: viewModel.backgroundSyncStatus)
                     .font(.footnote)
                     .foregroundStyle(.relaySecondaryText)
-                if !viewModel.mailboxDeliveryDiagnosticLine.isEmpty {
-                    Text(viewModel.mailboxDeliveryDiagnosticLine)
-                        .font(.footnote)
-                        .foregroundStyle(.relaySecondaryText)
+                NavigationLink {
+                    DiagnosticsView(viewModel: viewModel)
+                } label: {
+                    Label("Diagnostics", systemImage: "stethoscope")
                 }
             }
 
@@ -866,9 +893,39 @@ private struct AppDetailsView: View {
     }
 
     private var appVersion: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.0"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "50"
-        return "\(version) (\(build))"
+        CompanionCopy.versionLine(
+            shortVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+            build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        )
+    }
+}
+
+private struct DiagnosticsView: View {
+    @ObservedObject var viewModel: HealthBridgeCompanionViewModel
+
+    var body: some View {
+        List {
+            Section {
+                Group {
+                    LabeledContent("Registration", value: viewModel.automaticSyncRegistrationLine)
+                    LabeledContent("BG request", value: viewModel.automaticSyncScheduleLine)
+                    LabeledContent("Last wake", value: viewModel.automaticSyncWakeLine)
+                    LabeledContent("Last run", value: viewModel.automaticSyncRunLine)
+                    LabeledContent("Latest lane", value: viewModel.automaticSyncLaneDiagnosticLine)
+                }
+                .font(.footnote)
+                .foregroundStyle(.relaySecondaryText)
+                if !viewModel.mailboxDeliveryDiagnosticLine.isEmpty {
+                    Text(viewModel.mailboxDeliveryDiagnosticLine)
+                        .font(.footnote)
+                        .foregroundStyle(.relaySecondaryText)
+                }
+            } footer: {
+                Text("Technical details for troubleshooting. They contain no health values.")
+            }
+        }
+        .navigationTitle("Diagnostics")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

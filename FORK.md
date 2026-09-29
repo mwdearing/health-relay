@@ -1,9 +1,9 @@
 # HealthRelay: fork notes
 
-HealthRelay is a private fork of [Apple Health AI Bridge](https://github.com/roian6/apple-health-ai-bridge)
+HealthRelay is a fork of [Apple Health AI Bridge](https://github.com/roian6/apple-health-ai-bridge)
 (Apache-2.0). Forked 2026-09-27 at upstream `4818cdc` (iOS companion 1.1.1 build 50,
 receiver 1.1.1, batch schema `health_bridge.batch.v1` 1.0.0). Upstream is the `upstream`
-git remote; `origin` is the private repo `mwdearing/health-relay`.
+git remote; `origin` is the public repo `mwdearing/health-relay`.
 
 ## Why a fork
 The upstream companion syncs 67 HealthKit read types in the background to a receiver
@@ -21,9 +21,10 @@ receiver-specific parts stay here.
   display strings and icon are HealthRelay's own.
 - Keep `LICENSE` and `NOTICE`; list every modification below.
 - Bundle id: keep `com.example.*` in tracked files (public-release audit rule); pass the real reverse-DNS id as `BUNDLE_ID` at build time. The value is not written in this repo.
-- Version: bump the iOS marketing version on every app change; CI supplies the build number.
+- Version: do not bump the iOS version by hand. The `Build unsigned IPA` workflow stamps both the marketing version and the build number as `1.2.<run number>`; the tracked values (`MARKETING_VERSION` 1.2.0, `CURRENT_PROJECT_VERSION` 50, `component-versions.json` `ios_companion`) are placeholders that never change on an app change.
 
 ## Modifications (newest first)
+- 2026-09-29: ZIP64 support and clearer errors in the export.zip reader (`MinimalZipReader`), including a disk-number check for split archives. Issue and privacy links, SUPPORT/SECURITY routing, plain-language usage strings, plurals, a Diagnostics page and export-sheet fixes; no sync, outbox or pairing change.
 - 2026-09-29: README gains a "Use it with Hermes Agent" section linking the companion plugins `hermes-healthrelay` (read-only MCP + skills) and `hermes-health-insights` (local analysis CLI + skills). No code change.
 - 2026-09-29: beta/stable release channels. `Publish IPA release` now creates only GitHub
   pre-releases (never "Latest"), requires a successful `iOS CI` and `Python CI` run on the exact build

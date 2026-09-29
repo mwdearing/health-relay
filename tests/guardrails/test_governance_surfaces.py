@@ -44,15 +44,17 @@ def test_security_support_and_ownership_routes_are_current() -> None:
     assert "stable source release is `receiver-v1.1.1`" in security
     assert "public TestFlight" in security
     assert "security/advisories/new" in security
-    assert "healthbridge@chanhyo.dev" in security
+    assert "healthbridge@chanhyo.dev" not in security
+    assert "mwdearing/health-relay/security/advisories/new" in security
+    assert "roian6/apple-health-ai-bridge/security" not in security
 
     for marker in (
         "Private security reports",
         "Setup and product support",
         "Reproducible bugs",
         "Feature proposals",
-        "healthbridge.chanhyo.dev/support",
-        "security/advisories/new",
+        "mwdearing/health-relay/issues",
+        "mwdearing/health-relay/security/advisories/new",
     ):
         assert marker in support
 

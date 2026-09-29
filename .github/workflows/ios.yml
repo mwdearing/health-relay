@@ -19,8 +19,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect app-affecting changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      ios: ${{ steps.filter.outputs.ios }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The macOS job is skipped only when every changed file is on the skip list.
+      # Anything the Swift tests read stays off it: fixtures/, schemas/ and
+      # docs/supported-health-data.md (HealthKitTypeCatalogTests). Manual and tag
+      # runs always build.
+      - name: Decide whether the iOS build is needed
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "ios=true" >> "$GITHUB_OUTPUT"
+            echo "Not a pull request: iOS build required."
+            exit 0
+          fi
+          ios=false
+          while IFS= read -r file; do
+            case "$file" in
+              docs/supported-health-data.md) ios=true ;;
+              *.md | docs/* | assets/* | LICENSE | NOTICE | src/* | tests/* | scripts/* \
+                | pyproject.toml | uv.lock | .github/workflows/python.yml \
+                | .github/workflows/attribution-check.yml | .github/scripts/*) ;;
+              *) ios=true ;;
+            esac
+            [ "$ios" = true ] && { echo "iOS-relevant change: $file"; break; }
+          done < <(git diff --name-only "$BASE_SHA...$HEAD_SHA")
+          echo "ios=$ios" >> "$GITHUB_OUTPUT"
+
   build-and-test:
     name: Swift tests and unsigned app builds
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
     runs-on: macos-26
     timeout-minutes: 30
     defaults:

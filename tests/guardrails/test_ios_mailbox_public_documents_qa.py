@@ -237,7 +237,7 @@ def test_production_is_public_documents_while_hidden_qa_remains_non_public() -> 
     )
     assert public_container == {
         "NSUbiquitousContainerIsDocumentScopePublic": True,
-        "NSUbiquitousContainerName": "HealthBridge Mailbox",
+        "NSUbiquitousContainerName": "HealthRelay Mailbox",
         "NSUbiquitousContainerSupportedFolderLevels": "Any",
     }
     assert project.count("INFOPLIST_PREPROCESS = YES;") >= 4
@@ -292,7 +292,7 @@ def test_production_mailbox_ui_is_truthful_about_readiness_and_holds() -> None:
     assert "Receiver rejected" in view_model
     assert "signed ACK" not in view_model
     assert 'viewModel.usesMailboxTransport ? "Check Mailbox Folder"' in content
-    assert "pending secure delivery item(s)" in content
+    assert "usesMailbox: viewModel.usesMailboxTransport" in content
 
 
 def test_public_documents_entitlements_are_cloud_documents_only() -> None:
