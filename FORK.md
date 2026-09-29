@@ -21,7 +21,7 @@ receiver-specific parts stay here.
   display strings and icon are HealthRelay's own.
 - Keep `LICENSE` and `NOTICE`; list every modification below.
 - Bundle id: keep `com.example.*` in tracked files (public-release audit rule); pass the real reverse-DNS id as `BUNDLE_ID` at build time. The value is not written in this repo.
-- Version: bump the iOS marketing version on every app change; CI supplies the build number.
+- Version: do not bump the iOS version by hand. The `Build unsigned IPA` workflow stamps both the marketing version and the build number as `1.2.<run number>`; the tracked values (`MARKETING_VERSION` 1.2.0, `CURRENT_PROJECT_VERSION` 50, `component-versions.json` `ios_companion`) are placeholders that never change on an app change.
 
 ## Modifications (newest first)
 - 2026-09-29: README gains a "Use it with Hermes Agent" section linking the companion plugins `hermes-healthrelay` (read-only MCP + skills) and `hermes-health-insights` (local analysis CLI + skills). No code change.

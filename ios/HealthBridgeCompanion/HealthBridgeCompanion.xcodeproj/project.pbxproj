@@ -556,8 +556,8 @@
 				INFOPLIST_PREPROCESSOR_DEFINITIONS = "HEALTH_BRIDGE_PRODUCTION_DOCUMENTS_CONTAINER=$(HEALTH_BRIDGE_ICLOUD_CONTAINER_IDENTIFIER)";
 				INFOPLIST_KEY_CFBundleDisplayName = "HealthRelay";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "HealthRelay reads selected Apple Health data to send user-owned local batches to your receiver.";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "HealthRelay does not write data to Apple Health; it only reads selected Apple Health data to sync user-owned local batches to your receiver.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "HealthRelay reads the Apple Health data you choose and sends it only to your own receiver. Nothing is sent to the developer.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "HealthRelay never changes your Apple Health data. It only reads what you allow.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -593,8 +593,8 @@
 				INFOPLIST_PREPROCESSOR_DEFINITIONS = "HEALTH_BRIDGE_PRODUCTION_DOCUMENTS_CONTAINER=$(HEALTH_BRIDGE_ICLOUD_CONTAINER_IDENTIFIER)";
 				INFOPLIST_KEY_CFBundleDisplayName = "HealthRelay";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "HealthRelay reads selected Apple Health data to send user-owned local batches to your receiver.";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "HealthRelay does not write data to Apple Health; it only reads selected Apple Health data to sync user-owned local batches to your receiver.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "HealthRelay reads the Apple Health data you choose and sends it only to your own receiver. Nothing is sent to the developer.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "HealthRelay never changes your Apple Health data. It only reads what you allow.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
