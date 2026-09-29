@@ -7,6 +7,7 @@ from health_bridge.queries._common import (
     connect_readonly,
     daily_dates,
     date_bounds,
+    empty_window_notes,
     notes_for_count,
     source_from_row,
     unique_sources,
@@ -122,7 +123,10 @@ def get_daily_summary(
         period=Period(start=start_date, end=end_date),
         days=days,
         sources_used=sources if observed_count > 0 else (),
-        missing_data_notes=notes_for_count(observed_count),
+        missing_data_notes=(
+            *empty_window_notes(start_date, end_date),
+            *notes_for_count(observed_count),
+        ),
         truncated=False,
     )
 

@@ -15,6 +15,10 @@ EMPTY_RESULT_NOTE: Final = (
     "No matching records were found; availability is unknown and may reflect "
     "no record, permission limits, source gaps, or sync gaps."
 )
+EMPTY_WINDOW_NOTE: Final = (
+    "The requested window is empty: end_date is exclusive. "
+    "For one day, set end_date to the next day."
+)
 LIMITED_STORE_NOTE: Final = (
     "Returned observations reflect only records present in this local SQLite "
     "store for the requested period; absent records remain unknown."
@@ -116,6 +120,12 @@ def _fetch_latest_sync_period(connection: sqlite3.Connection) -> Period | None:
     if row is None or row[0] is None or row[1] is None:
         return None
     return Period(start=row[0], end=row[1])
+
+
+def empty_window_notes(start_date: str, end_date: str) -> tuple[str, ...]:
+    if start_date == end_date:
+        return (EMPTY_WINDOW_NOTE,)
+    return ()
 
 
 def notes_for_count(row_count: int) -> tuple[str, ...]:
