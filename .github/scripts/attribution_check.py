@@ -16,29 +16,36 @@ AGENTS = r"(claude|anthropic|codex|openai|hermes|nousresearch)"
 TEXT_PATTERNS = [
     (
         "Co-Authored-By trailer naming an agent",
-        re.compile(rf"^\s*co-authored-by:.*{AGENTS}", re.I | re.M),
+        re.compile(rf"^\s*co-authored-by:.*{AGENTS}", re.IGNORECASE | re.MULTILINE),
     ),
-    ("Claude-Session trailer", re.compile(r"^\s*claude-session:", re.I | re.M)),
+    (
+        "Claude-Session trailer",
+        re.compile(r"^\s*claude-session:", re.IGNORECASE | re.MULTILINE),
+    ),
     (
         "'Generated with/by Claude Code' line",
-        re.compile(r"generated (with|by) \[?claude code", re.I),
+        re.compile(r"generated (with|by) \[?claude code", re.IGNORECASE),
     ),
-    ("claude.ai/code session link", re.compile(r"claude\.ai/code", re.I)),
+    ("claude.ai/code session link", re.compile(r"claude\.ai/code", re.IGNORECASE)),
 ]
-IDENTITY = re.compile(rf"noreply@anthropic\.com|{AGENTS}", re.I)
+IDENTITY = re.compile(rf"noreply@anthropic\.com|{AGENTS}", re.IGNORECASE)
 
 
-def git(*args):
-    return subprocess.run(
-        ["git", *args], capture_output=True, text=True, check=True
-    ).stdout
+def git(*args: str) -> str:
+    result = subprocess.run(  # noqa: S603
+        ["git", *args],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout
 
 
-def check_text(label, text):
+def check_text(label: str, text: str | None) -> list[str]:
     return [f"{label}: {name}" for name, pat in TEXT_PATTERNS if pat.search(text or "")]
 
 
-def main():
+def main() -> int:
     problems = []
     head_ref = os.environ.get("HEAD_REF", "")
     if head_ref.startswith("claude/"):
@@ -58,11 +65,11 @@ def main():
             if IDENTITY.search(ident):
                 problems.append(f"commit {short} {role} identity: {ident}")
     if problems:
-        print("Attribution check failed:")
+        print("Attribution check failed:")  # noqa: T201
         for p in problems:
-            print(f"  - {p}")
+            print(f"  - {p}")  # noqa: T201
         return 1
-    print("Attribution check passed.")
+    print("Attribution check passed.")  # noqa: T201
     return 0
 
 
