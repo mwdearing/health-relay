@@ -161,6 +161,22 @@ The Beta applies application-layer encryption and signatures before an envelope 
 - "Which Apple Health metrics have synced recently?"
 - "Summarize my last seven days of activity and mark any source or sync gaps."
 
+## Use it with Hermes Agent
+
+If your agent is [Hermes Agent](https://github.com/NousResearch/hermes-agent), two companion plugins connect it to this receiver. Both are separate repositories, both are read-only or local-only, and neither is required to use HealthRelay.
+
+| Plugin | What it gives your agent |
+| --- | --- |
+| [**hermes-healthrelay**](https://github.com/mwdearing/hermes-healthrelay) | Read-only MCP access to your receiver database (nine tools: sync status, synced metrics, time series, daily, sleep and workout summaries, sources) plus skills for setup, review and troubleshooting |
+| [**hermes-health-insights**](https://github.com/mwdearing/hermes-health-insights) | A local analysis tool and skills: weekly trends, rule-based concern checks, nutrition against Dietary Reference Intakes, an energy target and lab results |
+
+```bash
+hermes plugins install mwdearing/hermes-healthrelay --no-enable
+hermes plugins enable healthrelay
+```
+
+Set up the receiver and the iPhone app above first, then follow the plugin's `healthrelay-setup` skill to point it at your receiver database. Health data is sensitive: use a local model, or one you trust with it. Catalog listings are pending Hermes maintainer review, so until then install by repository name as shown.
+
 ## What the agent can see
 
 The companion requests every HealthKit type that is both implemented by the app and available on the current iOS runtime. Unsupported or unavailable types remain absent rather than being fabricated. See the versioned [supported health data reference](docs/supported-health-data.md).

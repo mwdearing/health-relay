@@ -24,6 +24,7 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-29: README gains a "Use it with Hermes Agent" section linking the companion plugins `hermes-healthrelay` (read-only MCP + skills) and `hermes-health-insights` (local analysis CLI + skills). No code change.
 - 2026-09-29: beta/stable release channels. `Publish IPA release` now creates only GitHub
   pre-releases (never "Latest"), requires a successful `iOS CI` and `Python CI` run on the exact build
   commit, and marks the notes as beta. New `Promote IPA release` workflow (manual, runs in the
