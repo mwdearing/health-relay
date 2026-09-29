@@ -97,6 +97,31 @@ jobs:
             echo "Tag or release $tag already exists; releases are never overwritten" >&2
             exit 1
           fi
+          # Never publish a build older than a release that already exists: GitHub shows the
+          # most recently published release as "Latest", so an old build would look like a downgrade.
+          # A failed tag listing must abort the step (set -e), so it is not part of a pipeline.
+          TAGS="$(gh api "repos/$REPO/git/matching-refs/tags/app-v" --paginate --jq '.[].ref')"
+          export TAGS
+          python3 - <<'PY'
+          import os
+          import re
+
+          def parts(version):
+              numbers = [int(n) for n in version.split(".")]
+              while len(numbers) > 1 and numbers[-1] == 0:
+                  numbers.pop()  # 1.2 and 1.2.0 and 1.2.00 are the same version
+              return tuple(numbers)
+
+          candidate = os.environ["APP_VERSION"]
+          existing = [
+              ref.removeprefix("refs/tags/app-v")
+              for ref in os.environ["TAGS"].splitlines()
+              if re.fullmatch(r"refs/tags/app-v[0-9]+(\.[0-9]+)*", ref)
+          ]
+          newest = max(existing, key=parts, default=None)
+          if newest is not None and parts(candidate) <= parts(newest):
+              raise SystemExit(f"Refusing to publish {candidate}: release app-v{newest} is already the same or newer")
+          PY
           {
             echo "## HealthRelay iOS companion ${APP_VERSION} (build ${APP_BUILD})"
             echo

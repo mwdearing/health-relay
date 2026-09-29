@@ -88,3 +88,10 @@ def test_publish_ipa_release_workflow_is_narrow_and_never_overwrites() -> None:
     assert "releases are never overwritten" in text
     # No third-party actions; the gh CLI on the runner does the work.
     assert "uses:" not in text
+
+
+def test_publish_ipa_release_refuses_older_builds() -> None:
+    text = PUBLISH_WORKFLOW.read_text()
+    assert "git/matching-refs/tags/app-v" in text
+    assert "|| true" not in text  # a failed tag listing must abort publication
+    assert "is already the same or newer" in text
