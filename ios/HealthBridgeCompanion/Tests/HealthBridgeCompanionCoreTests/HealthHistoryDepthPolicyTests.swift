@@ -57,7 +57,7 @@ final class HealthHistoryDepthPolicyTests: XCTestCase {
     func testPresentationRowsExposeSimpleHistoryChoices() {
         let rows = HealthHistoryDepthPresentation.optionRows(selected: .allAvailable)
 
-        XCTAssertEqual(rows.map(\.id), ["all_available", "last_365_days", "last_180_days", "last_90_days", "last_30_days"])
+        XCTAssertEqual(rows.map(\.id), ["all_available", "last_365_days", "last_180_days", "last_90_days", "last_30_days", "last_7_days"])
         XCTAssertEqual(rows.first?.title, "All")
         XCTAssertEqual(rows.first?.detail, "Widest available range; high-volume data stays bounded.")
         XCTAssertEqual(rows.first?.historyDepth, .allAvailable)
@@ -66,6 +66,8 @@ final class HealthHistoryDepthPolicyTests: XCTestCase {
         XCTAssertEqual(rows[2].historyDepth, .lastDays(180))
         XCTAssertEqual(rows[3].historyDepth, .lastDays(90))
         XCTAssertEqual(rows[4].historyDepth, .lastDays(30))
+        XCTAssertEqual(rows[5].title, "7 days")
+        XCTAssertEqual(rows[5].historyDepth, .lastDays(7))
     }
 
     func testPresentationCanResolveChoiceIDsAndFallbackSafely() {
@@ -74,6 +76,7 @@ final class HealthHistoryDepthPolicyTests: XCTestCase {
         XCTAssertEqual(HealthHistoryDepthPresentation.historyDepth(forOptionID: "last_180_days"), .lastDays(180))
         XCTAssertEqual(HealthHistoryDepthPresentation.historyDepth(forOptionID: "last_90_days"), .lastDays(90))
         XCTAssertEqual(HealthHistoryDepthPresentation.historyDepth(forOptionID: "last_30_days"), .lastDays(30))
+        XCTAssertEqual(HealthHistoryDepthPresentation.historyDepth(forOptionID: "last_7_days"), .lastDays(7))
         XCTAssertEqual(HealthHistoryDepthPresentation.historyDepth(forOptionID: "unknown"), .allAvailable)
     }
 

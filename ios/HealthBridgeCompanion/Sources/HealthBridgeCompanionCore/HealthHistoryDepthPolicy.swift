@@ -82,8 +82,14 @@ public enum HealthHistoryDepthPresentation {
         (
             id: "last_30_days",
             title: "30 days",
-            detail: "Fastest first setup.",
+            detail: "Quick first setup.",
             historyDepth: .lastDays(30)
+        ),
+        (
+            id: "last_7_days",
+            title: "7 days",
+            detail: "Shortest first sync; only recent data.",
+            historyDepth: .lastDays(7)
         ),
     ]
 

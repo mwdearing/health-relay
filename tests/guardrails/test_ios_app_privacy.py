@@ -1056,6 +1056,7 @@ def test_ios_companion_uses_simple_history_sync_copy() -> None:
     assert 'title: "180 days"' in history_policy
     assert 'title: "90 days"' in history_policy
     assert 'title: "30 days"' in history_policy
+    assert 'title: "7 days"' in history_policy
     assert "Best for data that changes occasionally" not in history_policy
 
 
