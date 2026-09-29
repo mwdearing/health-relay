@@ -4733,9 +4733,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             if summary.labResults.isEmpty {
                 statusMessage = summary.observationCount == 0
                     ? "[Export] No clinical records found in that export."
-                    : "[Export] Found \(summary.observationCount) clinical record(s) but none had a usable value or date. Nothing to send."
+                    : "[Export] Found \(CompanionCopy.count(summary.observationCount, "clinical record")) but none had a usable value or date. Nothing to send."
             } else {
-                statusMessage = "[Export] Found \(summary.labResults.count) lab result(s). Review and confirm to send."
+                statusMessage = "[Export] Found \(CompanionCopy.count(summary.labResults.count, "lab result")). Review and confirm to send."
             }
         } catch {
             pendingExportImportSummary = nil
@@ -4757,7 +4757,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         }
         do {
             let batch = LabResultImportBatchFactory.makeLabResultBatch(results: summary.labResults)
-            statusMessage = "[Export] Uploading \(summary.labResults.count) lab results to \(url.host() ?? url.absoluteString)..."
+            statusMessage = "[Export] Uploading \(CompanionCopy.count(summary.labResults.count, "lab result")) to \(url.host() ?? url.absoluteString)..."
             let data = try encoder.encode(batch)
             let deliveryResult = try await uploadPayloadsWithOutbox([data], to: url)
             let outboxNotice = lastOutboxNotice
@@ -4765,14 +4765,22 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             pendingExportImportSummary = nil
             statusMessage = deliveryStatusMessage(
                 deliveryResult,
-                uploadedDescription: "Sent \(summary.labResults.count) lab results",
-                queuedDescription: "Queued \(summary.labResults.count) lab results behind earlier pending upload(s)",
+                uploadedDescription: "Sent \(CompanionCopy.count(summary.labResults.count, "lab result"))",
+                queuedDescription: "Queued \(CompanionCopy.count(summary.labResults.count, "lab result")) behind earlier pending uploads",
                 outboxNotice: outboxNotice
             )
         } catch {
             statusIsError = true
             statusMessage = "[Export] Send failed: \(describe(error))"
         }
+    }
+
+    /// Called when the system file picker fails (not when it is cancelled). Presentation
+    /// only: surfaces the failure in the status card and the activity log.
+    func reportAppleHealthExportPickerFailure(_ error: Error) {
+        pendingExportImportSummary = nil
+        statusIsError = true
+        statusMessage = "[Export] Could not open that file: \(describe(error))"
     }
 
     /// Discards a parsed export without sending it.

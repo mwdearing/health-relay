@@ -474,3 +474,63 @@ final class CompanionUXStateTests: XCTestCase {
         XCTAssertEqual(store.requestedRuntimeTypeCodes, [])
     }
 }
+
+final class CompanionCopyTests: XCTestCase {
+    func testCountUsesRealPlurals() {
+        XCTAssertEqual(CompanionCopy.count(1, "lab result"), "1 lab result")
+        XCTAssertEqual(CompanionCopy.count(0, "lab result"), "0 lab results")
+        XCTAssertEqual(CompanionCopy.count(3, "lab result"), "3 lab results")
+        XCTAssertEqual(CompanionCopy.count(2, "delivery", plural: "deliveries"), "2 deliveries")
+    }
+
+    func testPendingUploadsSentence() {
+        XCTAssertEqual(
+            CompanionCopy.pendingUploadsSentence(count: 1, usesMailbox: false),
+            "1 upload is waiting and will send when your server is reachable."
+        )
+        XCTAssertEqual(
+            CompanionCopy.pendingUploadsSentence(count: 4, usesMailbox: false),
+            "4 uploads are waiting and will send when your server is reachable."
+        )
+        XCTAssertEqual(
+            CompanionCopy.pendingUploadsSentence(count: 1, usesMailbox: true),
+            "1 secure delivery is waiting for receiver confirmation."
+        )
+        XCTAssertEqual(
+            CompanionCopy.pendingUploadsSentence(count: 2, usesMailbox: true),
+            "2 secure deliveries are waiting for receiver confirmation."
+        )
+    }
+
+    func testExportLanePrefixIsStripped() {
+        XCTAssertEqual(CompanionCopy.withoutExportLanePrefix("[Export] Reading export.zip..."), "Reading export.zip...")
+        XCTAssertEqual(CompanionCopy.withoutExportLanePrefix("  [Export]  Discarded. "), "Discarded.")
+        XCTAssertEqual(CompanionCopy.withoutExportLanePrefix("Sent 2 lab results"), "Sent 2 lab results")
+        XCTAssertEqual(CompanionCopy.withoutExportLanePrefix("[Export]"), "")
+    }
+
+    func testExportMessagesAreShownWithoutPrefixOrDiagnostics() {
+        XCTAssertEqual(
+            CompanionPrimaryStatusMessage.sanitized(from: "[Export] Found 1 lab result. Review and confirm to send.", isError: false),
+            "Found 1 lab result. Review and confirm to send."
+        )
+        XCTAssertEqual(
+            CompanionPrimaryStatusMessage.sanitized(
+                from: "[Export] Send failed: Your server returned a non-HTTP response. | domain=ReceiverClientError | code=non_http_response",
+                isError: true
+            ),
+            "Send failed: Your server returned a non-HTTP response."
+        )
+        XCTAssertEqual(
+            CompanionCopy.exportDisplayMessage("[Export] Could not open that file: not readable"),
+            "Could not open that file: not readable"
+        )
+    }
+
+    func testVersionLineNeverInventsAVersion() {
+        XCTAssertEqual(CompanionCopy.versionLine(shortVersion: "1.2.24", build: "24"), "1.2.24 (24)")
+        XCTAssertEqual(CompanionCopy.versionLine(shortVersion: "1.2.24", build: nil), "1.2.24")
+        XCTAssertEqual(CompanionCopy.versionLine(shortVersion: nil, build: "24"), "Unknown")
+        XCTAssertEqual(CompanionCopy.versionLine(shortVersion: "", build: ""), "Unknown")
+    }
+}

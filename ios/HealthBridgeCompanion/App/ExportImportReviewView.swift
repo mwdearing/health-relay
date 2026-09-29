@@ -49,7 +49,13 @@ struct ExportImportReviewView: View {
 
                 if isSending || viewModel.statusMessage.hasPrefix("[Export]") {
                     Section {
-                        Label(viewModel.statusMessage, systemImage: viewModel.statusIsError ? "exclamationmark.triangle.fill" : "arrow.up.circle")
+                        Label(
+                            CompanionPrimaryStatusMessage.sanitized(
+                                from: viewModel.statusMessage,
+                                isError: viewModel.statusIsError
+                            ),
+                            systemImage: viewModel.statusIsError ? "exclamationmark.triangle.fill" : "arrow.up.circle"
+                        )
                             .font(.footnote.weight(.semibold))
                             .foregroundStyle(viewModel.statusIsError ? Color("RelayFailedInk") : Color("RelaySecondaryText"))
                     }
@@ -85,6 +91,8 @@ struct ExportImportReviewView: View {
                 }
             }
         }
+        // Swiping the sheet away mid-send would cancel the pending import; Cancel is the way out.
+        .interactiveDismissDisabled(isSending)
         // Sheets do not reliably inherit the presenting view's tint.
         .tint(Color("AccentColor"))
     }
