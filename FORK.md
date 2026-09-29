@@ -135,8 +135,8 @@ receiver-specific parts stay here.
   Upload policy counts ECG records. No background/anchored ECG lane yet.
 - 2026-09-28: 38 HealthKit dietary quantity types (all but water, which is `hydration`) added to
   the receiver timeseries catalog, the Swift catalog expansion entries, the disclosure doc and the
-  pinned tests; units g/mg/mcg/kcal as in health-insights `dietary_types.py`. Python half by the
-  Hermes bot (R-1), Swift half and pins by Claude.
+  pinned tests; units g/mg/mcg/kcal as in health-insights `dietary_types.py`. Delivered as a
+  Python half (R-1) plus a Swift half and pins.
 - 2026-09-28: ECG, iOS core (B2 step 2). `HealthBridgeElectrocardiogram` batch model; the batch
   encodes `electrocardiograms` only when non-empty (upstream byte vectors unchanged) and decodes
   it as optional. Registry static `.electrocardiogram` (category heart, unit "recording",
