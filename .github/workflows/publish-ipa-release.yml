@@ -5,8 +5,8 @@ name: Publish IPA release
 # earlier releases. The build workflows stay read-only; write access exists only in this job.
 #
 # Guards: the run must be a successful "Build unsigned IPA" run on main, the IPA must carry the
-# neutral com.example.* bundle id (the real id is never published), and an existing tag or release
-# is never overwritten. It uses no third-party actions, only the gh CLI on the runner.
+# neutral com.example.* bundle id or exactly the bundle_id passed at dispatch (the real id is never
+# written in this repo), and an existing tag or release is never overwritten. It uses no third-party actions, only the gh CLI on the runner.
 
 on:
   workflow_dispatch:
@@ -14,6 +14,11 @@ on:
       build_run_id:
         description: Run ID of a successful "Build unsigned IPA" run on main (the number in the run URL)
         required: true
+        type: string
+      bundle_id:
+        description: Optional. A non-placeholder bundle id the IPA is expected to carry; the IPA is refused unless it matches exactly
+        required: false
+        default: ""
         type: string
       highlights:
         description: Optional short "What's new" text for the release notes (plain text)
@@ -41,6 +46,7 @@ jobs:
       REPO: ${{ github.repository }}
       BUILD_RUN_ID: ${{ inputs.build_run_id }}
       HIGHLIGHTS: ${{ inputs.highlights }}
+      EXPECTED_BUNDLE_ID: ${{ inputs.bundle_id }}
     steps:
       - name: Check the build run
         run: |
@@ -72,10 +78,11 @@ jobs:
           test "$build_file_sha" = "$BUILD_SHA"
           test "$build_file_number" = "$BUILD_NUMBER"
 
-      - name: Read the app version and refuse a real bundle id
+      - name: Read the app version and check the bundle id
         run: |
           set -euo pipefail
           python3 - >> "$GITHUB_ENV" <<'PY'
+          import os
           import plistlib
           import zipfile
 
@@ -83,8 +90,10 @@ jobs:
               name = next(n for n in ipa.namelist() if n.endswith(".app/Info.plist") and n.count("/") == 2)
               info = plistlib.loads(ipa.read(name))
           bundle_id = info["CFBundleIdentifier"]
-          if not bundle_id.startswith("com.example."):
-              raise SystemExit(f"refusing to publish an IPA with a non-placeholder bundle id: {bundle_id}")
+          expected = os.environ["EXPECTED_BUNDLE_ID"]
+          if not (bundle_id.startswith("com.example.") or (expected and bundle_id == expected)):
+              raise SystemExit(f"refusing to publish an IPA with an unexpected bundle id: {bundle_id}")
+          print(f"APP_BUNDLE_ID={bundle_id}")
           print(f"APP_VERSION={info['CFBundleShortVersionString']}")
           print(f"APP_BUILD={info['CFBundleVersion']}")
           PY
@@ -131,7 +140,11 @@ jobs:
               printf '%s\n' "$HIGHLIGHTS"
               echo
             fi
-            echo "Unsigned IPA, built from commit \`${BUILD_SHA:0:7}\` by the \`Build unsigned IPA\` GitHub Actions workflow."
+            if [[ "$APP_BUNDLE_ID" == com.example.* ]]; then
+              echo "Unsigned IPA, built from commit \`${BUILD_SHA:0:7}\` by the \`Build unsigned IPA\` GitHub Actions workflow."
+            else
+              echo "Unsigned IPA, built from commit \`${BUILD_SHA:0:7}\` by the \`Build unsigned IPA\` GitHub Actions workflow, bundle id \`${APP_BUNDLE_ID}\`."
+            fi
             echo
             echo "**This IPA is unsigned.** You must sign it with your own Apple developer certificate before it will install — the same way you'd sideload any other unsigned iOS app (a sideload signer such as AltStore or Sideloadly, or Xcode with your own team). There is no App Store listing and no pre-signed build is distributed."
             echo

@@ -85,6 +85,8 @@ def test_publish_ipa_release_workflow_is_narrow_and_never_overwrites() -> None:
     assert '".github/workflows/build-ipa.yml"' in text
     assert '.head_branch <<<"$run_json")" = "main"' in text
     assert 'startswith("com.example.")' in text
+    assert "bundle_id == expected" in text  # a real id only via the dispatch input
+    assert "com.mwdearing" not in text  # the real id is never written in the repo
     assert "releases are never overwritten" in text
     # No third-party actions; the gh CLI on the runner does the work.
     assert "uses:" not in text
