@@ -109,6 +109,12 @@ public enum CompanionPrimaryStatusMessage {
         let trimmed = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
 
+        // Export lane messages are already written for people; only the internal lane
+        // prefix and any trailing "| domain=... | code=..." diagnostics are removed.
+        if trimmed.hasPrefix("[Export]") {
+            return CompanionCopy.exportDisplayMessage(trimmed)
+        }
+
         let message = trimmed.lowercased()
         let mailboxPreflightMessages = [
             "mailbox_key_lost": "Mailbox connection key lifecycle: lost. Pairing stopped before contacting your server.",
@@ -509,7 +515,7 @@ public enum CompanionStatusLaneBuilder {
             state: snapshot.pendingOutboxCount == 0 ? "Clear" : "Pending",
             detail: snapshot.pendingOutboxCount == 0
                 ? "No unsent uploads are waiting."
-                : "\(snapshot.pendingOutboxCount) queued upload(s) are waiting.",
+                : "\(CompanionCopy.count(snapshot.pendingOutboxCount, "queued upload")) \(snapshot.pendingOutboxCount == 1 ? "is" : "are") waiting.",
             needsAttention: snapshot.pendingOutboxCount > 0
         )
     }
@@ -576,5 +582,50 @@ public final class CompanionHealthPermissionRequestStore {
 
     private static func normalizedTypeCodes(_ typeCodes: [String]) -> [String] {
         Array(Set(typeCodes)).sorted()
+    }
+}
+
+/// Plain-language copy helpers shared by the views and the view model.
+public enum CompanionCopy {
+    /// "1 lab result", "2 lab results".
+    public static func count(_ value: Int, _ singular: String, plural: String? = nil) -> String {
+        "\(value) \(value == 1 ? singular : (plural ?? singular + "s"))"
+    }
+
+    /// The status-card sentence for uploads that are waiting to leave this iPhone.
+    public static func pendingUploadsSentence(count: Int, usesMailbox: Bool) -> String {
+        if usesMailbox {
+            let subject = count == 1 ? "1 secure delivery is" : "\(count) secure deliveries are"
+            return "\(subject) waiting for receiver confirmation."
+        }
+        let subject = count == 1 ? "1 upload is" : "\(count) uploads are"
+        return "\(subject) waiting and will send when your server is reachable."
+    }
+
+    /// Export-sheet messages carry an internal "[Export]" lane prefix for the activity log.
+    /// It must never be shown to a person.
+    public static func withoutExportLanePrefix(_ message: String) -> String {
+        var text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = "[Export]"
+        while text.hasPrefix(prefix) {
+            text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return text
+    }
+
+    /// Person-facing text for an export-lane message: no lane prefix, no diagnostics suffix.
+    public static func exportDisplayMessage(_ message: String) -> String {
+        let text = withoutExportLanePrefix(message)
+        if let range = text.range(of: " | ") {
+            return String(text[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return text
+    }
+
+    /// Version line for Settings; never invents a version when the bundle has none.
+    public static func versionLine(shortVersion: String?, build: String?) -> String {
+        guard let version = shortVersion, !version.isEmpty else { return "Unknown" }
+        guard let build, !build.isEmpty else { return version }
+        return "\(version) (\(build))"
     }
 }

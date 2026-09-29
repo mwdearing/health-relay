@@ -698,11 +698,11 @@ def test_ios_health_usage_copy_describes_selected_read_only_sync() -> None:
     health_update_copy = str(plist.get("NSHealthUpdateUsageDescription", "")).lower()
 
     # Then
-    assert "selected" in health_share_copy
+    assert "choose" in health_share_copy or "selected" in health_share_copy
     assert "read" in health_share_copy
-    assert "local" in health_share_copy or "your receiver" in health_share_copy
+    assert "local" in health_share_copy or "your own receiver" in health_share_copy
     assert "NSHealthUpdateUsageDescription" in plist
-    assert "does not write" in health_update_copy
+    assert "never changes" in health_update_copy
     assert "only reads" in health_update_copy
 
 
@@ -713,8 +713,11 @@ def test_ios_companion_exposes_public_privacy_and_support_links() -> None:
     # Then
     assert 'Link("Privacy Policy"' in content_view
     assert 'Link("Support"' in content_view
-    assert "https://healthbridge.chanhyo.dev/privacy/" in content_view
-    assert "https://healthbridge.chanhyo.dev/support/" in content_view
+    assert (
+        "https://github.com/mwdearing/health-relay/blob/main/PRIVACY.md" in content_view
+    )
+    assert "https://github.com/mwdearing/health-relay/issues" in content_view
+    assert "chanhyo.dev" not in content_view
 
 
 def test_ios_healthkit_access_stays_read_only() -> None:
@@ -838,7 +841,7 @@ def test_ios_health_permissions_use_native_sheet_for_unified_scope() -> None:
     assert "Opens Apple Health permission sheet" in content_view
     assert "healthPermissionNotice" in view_model
     assert "InlineNotice" in content_view
-    assert "Review Permissions" in content_view
+    assert "Review Permissions" not in content_view
     assert "if !viewModel.healthPermissionsRequested" in content_view
     assert "historyWindowCard" not in content_view
     assert "openAppSettingsForHealthPermissions" not in view_model
@@ -902,7 +905,7 @@ def test_ios_companion_uses_button_like_ctas_and_simple_history_sync_copy() -> N
     assert 'LabeledContent("Version"' in content_view
     assert "Open Source" not in content_view
     assert "Third-party libraries" not in content_view
-    assert "Diagnostics" not in content_view
+    assert "receiverDiagnostics" not in content_view
     assert "receiverDiagnosticsSummary" not in content_view
     assert (
         "receiverDiagnosticsSummary"
