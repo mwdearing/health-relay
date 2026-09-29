@@ -86,7 +86,7 @@ _SETUP_PAGE_STYLE: Final = """
       border-radius: 999px; font: inherit; font-weight: 600;
       text-decoration: none; cursor: pointer;
     }
-    a.button { min-height: 50px; background: var(--accent); color: var(--on-accent); }
+    a.button { min-height: 50px; background: var(--primary); color: var(--on-primary); }
     button { background: var(--secondary); color: var(--on-secondary); }
     a.button:focus-visible, button:focus-visible, summary:focus-visible,
     textarea:focus-visible {
@@ -136,8 +136,26 @@ _SETUP_PAGE_STYLE: Final = """
       border-radius: 12px; border: 1px solid var(--field);
       background: var(--inset); color: var(--ink); font: inherit;
     }
+    [hidden] { display: none !important; }
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; overflow: hidden;
+      clip: rect(0 0 0 0); white-space: nowrap;
+    }
+    ol.steps { margin: 0.5rem 0 1rem; padding-left: 1.5rem; }
+    ol.steps li { margin: 0.4rem 0; }
+    .cmd {
+      display: block; margin-top: 0.5rem; font-size: 0.9rem; letter-spacing: 0;
+      white-space: pre-wrap; overflow-wrap: anywhere;
+    }
+    .code-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+    .is-expired .qr { opacity: 0.4; }
     @media (prefers-reduced-motion: reduce) {
-      * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+      * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
     }
     @media print {
       body { background: #FFFFFF; color: #000000; }
@@ -159,6 +177,101 @@ _BRAND_MARK_SVG: Final = """<svg viewBox="0 0 1000 1000" aria-hidden="true">
         <polyline stroke="#5eead4" points="720,400 860,520 720,640"/>
       </g>
     </svg>"""
+_CMD: Final = "health-bridge receiver create-pairing"
+_CMD_DB: Final = "--db ~/.local/share/health-bridge/health.sqlite --label iPhone"
+_CMD_URL: Final = '--receiver-url "$HEALTH_BRIDGE_RECEIVER_URL" --format setup-page'
+_CMD_PAGE: Final = "--setup-page ~/.local/share/health-bridge/iphone-setup.html"
+_EXPIRED_COMMAND: Final = html.escape(
+    f"{_CMD} {_CMD_DB} {_CMD_URL} {_CMD_PAGE}",
+    quote=True,
+)
+
+
+_INVITATION_SCRIPT: Final = """
+    (function () {
+      var timeEl = document.querySelector('time[datetime]');
+      var countdown = document.getElementById('countdown');
+      var expiredBox = document.getElementById('expired');
+      var qrDetails = document.getElementById('qr-details');
+      var openLink = document.getElementById('open-link');
+      var status = document.getElementById('copy-status');
+      var expiresAt = Date.parse(timeEl.getAttribute('datetime'));
+      var timer = null;
+
+      if (!isNaN(expiresAt)) {
+        timeEl.textContent = new Date(expiresAt).toLocaleString();
+      }
+
+      function pad(n) { return (n < 10 ? '0' : '') + n; }
+      function expire() {
+        clearInterval(timer);
+        countdown.textContent = 'Expired';
+        qrDetails.hidden = true;
+        openLink.hidden = true;
+        expiredBox.hidden = false;
+        document.body.classList.add('is-expired');
+      }
+      function tick() {
+        var left = expiresAt - Date.now();
+        if (left <= 0) { expire(); return; }
+        var s = Math.floor(left / 1000);
+        var minutes = Math.floor(s / 60);
+        countdown.textContent = 'Expires in ' + pad(minutes) + ':' + pad(s % 60);
+      }
+      if (!isNaN(expiresAt)) { tick(); timer = setInterval(tick, 1000); }
+
+      // On an iPhone or iPad the person is already holding the device: lead with the
+      // button and collapse the QR code, which only helps when scanning another screen.
+      var appleDevice = /iPhone|iPad/.test(navigator.userAgent)
+        || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      if (appleDevice) {
+        qrDetails.open = false;
+        qrDetails.parentNode.insertBefore(openLink.parentNode, qrDetails);
+      }
+
+      function done(button, ok) {
+        status.textContent = ok
+          ? 'Copied'
+          : 'Copy failed. Select the text and copy it by hand.';
+        var label = button.getAttribute('data-label');
+        button.textContent = ok ? 'Copied' : label;
+        setTimeout(function () { button.textContent = label; }, 2000);
+      }
+      function copy(text, button) {
+        function fallback() {
+          var box = document.createElement('textarea');
+          box.value = text;
+          box.setAttribute('readonly', '');
+          box.style.position = 'fixed';
+          box.style.opacity = '0';
+          document.body.appendChild(box);
+          box.select();
+          var ok = false;
+          try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+          document.body.removeChild(box);
+          done(button, ok);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text)
+            .then(function () { done(button, true); })
+            .catch(fallback);
+        } else {
+          fallback();
+        }
+      }
+      function wire(buttonId, getText) {
+        var button = document.getElementById(buttonId);
+        button.setAttribute('data-label', button.textContent);
+        button.addEventListener('click', function () { copy(getText(), button); });
+      }
+      wire('copy-code', function () {
+        return document.getElementById('pairing-code').textContent;
+      });
+      wire('copy-link', function () {
+        return document.getElementById('pairing-url').value;
+      });
+    })();
+"""
 
 
 def _brand_header() -> str:
@@ -198,107 +311,64 @@ def _render_invitation_setup_page(
     {_brand_header()}
     <p class="eyebrow">Temporary invitation · single use</p>
     <h1>Connect this iPhone</h1>
-    <h2>Scan with iPhone Camera</h2>
-    <p>Open this page on a trusted screen, then scan the QR code.</p>
-    <div class="qr-shell">
-      <div class="qr" role="img" aria-label="Pairing QR code">{qr_svg}</div>
-    </div>
-    <p>
-      <a class="button" href="{escaped_pairing_url}">Open in HealthRelay</a>
+    <p class="hint" id="expiry">
+      Valid until <time datetime="{escaped_expires_at}">{escaped_expires_at}</time>
+      · <span id="countdown"></span>
     </p>
-    <ol>
-      <li>Open <strong>Settings</strong> on your iPhone.</li>
-      <li>Tap <strong>Camera</strong>, then <strong>Scan QR Code</strong>.</li>
-      <li>Point the camera at the QR code above.</li>
+    <h2>Scan with iPhone Camera</h2>
+    <ol class="steps">
+      <li>Open <strong>HealthRelay</strong> on your iPhone.</li>
+      <li>Point the <strong>Camera</strong> at the QR code below.</li>
+      <li>Tap the <strong>banner</strong> that appears to open HealthRelay.</li>
     </ol>
+    <details id="qr-details" open>
+      <summary>QR code</summary>
+      <div class="qr-shell">
+        <div class="qr" role="img" aria-label="Pairing QR code">{qr_svg}</div>
+      </div>
+    </details>
+    <p>
+      <a class="button" id="open-link" href="{escaped_pairing_url}">
+        Open in HealthRelay
+      </a>
+    </p>
     <section class="fallback">
       <h2>Use a code instead</h2>
       <p>In HealthRelay, choose <strong>Use a code instead</strong> and enter:</p>
       <dl>
         <dt>Device</dt><dd>{escaped_label}</dd>
         <dt>Server</dt><dd>{escaped_receiver_url}</dd>
-        <dt>Code</dt><dd><code>{escaped_code}</code></dd>
-        <dt>Expires</dt><dd><time datetime="{escaped_expires_at}">{escaped_expires_at}</time></dd>
+        <dt>Code</dt>
+        <dd class="code-row">
+          <code id="pairing-code">{escaped_code}</code>
+          <button type="button" id="copy-code">Copy code</button>
+        </dd>
       </dl>
     </section>
+    <div id="expired" class="fail-state" hidden>
+      <strong>This invitation has expired.</strong>
+      <p>Create a new setup page on the receiver host:</p>
+      <code class="cmd">{_EXPIRED_COMMAND}</code>
+    </div>
     <h2>After pairing</h2>
     <ol>
-      <li>Copy code</li>
-      <li>Delete this setup page after pairing.</li>
+      <li>HealthRelay shows this receiver as connected.</li>
+      <li>{SETUP_PAGE_DELETE_NOTICE}</li>
     </ol>
     <p class="warning">
       <strong>Private setup artifact.</strong> {escaped_warning}
       {SETUP_PAGE_DELETE_NOTICE}
     </p>
-    <div id="expired" class="fail-state" hidden>
-      <strong>This invitation has expired.</strong>
-      <p>Generate a new setup page from the terminal:</p>
-      <code>health-bridge receiver create-pairing --format setup-page</code>
-    </div>
     <details>
       <summary>Show setup link</summary>
-      <button type="button" onclick="copyPairingLink()">Copy setup link</button>
+      <button type="button" id="copy-link">Copy setup link</button>
       <textarea id="pairing-url" readonly>{escaped_pairing_url}</textarea>
     </details>
+    <div id="copy-status" class="sr-only" aria-live="polite"></div>
   </main>
-  <div id="copy-status" aria-live="polite" style="position:absolute;left:-9999px;"></div>
-  <script>
-    (function() {{
-      var expires = new Date('{escaped_expires_at}').getTime();
-      var countdownEl = null;
-
-      function updateCountdown() {{
-        var now = Date.now();
-        var diff = expires - now;
-        if (diff <= 0) {{
-          if (countdownEl) countdownEl.textContent = 'Expired';
-          var expiredEl = document.getElementById('expired');
-          if (expiredEl) expiredEl.removeAttribute('hidden');
-          return;
-        }}
-        var minutes = Math.floor(diff / 60000);
-        var seconds = Math.floor((diff % 60000) / 1000);
-        if (countdownEl) {{
-          countdownEl.textContent = 'Expires in ' + minutes + 'm ' + seconds + 's';
-        }}
-      }}
-
-      countdownEl = document.createElement('p');
-      countdownEl.className = 'hint';
-      countdownEl.id = 'countdown';
-      countdownEl.textContent = 'Expires in ...';
-      document.querySelector('main').insertBefore(countdownEl, document.querySelector('section'));
-
-      updateCountdown();
-      setInterval(updateCountdown, 1000);
-
-      function announceCopied() {{
-        var el = document.getElementById('copy-status');
-        if (el) el.textContent = 'Copied';
-      }}
-
-      function copyText(fieldId) {{
-        var field = document.getElementById(fieldId);
-        field.focus(); field.select();
-        try {{ navigator.clipboard.writeText(field.value); announceCopied(); }}
-        catch (_) {{ document.execCommand('copy'); announceCopied(); }}
-      }}
-
-      window.copyPairingLink = function() {{ copyText('pairing-url'); }}
-    }})();
-
-    (function() {{
-      var ua = navigator.userAgent;
-      var isApple = /iPhone|iPad/.test(ua);
-      var details = document.querySelector('details[data-device]');
-      if (details && isApple) {{
-        details.open = true;
-      }}
-    }})();
-  </script>
+  <script>{_INVITATION_SCRIPT}  </script>
 </body>
-</html>
-"""
+</html>"""
 
 
 def _render_legacy_setup_page(

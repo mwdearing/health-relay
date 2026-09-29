@@ -41,7 +41,9 @@ def test_copy_code_is_a_real_button_with_its_own_handler(page: str) -> None:
 
 def test_after_pairing_checklist_only_holds_real_follow_ups(page: str) -> None:
     checklist = page.split("After pairing", 1)[1]
-    items = re.findall(r"<li>(.*?)</li>", checklist, re.S)
+    items = [
+        str(m.group(1)) for m in re.finditer(r"<li>(.*?)</li>", checklist, re.DOTALL)
+    ]
     assert items, "the After pairing list is missing"
     assert not any("Copy code" in item for item in items)
     assert "Delete this setup page after pairing." in items[-1]
