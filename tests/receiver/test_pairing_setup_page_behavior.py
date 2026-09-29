@@ -1,8 +1,4 @@
-"""Setup page v2 behaviour that string-level checks in the refresh tests cannot pin.
-
-Added by the reviewer after opening the page in a browser: the first implementation
-satisfied the markup tests but its expiry, copy and device handling did not work.
-"""
+"""Setup page v2: expiry, copy handlers, device-aware layout, renewal command."""
 
 import re
 from pathlib import Path
@@ -98,3 +94,40 @@ def test_primary_actions_use_the_mint_button_tokens(page: str) -> None:
     assert match
     assert "var(--primary)" in match.group(1)
     assert "var(--on-primary)" in match.group(1)
+
+
+def test_expiry_hides_every_pairing_action(page: str) -> None:
+    script = _script(page)
+    assert 'id="fallback"' in page
+    assert 'id="link-details"' in page
+    assert "fallback" in script
+    assert "link-details" in script
+
+
+def test_expired_state_is_announced_and_failures_are_visible(page: str) -> None:
+    assert re.search(r'id="expired"[^>]*role="alert"', page)
+    assert re.search(r'id="copy-status"[^>]*aria-live="polite"', page)
+    assert "sr-only" not in page.split('id="copy-status"', 1)[0].rsplit("<", 1)[1]
+
+
+def test_iphone_path_leads_with_the_open_button(page: str) -> None:
+    assert 'id="scan-heading"' in page
+    assert "scan-heading" in _script(page)
+
+
+def test_renewal_command_keeps_the_original_label_and_url(page: str) -> None:
+    expired = page.split('id="expired"', 1)[1].split("</div>", 1)[0]
+    assert "--label ios-companion" in expired
+    assert "https://health.example.test/v1/batches" in expired
+    assert "HEALTH_BRIDGE_RECEIVER_URL" not in expired
+
+
+def test_dark_form_border_and_print_reset(page: str) -> None:
+    style = page.split("<style>", 1)[1].split("</style>", 1)[0]
+    dark = style.split("prefers-color-scheme: dark", 1)[1].split("}", 1)[0]
+    match = re.search(r"--field:\s*(#[0-9A-Fa-f]{6})", dark)
+    assert match
+    assert match.group(1).upper() == "#8E8E93"
+    print_block = style.split("@media print", 1)[1]
+    assert "--card: #FFFFFF" in print_block
+    assert "--ink: #000000" in print_block

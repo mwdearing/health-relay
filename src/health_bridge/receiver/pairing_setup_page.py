@@ -1,6 +1,7 @@
 # pyright: reportMissingTypeStubs=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false
 
 import html
+import shlex
 from io import BytesIO
 from typing import Final
 
@@ -10,6 +11,7 @@ from health_bridge.receiver.pairing import (
     ReceiverPairingBundle,
     ReceiverPairingInvitationBundle,
 )
+from health_bridge.receiver.transports import ReceiverTransport
 
 SETUP_PAGE_TITLE: Final = "HealthRelay Pairing"
 SETUP_PAGE_DELETE_NOTICE: Final = "Delete this setup page after pairing."
@@ -32,7 +34,7 @@ _SETUP_PAGE_STYLE: Final = """
     @media (prefers-color-scheme: dark) {
       :root {
         --bg: #000000; --card: #1C1C1E; --inset: #2C2C2E; --ink: #FFFFFF;
-        --muted: #AEAEB2; --line: #38383A; --field: #636366;
+        --muted: #AEAEB2; --line: #38383A; --field: #8E8E93;
         --primary: #5EEAD4; --on-primary: #07222E;
         --accent: #5EEAD4; --on-accent: #07222E;
         --secondary: #15404D; --on-secondary: #5EEAD4;
@@ -137,10 +139,6 @@ _SETUP_PAGE_STYLE: Final = """
       background: var(--inset); color: var(--ink); font: inherit;
     }
     [hidden] { display: none !important; }
-    .sr-only {
-      position: absolute; width: 1px; height: 1px; overflow: hidden;
-      clip: rect(0 0 0 0); white-space: nowrap;
-    }
     ol.steps { margin: 0.5rem 0 1rem; padding-left: 1.5rem; }
     ol.steps li { margin: 0.4rem 0; }
     .cmd {
@@ -158,6 +156,12 @@ _SETUP_PAGE_STYLE: Final = """
       }
     }
     @media print {
+      :root {
+        color-scheme: light;
+        --bg: #FFFFFF; --card: #FFFFFF; --inset: #FFFFFF; --ink: #000000;
+        --muted: #3C3C43; --line: #C6C6C8; --field: #8E8E93;
+        --primary: #5EEAD4; --on-primary: #07222E; --accent: #0F6B78;
+      }
       body { background: #FFFFFF; color: #000000; }
       main { border: none; padding: 0; }
       a.button, button { border: 1px solid #000000; }
@@ -178,13 +182,26 @@ _BRAND_MARK_SVG: Final = """<svg viewBox="0 0 1000 1000" aria-hidden="true">
       </g>
     </svg>"""
 _CMD: Final = "health-bridge receiver create-pairing"
-_CMD_DB: Final = "--db ~/.local/share/health-bridge/health.sqlite --label iPhone"
-_CMD_URL: Final = '--receiver-url "$HEALTH_BRIDGE_RECEIVER_URL" --format setup-page'
-_CMD_PAGE: Final = "--setup-page ~/.local/share/health-bridge/iphone-setup.html"
-_EXPIRED_COMMAND: Final = html.escape(
-    f"{_CMD} {_CMD_DB} {_CMD_URL} {_CMD_PAGE}",
-    quote=True,
+_CMD_DB: Final = "--db ~/.local/share/health-bridge/health.sqlite"
+_CMD_PAGE: Final = (
+    "--format setup-page --setup-page ~/.local/share/health-bridge/iphone-setup.html"
 )
+
+
+def _renewal_command(bundle: ReceiverPairingInvitationBundle) -> str:
+    """The command that recreates this page: same label, URL and transport."""
+    parts = [
+        _CMD,
+        _CMD_DB,
+        f"--label {shlex.quote(bundle.label)}",
+        f"--receiver-url {shlex.quote(bundle.receiver_url)}",
+    ]
+    if bundle.transport == ReceiverTransport.MAILBOX:
+        parts.append(
+            "--transport mailbox --mailbox-root <your HealthBridgeMailbox/v1 path>"
+        )
+    parts.append(_CMD_PAGE)
+    return html.escape(" ".join(parts), quote=True)
 
 
 _INVITATION_SCRIPT: Final = """
@@ -208,6 +225,8 @@ _INVITATION_SCRIPT: Final = """
         countdown.textContent = 'Expired';
         qrDetails.hidden = true;
         openLink.hidden = true;
+        document.getElementById('fallback').hidden = true;
+        document.getElementById('link-details').hidden = true;
         expiredBox.hidden = false;
         document.body.classList.add('is-expired');
       }
@@ -226,13 +245,15 @@ _INVITATION_SCRIPT: Final = """
         || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
       if (appleDevice) {
         qrDetails.open = false;
-        qrDetails.parentNode.insertBefore(openLink.parentNode, qrDetails);
+        var scanHeading = document.getElementById('scan-heading');
+        scanHeading.parentNode.insertBefore(openLink.parentNode, scanHeading);
       }
 
       function done(button, ok) {
         status.textContent = ok
           ? 'Copied'
           : 'Copy failed. Select the text and copy it by hand.';
+        setTimeout(function () { status.textContent = ''; }, 4000);
         var label = button.getAttribute('data-label');
         button.textContent = ok ? 'Copied' : label;
         setTimeout(function () { button.textContent = label; }, 2000);
@@ -298,6 +319,7 @@ def _render_invitation_setup_page(
     escaped_expires_at = html.escape(bundle.expires_at, quote=True)
     escaped_warning = html.escape(bundle.warning, quote=True)
     escaped_pairing_url = html.escape(pairing_url, quote=True)
+    renewal_command = _renewal_command(bundle)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -315,7 +337,7 @@ def _render_invitation_setup_page(
       Valid until <time datetime="{escaped_expires_at}">{escaped_expires_at}</time>
       · <span id="countdown"></span>
     </p>
-    <h2>Scan with iPhone Camera</h2>
+    <h2 id="scan-heading">Scan with iPhone Camera</h2>
     <ol class="steps">
       <li>Open <strong>HealthRelay</strong> on your iPhone.</li>
       <li>Point the <strong>Camera</strong> at the QR code below.</li>
@@ -332,7 +354,7 @@ def _render_invitation_setup_page(
         Open in HealthRelay
       </a>
     </p>
-    <section class="fallback">
+    <section class="fallback" id="fallback">
       <h2>Use a code instead</h2>
       <p>In HealthRelay, choose <strong>Use a code instead</strong> and enter:</p>
       <dl>
@@ -345,10 +367,10 @@ def _render_invitation_setup_page(
         </dd>
       </dl>
     </section>
-    <div id="expired" class="fail-state" hidden>
+    <div id="expired" class="fail-state" role="alert" hidden>
       <strong>This invitation has expired.</strong>
       <p>Create a new setup page on the receiver host:</p>
-      <code class="cmd">{_EXPIRED_COMMAND}</code>
+      <code class="cmd">{renewal_command}</code>
     </div>
     <h2>After pairing</h2>
     <ol>
@@ -359,12 +381,12 @@ def _render_invitation_setup_page(
       <strong>Private setup artifact.</strong> {escaped_warning}
       {SETUP_PAGE_DELETE_NOTICE}
     </p>
-    <details>
+    <details id="link-details">
       <summary>Show setup link</summary>
       <button type="button" id="copy-link">Copy setup link</button>
       <textarea id="pairing-url" readonly>{escaped_pairing_url}</textarea>
     </details>
-    <div id="copy-status" class="sr-only" aria-live="polite"></div>
+    <p id="copy-status" class="hint" aria-live="polite"></p>
   </main>
   <script>{_INVITATION_SCRIPT}  </script>
 </body>
