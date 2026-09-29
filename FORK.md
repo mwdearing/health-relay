@@ -168,3 +168,4 @@ receiver-specific parts stay here.
   project and Info.plist strings; README fork banner. The tracked project keeps upstream's
   neutral `com.example.HealthBridgeCompanion` id (public-release audit rule); the real id
   is applied at build time via `BUNDLE_ID` for `scripts/ios-device-build.sh`. No functional change yet.
+
