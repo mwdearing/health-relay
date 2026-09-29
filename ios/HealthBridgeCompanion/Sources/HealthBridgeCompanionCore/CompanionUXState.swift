@@ -671,6 +671,21 @@ public enum LastSyncedFormatter {
     }
 }
 
+public enum CompanionSyncArea: Equatable, Sendable {
+    case steps, dailyActivity, workouts, sleep, otherMetrics
+}
+
+/// The kind of the current status, set by the writers of sync and connection outcomes.
+/// `.notice` is every status that is not one of these: it carries no meaning of its own
+/// and is judged by its text (see `CompanionStatusPresentation`'s legacy rules).
+public enum CompanionStatus: Equatable, Sendable {
+    case notice
+    case connectionVerified
+    case mailboxFolderReady
+    case connectionFailed
+    case syncFailed(CompanionSyncArea)
+}
+
 /// The status card's and connection card's decisions about the current status text.
 /// These are the original substring rules, moved out of the views unchanged.
 public enum CompanionStatusPresentation {
@@ -717,6 +732,41 @@ public enum CompanionStatusPresentation {
             return ""
         }
         return CompanionPrimaryStatusMessage.sanitized(from: rawMessage, isError: isError)
+    }
+
+    // MARK: - Typed status
+
+    public static func syncErrorTitle(status: CompanionStatus, message: String) -> String {
+        switch status {
+        case .syncFailed:
+            return "Sync Failed"
+        case .connectionFailed:
+            return "Connection Failed"
+        case .notice, .connectionVerified, .mailboxFolderReady:
+            // The single remaining substring fallback for unclassified text.
+            return syncErrorTitle(message: message)
+        }
+    }
+
+    /// Typed only: no text is consulted. Every writer of a "connection verified" outcome
+    /// sets `.connectionVerified`.
+    public static func connectionIsReachable(status: CompanionStatus, isError: Bool) -> Bool {
+        !isError && status == .connectionVerified
+    }
+
+    public static func mailboxFolderIsReady(status: CompanionStatus, isError: Bool, usesMailbox: Bool) -> Bool {
+        !isError && usesMailbox && status == .mailboxFolderReady
+    }
+
+    public static func connectionNotice(status: CompanionStatus, message: String, isError: Bool) -> String {
+        switch status {
+        case .connectionVerified, .mailboxFolderReady, .connectionFailed:
+            let raw = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !raw.isEmpty else { return "" }
+            return CompanionPrimaryStatusMessage.sanitized(from: raw, isError: isError)
+        case .notice, .syncFailed:
+            return connectionNotice(message: message, isError: isError)
+        }
     }
 }
 

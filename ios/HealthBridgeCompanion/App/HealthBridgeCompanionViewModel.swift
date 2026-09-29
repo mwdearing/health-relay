@@ -228,12 +228,25 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     @Published private var publishedStatusMessage = "Not connected" {
         didSet { appendActivityLog(publishedStatusMessage, isError: publishedStatusIsError) }
     }
+    @Published private var publishedStatus: CompanionStatus = .notice
+    /// The kind of the current status. Any plain `statusMessage` write resets it to `.notice`.
+    var status: CompanionStatus { publishedStatus }
     var statusMessage: String {
         get { publishedStatusMessage }
         set {
             guard !taskUIPublicationIsSuppressed else { return }
             publishedStatusMessage = newValue
+            publishedStatus = .notice
         }
+    }
+
+    /// Writes a classified status. It writes the backing stores directly (not through the
+    /// `statusMessage` setter, which would reset the kind to `.notice`) and sets the kind
+    /// last, under the same suppression guard as `statusMessage`.
+    private func setStatus(_ kind: CompanionStatus, _ message: String) {
+        guard !taskUIPublicationIsSuppressed else { return }
+        publishedStatusMessage = message
+        publishedStatus = kind
     }
     @Published private var publishedPendingOutboxCount = 0
     var pendingOutboxCount: Int {
@@ -1040,16 +1053,16 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 statusIsError = false
                 statusMessage = "Checking encrypted iCloud mailbox..."
                 try makeProductionMailboxDelivery().validateAvailability()
-                statusMessage = "Mailbox folder is ready on this iPhone. Receiver delivery has not been verified."
+                setStatus(.mailboxFolderReady, "Mailbox folder is ready on this iPhone. Receiver delivery has not been verified.")
             } catch {
                 statusIsError = true
-                statusMessage = "Encrypted iCloud mailbox check failed: \(describe(error))"
+                setStatus(.connectionFailed, "Encrypted iCloud mailbox check failed: \(describe(error))")
             }
             return
         }
         guard let url = URL(string: receiverURLString) else {
             statusIsError = true
-            statusMessage = "Bridge URL is invalid."
+            setStatus(.connectionFailed, "Bridge URL is invalid.")
             return
         }
 
@@ -1058,10 +1071,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             statusMessage = "Checking connection..."
             let result = try await receiverClient.healthCheck(forBatchURL: url)
             statusIsError = false
-            statusMessage = "Connection check passed with HTTP \(result.statusCode)."
+            setStatus(.connectionVerified, "Connection check passed with HTTP \(result.statusCode).")
         } catch {
             statusIsError = true
-            statusMessage = "Local bridge check failed: \(describe(error))"
+            setStatus(.connectionFailed, "Local bridge check failed: \(describe(error))")
         }
     }
 
@@ -4085,7 +4098,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         }
         guard let url = URL(string: receiverURLString) else {
             statusIsError = true
-            statusMessage = "Bridge URL is invalid."
+            setStatus(.connectionFailed, "Bridge URL is invalid.")
             return
         }
 
@@ -4106,7 +4119,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             )
         } catch {
             statusIsError = true
-            statusMessage = "Receiver test failed: \(describe(error))"
+            setStatus(.connectionFailed, "Receiver test failed: \(describe(error))")
         }
     }
 
@@ -4268,7 +4281,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 executionMode: executionMode
             )
             statusIsError = true
-            statusMessage = "Step sync failed: \(describe(error))"
+            setStatus(.syncFailed(.steps), "Step sync failed: \(describe(error))")
             return false
         }
         #else
@@ -4412,7 +4425,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 executionMode: executionMode
             )
             statusIsError = true
-            statusMessage = "Daily activity total sync failed: \(describe(error))"
+            setStatus(.syncFailed(.dailyActivity), "Daily activity total sync failed: \(describe(error))")
             return false
         }
         #else
@@ -4517,7 +4530,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             )
         } catch {
             statusIsError = true
-            statusMessage = "Workout sync failed: \(describe(error))"
+            setStatus(.syncFailed(.workouts), "Workout sync failed: \(describe(error))")
         }
         #else
         statusIsError = true
@@ -5022,7 +5035,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 executionMode: executionMode
             )
             statusIsError = true
-            statusMessage = "Anchored workout sync failed: \(describe(error))"
+            setStatus(.syncFailed(.workouts), "Anchored workout sync failed: \(describe(error))")
             return false
         }
         #else
@@ -5268,7 +5281,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 executionMode: executionMode
             )
             statusIsError = true
-            statusMessage = "Anchored sleep sync failed: \(describe(error))"
+            setStatus(.syncFailed(.sleep), "Anchored sleep sync failed: \(describe(error))")
             return false
         }
         #else
@@ -5722,7 +5735,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             guard !completedTypeCodes.isEmpty else {
                 if skippedMetricDescriptions.count == selectedTypeCodes.count {
                     statusIsError = true
-                    statusMessage = "\(mode.failurePrefix): \(skippedAdditionalMetricsMessage(skippedMetricDescriptions))"
+                    setStatus(.syncFailed(.otherMetrics), "\(mode.failurePrefix): \(skippedAdditionalMetricsMessage(skippedMetricDescriptions))")
                 } else {
                     statusIsError = false
                     statusMessage = mode.noSamplesMessage

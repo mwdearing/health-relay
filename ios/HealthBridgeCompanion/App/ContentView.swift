@@ -502,7 +502,10 @@ struct ContentView: View {
     }
 
     private var syncErrorTitle: String {
-        CompanionStatusPresentation.syncErrorTitle(message: viewModel.statusMessage)
+        CompanionStatusPresentation.syncErrorTitle(
+            status: viewModel.status,
+            message: viewModel.statusMessage
+        )
     }
 
     private var statusTone: StatusTone {
@@ -636,14 +639,14 @@ private struct ReceiverSettingsView: View {
 
     private var connectionIsReachable: Bool {
         CompanionStatusPresentation.connectionIsReachable(
-            message: viewModel.statusMessage,
+            status: viewModel.status,
             isError: viewModel.statusIsError
         )
     }
 
     private var mailboxFolderIsReady: Bool {
         CompanionStatusPresentation.mailboxFolderIsReady(
-            message: viewModel.statusMessage,
+            status: viewModel.status,
             isError: viewModel.statusIsError,
             usesMailbox: viewModel.usesMailboxTransport
         )
@@ -651,6 +654,7 @@ private struct ReceiverSettingsView: View {
 
     private var connectionNotice: String {
         CompanionStatusPresentation.connectionNotice(
+            status: viewModel.status,
             message: viewModel.statusMessage,
             isError: viewModel.statusIsError
         )
