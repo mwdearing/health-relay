@@ -24,6 +24,8 @@ receiver-specific parts stay here.
 - Version: bump the iOS marketing version on every app change; CI supplies the build number.
 
 ## Modifications (newest first)
+- 2026-09-28: `Publish IPA release` refuses a build whose version is not newer than the newest
+  existing `app-v*` tag, so publishing an older build can no longer land on top as "Latest".
 - 2026-09-28: iOS: disabled `PrimaryButton`s no longer get a second 0.65 fade on top of the system's
   disabled dimming (the Connect button was nearly invisible in dark mode before a link is pasted).
 - 2026-09-28: `Publish IPA release` workflow (manual). Takes the run ID of a successful `Build unsigned
