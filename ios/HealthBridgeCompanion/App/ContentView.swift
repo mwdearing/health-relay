@@ -351,7 +351,14 @@ struct ContentView: View {
                 Task { await viewModel.performPrimaryAction() }
             }
 
-            if viewModel.isSyncing {
+            // Gated on the same flag the "Sync Now" spinner/disabled state uses
+            // (syncPresentationIsActive = isSyncing || automaticSyncOwnerIsActive),
+            // not just isSyncing alone. A HealthKit-observer-driven Automatic Sync
+            // run sets only automaticSyncOwnerIsActive, never isSyncing -- gating on
+            // isSyncing meant Cancel never even appeared during that kind of run
+            // (Michael, 2026-09-29: "Cancel button never shows up in auto"), leaving
+            // no way to interrupt it short of disabling Automatic Sync entirely.
+            if viewModel.syncPresentationIsActive {
                 PrimaryButton(
                     title: "Cancel",
                     subtitle: "Stop this sync. Already queued uploads are kept.",
