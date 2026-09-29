@@ -1,16 +1,16 @@
 # Support
 
-Apple Health AI Bridge handles health-adjacent data. Choose the correct support route and keep private data out of public GitHub content.
+HealthRelay handles health-adjacent data. Choose the correct support route and keep private data out of public GitHub content.
 
 ## Private security reports
 
-Use [GitHub private vulnerability reporting](https://github.com/roian6/apple-health-ai-bridge/security/advisories/new). If that is unavailable, email `healthbridge@chanhyo.dev` with the subject prefix `[SECURITY]`.
+Use [GitHub private vulnerability reporting](https://github.com/mwdearing/health-relay/security/advisories/new) on this repository.
 
 Do not open a public issue containing vulnerabilities, secrets, real HealthKit data, receiver databases, tokens, pairing or setup material, cursor values, outbox payloads, or identifiable private endpoints.
 
 ## Setup and product support
 
-Start with the [public support page](https://healthbridge.chanhyo.dev/support). If the documented steps do not resolve the problem, open a **Setup feedback** issue using redacted environment details and synthetic data.
+Start with the documentation in this repository (`docs/`). If the documented steps do not resolve the problem, open a **Setup feedback** [issue](https://github.com/mwdearing/health-relay/issues) using redacted environment details and synthetic data.
 
 ## Reproducible bugs
 

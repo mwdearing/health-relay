@@ -48,11 +48,11 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSHealthShareUsageDescription</key>
-	<string>HealthRelay reads selected Apple Health data to send user-owned local batches to your receiver.</string>
+	<string>HealthRelay reads the Apple Health data you choose and sends it only to your own receiver. Nothing is sent to the developer.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>HealthRelay does not write data to Apple Health; it only reads selected Apple Health data to sync user-owned local batches to your receiver.</string>
+	<string>HealthRelay never changes your Apple Health data. It only reads what you allow.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>HealthRelay connects to your local or Tailscale receiver for user-owned health data sync.</string>
+	<string>HealthRelay connects to your own receiver on your home network or Tailscale to send your health data.</string>
 	<key>NSUbiquitousContainers</key>
 	<dict>
 		<key>HEALTH_BRIDGE_PRODUCTION_DOCUMENTS_CONTAINER</key>
@@ -60,7 +60,7 @@
 			<key>NSUbiquitousContainerIsDocumentScopePublic</key>
 			<true/>
 			<key>NSUbiquitousContainerName</key>
-			<string>HealthBridge Mailbox</string>
+			<string>HealthRelay Mailbox</string>
 			<key>NSUbiquitousContainerSupportedFolderLevels</key>
 			<string>Any</string>
 		</dict>
