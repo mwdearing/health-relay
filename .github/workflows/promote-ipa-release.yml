@@ -1,0 +1,74 @@
+name: Promote IPA release
+
+# HealthRelay fork: manual only. Turns a verified beta (a GitHub pre-release created by
+# "Publish IPA release") into the stable "Latest" release. It runs in the "stable" environment, which
+# requires the maintainer's approval, so promotion is a deliberate act after the IPA has been
+# installed and checked on a device. It never edits the IPA or its checksum, only the release state.
+# It uses no third-party actions, only the gh CLI on the runner.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Beta release tag to promote, for example app-v1.2.23
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-ipa-release
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote beta to stable
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: stable
+    permissions:
+      contents: write # zizmor: ignore[undocumented-permissions]
+      actions: read # zizmor: ignore[undocumented-permissions]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - name: Check the beta release
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^app-v[0-9]+(\.[0-9]+)*$ ]]; then
+            echo "tag must look like app-v1.2.23" >&2
+            exit 1
+          fi
+          rel="$(gh release view "$TAG" --repo "$REPO" --json isPrerelease,isDraft,targetCommitish,body)"
+          test "$(jq -r .isDraft <<<"$rel")" = "false"
+          test "$(jq -r .isPrerelease <<<"$rel")" = "true"
+          sha="$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq .object.sha)"
+          [ "$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq .object.type)" = "commit" ] || sha="$(gh api "repos/$REPO/git/tags/$sha" --jq .object.sha)"
+          echo "TAG_SHA=$sha" >> "$GITHUB_ENV"
+          jq -r .body <<<"$rel" > notes.md
+
+      - name: Require green CI on the released commit
+        run: |
+          set -euo pipefail
+          for wf in ios.yml python.yml; do
+            ok="$(gh api "repos/$REPO/actions/workflows/$wf/runs?head_sha=$TAG_SHA&status=completed" \
+              --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')"
+            if [ "$ok" -lt 1 ]; then
+              echo "No successful $wf run on $TAG_SHA" >&2
+              exit 1
+            fi
+          done
+
+      - name: Make it the stable release
+        run: |
+          set -euo pipefail
+          grep -v 'beta-banner' notes.md | sed '/^> \[!WARNING\]$/d' | cat -s > stable-notes.md
+          version="${TAG#app-v}"
+          gh release edit "$TAG" --repo "$REPO" \
+            --prerelease=false --latest \
+            --title "HealthRelay ${version} (unsigned IPA)" \
+            --notes-file stable-notes.md
+          echo "Promoted $TAG to stable (Latest)" >> "$GITHUB_STEP_SUMMARY"

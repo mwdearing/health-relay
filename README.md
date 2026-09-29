@@ -81,7 +81,7 @@ Automatic background sync is designed for continuous use. iOS controls backgroun
 
 HealthRelay is not on the App Store. Build it yourself, then sign and install it with your own Apple developer identity (a sideload signer or Xcode):
 
-- **GitHub Releases:** download the latest unsigned IPA from the [Releases page](https://github.com/mwdearing/health-relay/releases) — no Actions run needed.
+- **GitHub Releases:** download the latest stable unsigned IPA from the [Releases page](https://github.com/mwdearing/health-relay/releases/latest) — no Actions run needed. New builds are published first as **beta pre-releases** and only become the stable release after they have been verified on a device, so the page's "Latest" release is the one to use.
 - **GitHub Actions:** run the `Build unsigned IPA` workflow (Actions → Build unsigned IPA → Run workflow) with your bundle identifier and marketing version, download the `HealthRelay-unsigned-ipa-*` artifact, and sign it on your phone or Mac.
 - **Xcode 16 or later:** follow [docs/self-build.md](docs/self-build.md).
 
