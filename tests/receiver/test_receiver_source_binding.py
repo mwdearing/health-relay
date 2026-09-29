@@ -234,9 +234,7 @@ def test_apple_health_export_source_is_always_accepted_and_kept_as_is(
         assert post_batch(url, TOKEN_A, export_batch) == 202
 
     with sqlite3.connect(db_path) as connection:
-        source_keys = connection.execute(
-            "select source_key from sources"
-        ).fetchall()
+        source_keys = connection.execute("select source_key from sources").fetchall()
         lab_result_source_keys = connection.execute(
             """
             select sources.source_key
