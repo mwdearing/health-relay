@@ -174,20 +174,16 @@ def test_public_support_privacy_and_security_routes_are_explicit() -> None:
     assert ("HealthRelay is a private fork of Apple Health AI Bridge") in readme
     assert "not affiliated with, endorsed by, or sponsored by Apple Inc." in readme
     assert (
-        "https://github.com/roian6/apple-health-ai-bridge/security/advisories/new"
-        in security
+        "https://github.com/mwdearing/health-relay/security/advisories/new" in security
     )
-    assert "healthbridge@chanhyo.dev" in security
+    assert "healthbridge@chanhyo.dev" not in security
     assert 'labels: ["question"]' in setup_template
     assert issue_config.is_file()
     config_text = issue_config.read_text()
     assert "blank_issues_enabled: false" in config_text
-    assert (
-        "github.com/roian6/apple-health-ai-bridge/security/advisories/new"
-        in config_text
-    )
-    assert "healthbridge.chanhyo.dev/support" in config_text
-    assert "healthbridge.chanhyo.dev/privacy" in security
+    assert "github.com/mwdearing/health-relay/security/advisories/new" in config_text
+    assert "chanhyo.dev" not in config_text
+    assert "PRIVACY.md" in security
 
 
 def test_product_and_project_names_have_an_explicit_relationship() -> None:
@@ -437,8 +433,8 @@ def test_current_component_identities_are_explicit() -> None:
     assert '"version": "1.1.1"' in server_manifest
     assert xcode_project.count("MARKETING_VERSION = 1.2.0;") == 2
     assert xcode_project.count("CURRENT_PROJECT_VERSION = 50;") == 2
-    assert '?? "1.2.0"' in content_view
-    assert '?? "50"' in content_view
+    assert '?? "1.2.0"' not in content_view
+    assert "versionLine(" in content_view
     assert "pre-1.0" not in security
 
 
