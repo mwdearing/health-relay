@@ -324,6 +324,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     @Published var healthHistoryDepth: HealthHistoryDepth
     @Published var historicalBackfillState: HealthHistoricalBackfillState
     @Published private(set) var activityLogMessages: [String]
+    private var activityLogLane: String?
     @Published private(set) var mailboxKeyDiagnosticState: MailboxKeyDiagnosticState
     @Published private(set) var mailboxDeliveryDiagnosticLine = ""
     @Published private(set) var automaticSyncLaneDiagnosticLine: String
@@ -6385,17 +6386,23 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     private func appendActivityLog(_ rawMessage: String, isError: Bool) {
         let trimmed = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        // HealthRelay lanes log their own outcome verbatim (counts, cursor state, error code; never a value).
-        let sanitized = trimmed.hasPrefix("[ECG]") || trimmed.hasPrefix("[Medication]")
-            || trimmed.hasPrefix("[Manual]") || trimmed.hasPrefix("[Export]")
-            ? trimmed
-            : CompanionPrimaryStatusMessage.sanitized(from: trimmed, isError: isError)
-        guard activityLogMessages.last?.hasSuffix(sanitized) != true else { return }
-        let entry = "\(Self.activityLogTimeFormatter.string(from: Date())) — \(sanitized)"
-        activityLogMessages.append(entry)
-        if activityLogMessages.count > 30 {
-            activityLogMessages.removeFirst(activityLogMessages.count - 30)
+        switch ActivityLogMerger.laneUpdate(fromManualMessage: trimmed) {
+        case let .started(name): activityLogLane = name
+        case .finished: activityLogLane = nil
+        case nil: break
         }
+        let time = Self.activityLogTimeFormatter.string(from: Date())
+        // HealthRelay lanes log their own outcome verbatim (counts, cursor state, error code; never a value).
+        if trimmed.hasPrefix("[ECG]") || trimmed.hasPrefix("[Medication]")
+            || trimmed.hasPrefix("[Manual]") || trimmed.hasPrefix("[Export]") {
+            guard activityLogMessages.last?.hasSuffix(trimmed) != true else { return }
+            activityLogMessages = ActivityLogMerger.appending(label: trimmed, lane: nil, time: time, to: activityLogMessages)
+            return
+        }
+        let sanitized = CompanionPrimaryStatusMessage.sanitized(from: trimmed, isError: isError)
+        activityLogMessages = ActivityLogMerger.appending(
+            label: sanitized, lane: activityLogLane, time: time, to: activityLogMessages
+        )
     }
 
     private static let activityLogTimeFormatter: DateFormatter = {
