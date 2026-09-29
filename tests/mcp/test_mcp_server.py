@@ -141,6 +141,20 @@ class SmokeBridgeStatus(McpTestModel):
     sync_cursors: list[SmokeCursorStatus]
 
 
+TOOL_CALL_SHAPE_MESSAGE = (
+    "Invalid tool call: params must be an object like "
+    '{"name": "<tool>", "arguments": {...}}.'
+)
+DB_HINT = (
+    "Check the database path this server was started with "
+    "(the healthrelay plugin reads it from ~/.config/healthrelay/db-path)."
+)
+DB_NOT_FOUND = f"HealthRelay database could not be read (not found). {DB_HINT}"
+DB_LOCKED = f"HealthRelay database could not be read (locked). {DB_HINT}"
+DB_OTHER = f"HealthRelay database could not be read (other). {DB_HINT}"
+DATE_ERROR = "must be a date like 2026-06-01 (YYYY-MM-DD)"
+TIME_ERROR = "must look like 2026-06-01T00:00:00Z (UTC, ending in Z)"
+
 EXPECTED_TOOL_NAMES = (
     "get_bridge_status",
     "get_bridge_context_markdown",
@@ -269,7 +283,7 @@ def test_mcp_dispatch_rejects_malformed_tool_call_without_traceback(
         assert response == {
             "jsonrpc": "2.0",
             "id": 9,
-            "error": {"code": -32602, "message": "Invalid tool call arguments."},
+            "error": {"code": -32602, "message": TOOL_CALL_SHAPE_MESSAGE},
         }
 
 
@@ -297,7 +311,13 @@ def test_mcp_dispatch_rejects_extra_tool_arguments_without_traceback(
     assert response == {
         "jsonrpc": "2.0",
         "id": 10,
-        "error": {"code": -32602, "message": "Invalid tool call arguments."},
+        "error": {
+            "code": -32602,
+            "message": (
+                "Invalid arguments for list_supported_timeseries_types: "
+                "unexpected: is not an accepted argument"
+            ),
+        },
     }
 
 
@@ -305,14 +325,16 @@ def test_mcp_dispatch_rejects_invalid_ranges_without_terminating_server(
     tmp_path: Path,
 ) -> None:
     db_path = initialized_fixture_db(tmp_path)
-    calls: tuple[tuple[str, JsonObject], ...] = (
+    calls: tuple[tuple[str, JsonObject, str], ...] = (
         (
             "get_daily_summary",
             {"start_date": "2026-02-30", "end_date": "2026-03-01"},
+            f"start_date: {DATE_ERROR}",
         ),
         (
             "get_daily_summary",
             {"start_date": "2026-06-09", "end_date": "2026-06-01"},
+            "start_date must not be after end_date",
         ),
         (
             "get_timeseries",
@@ -321,6 +343,7 @@ def test_mcp_dispatch_rejects_invalid_ranges_without_terminating_server(
                 "start_time": "not-a-timestamp",
                 "end_time": "2026-06-08T00:00:00Z",
             },
+            f"start_time: {TIME_ERROR}",
         ),
         (
             "get_timeseries",
@@ -329,10 +352,11 @@ def test_mcp_dispatch_rejects_invalid_ranges_without_terminating_server(
                 "start_time": "2026-06-09T00:00:00Z",
                 "end_time": "2026-06-08T00:00:00Z",
             },
+            "start_time must not be after end_time",
         ),
     )
 
-    for request_id, (name, arguments) in enumerate(calls, start=20):
+    for request_id, (name, arguments, detail) in enumerate(calls, start=20):
         response = dispatch_request(
             db_path,
             {
@@ -345,7 +369,10 @@ def test_mcp_dispatch_rejects_invalid_ranges_without_terminating_server(
         assert response == {
             "jsonrpc": "2.0",
             "id": request_id,
-            "error": {"code": -32602, "message": "Invalid tool call arguments."},
+            "error": {
+                "code": -32602,
+                "message": f"Invalid arguments for {name}: {detail}",
+            },
         }
 
     later = ToolListResponse.model_validate(
@@ -380,7 +407,7 @@ def test_mcp_missing_database_is_controlled_and_has_no_filesystem_side_effect(
     assert response == {
         "jsonrpc": "2.0",
         "id": 11,
-        "error": {"code": -32000, "message": "Health Bridge database is unavailable."},
+        "error": {"code": -32000, "message": DB_NOT_FOUND},
     }
     assert later["id"] == 12
     assert "result" in later
@@ -430,7 +457,7 @@ def test_mcp_read_only_refuses_wal_without_creating_shm(tmp_path: Path) -> None:
     assert response == {
         "jsonrpc": "2.0",
         "id": 18,
-        "error": {"code": -32000, "message": "Health Bridge database is unavailable."},
+        "error": {"code": -32000, "message": DB_LOCKED},
     }
     assert wal_path.read_bytes() == before
     assert not shm_path.exists()
@@ -454,7 +481,7 @@ def test_mcp_read_only_refuses_active_writer_snapshot(tmp_path: Path) -> None:
     assert response == {
         "jsonrpc": "2.0",
         "id": 20,
-        "error": {"code": -32000, "message": "Health Bridge database is unavailable."},
+        "error": {"code": -32000, "message": DB_LOCKED},
     }
 
 
@@ -487,7 +514,7 @@ def test_mcp_rejects_noncanonical_date_forms(tmp_path: Path) -> None:
         )
         assert response["error"] == {
             "code": -32602,
-            "message": "Invalid tool call arguments.",
+            "message": f"Invalid arguments for get_workouts: start_date: {DATE_ERROR}",
         }
 
 
@@ -515,7 +542,7 @@ def test_mcp_stdio_survives_missing_database_without_traceback(tmp_path: Path) -
     assert result.stderr == ""
     assert missing.id == 11
     assert missing.error.code == -32000
-    assert missing.error.message == "Health Bridge database is unavailable."
+    assert missing.error.message == DB_NOT_FOUND
     assert later.id == 12
     assert not db_path.parent.exists()
 
@@ -550,7 +577,7 @@ def test_mcp_stdio_survives_malformed_legacy_sleep_row(tmp_path: Path) -> None:
     assert result.stderr == ""
     assert malformed.id == 21
     assert malformed.error.code == -32000
-    assert malformed.error.message == "Health Bridge database is unavailable."
+    assert malformed.error.message == DB_OTHER
     assert later.id == 22
 
 
@@ -582,7 +609,7 @@ def test_mcp_stdio_classifies_stored_row_validation_as_database_error(
     assert result.stderr == ""
     assert malformed.id == 23
     assert malformed.error.code == -32000
-    assert malformed.error.message == "Health Bridge database is unavailable."
+    assert malformed.error.message == DB_OTHER
     assert later.id == 24
 
 
@@ -702,10 +729,12 @@ def test_mcp_start_stdio_rejects_malformed_tool_call_without_traceback(
     assert result.stderr == ""
     assert params_response.id == 9
     assert params_response.error.code == -32602
-    assert params_response.error.message == "Invalid tool call arguments."
+    assert params_response.error.message == TOOL_CALL_SHAPE_MESSAGE
     assert arguments_response.id == 10
     assert arguments_response.error.code == -32602
-    assert arguments_response.error.message == "Invalid tool call arguments."
+    assert arguments_response.error.message == (
+        "Invalid arguments for get_timeseries: arguments must be an object."
+    )
 
 
 def test_timeseries_schema_and_runtime_accept_the_same_timestamp_forms() -> None:

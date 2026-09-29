@@ -24,6 +24,20 @@ from health_bridge.mcp.types import (
     required_string,
 )
 
+TOOL_CALL_SHAPE_MESSAGE: Final = (
+    "Invalid tool call: params must be an object like "
+    '{"name": "<tool>", "arguments": {...}}.'
+)
+TIMESTAMP_HINT: Final = "must look like 2026-06-01T00:00:00Z (UTC, ending in Z)"
+DATE_HINT: Final = "must be a date like 2026-06-01 (YYYY-MM-DD)"
+TIMESTAMP_FIELDS: Final = frozenset({"start_time", "end_time"})
+DATE_FIELDS: Final = frozenset({"start_date", "end_date"})
+MAX_FIELD_NAME_LENGTH: Final = 40
+DATABASE_HINT: Final = (
+    "Check the database path this server was started with "
+    "(the healthrelay plugin reads it from ~/.config/healthrelay/db-path)."
+)
+
 Handler: TypeAlias = Callable[[Path, "JsonRpcRequest"], JsonObject]
 
 
@@ -55,7 +69,7 @@ def dispatch_request(db_path: Path, request: JsonMapping) -> JsonObject:
         request_id = _request_id_or_none(request.get("id"))
         method = request.get("method")
         if method == "tools/call":
-            return _error(request_id, -32602, "Invalid tool call arguments.")
+            return _error(request_id, -32602, TOOL_CALL_SHAPE_MESSAGE)
         return _error(request_id, -32600, "Invalid request.")
     handler = HANDLERS.get(parsed_request.method)
     if handler is None:
@@ -130,7 +144,7 @@ def serve_stdio(db_path: Path) -> None:
             response = _error(None, -32600, "Invalid request.")
             print(json.dumps(response, separators=(",", ":")), flush=True)  # noqa: T201
             continue
-        if request["method"] == "notifications/initialized":
+        if "id" not in request:
             continue
         try:
             response = dispatch_request(db_path, request)
@@ -186,34 +200,85 @@ def _list_tools(_db_path: Path, request: JsonRpcRequest) -> JsonObject:
 def _call_tool(db_path: Path, request: JsonRpcRequest) -> JsonObject:
     try:
         name = required_string(request.params["name"])
-        arguments = required_object(request.params.get("arguments", {}))
     except (KeyError, JsonShapeError):
-        return _error(request.request_id, -32602, "Invalid tool call arguments.")
+        return _error(request.request_id, -32602, TOOL_CALL_SHAPE_MESSAGE)
     caller = TOOL_CALLERS.get(name)
     argument_model = TOOL_ARGUMENT_MODELS.get(name)
     if caller is None or argument_model is None:
         return _error(request.request_id, -32602, "Unknown read-only tool.")
     try:
+        arguments = required_object(request.params.get("arguments", {}))
+    except JsonShapeError:
+        return _error(
+            request.request_id,
+            -32602,
+            f"Invalid arguments for {name}: arguments must be an object.",
+        )
+    try:
         validated_arguments = cast(
             "JsonMapping",
             argument_model.model_validate(arguments).model_dump(),
         )
-    except ValidationError:
-        return _error(request.request_id, -32602, "Invalid tool call arguments.")
+    except ValidationError as error:
+        return _error(
+            request.request_id,
+            -32602,
+            f"Invalid arguments for {name}: {_validation_summary(error)}",
+        )
     try:
         payload = caller(db_path, validated_arguments)
         text = payload if isinstance(payload, str) else payload.model_dump_json()
-    except (ValidationError, OSError, RuntimeError, ValueError, sqlite3.Error):
-        return _error(
-            request.request_id,
-            -32000,
-            "Health Bridge database is unavailable.",
-        )
+    except (ValidationError, OSError, RuntimeError, ValueError, sqlite3.Error) as error:
+        reason = _database_failure_reason(db_path, error)
+        message = f"HealthRelay database could not be read ({reason}). {DATABASE_HINT}"
+        return _error(request.request_id, -32000, message)
     return {
         "jsonrpc": "2.0",
         "id": request.request_id,
         "result": {"content": [{"type": "text", "text": text}]},
     }
+
+
+def _validation_summary(error: ValidationError) -> str:
+    """Describe argument problems by field and expected form, never by value."""
+    problems: list[str] = []
+    for detail in error.errors():
+        location = detail["loc"]
+        field = ".".join(str(part) for part in location)[:MAX_FIELD_NAME_LENGTH]
+        root = str(location[0]) if location else ""
+        error_type = detail["type"]
+        if not location:
+            problem = detail["msg"].removeprefix("Value error, ")
+        elif error_type == "missing":
+            problem = f"{field}: is required"
+        elif error_type == "extra_forbidden":
+            problem = f"{field}: is not an accepted argument"
+        elif root in TIMESTAMP_FIELDS:
+            problem = f"{root}: {TIMESTAMP_HINT}"
+        elif root in DATE_FIELDS:
+            problem = f"{root}: {DATE_HINT}"
+        elif root == "type_codes":
+            problem = "type_codes: must be a list of type-code strings"
+        else:
+            problem = f"{field}: has an invalid value"
+        if problem not in problems:
+            problems.append(problem)
+    return "; ".join(problems)
+
+
+def _database_failure_reason(db_path: Path, error: Exception) -> str:
+    message = str(error).lower()
+    if isinstance(error, FileNotFoundError) or not db_path.exists():
+        return "not found"
+    if (
+        isinstance(error, BlockingIOError)
+        or "not quiescent" in message
+        or "locked" in message
+    ):
+        return "locked"
+    if "not a database" in message:
+        return "not a HealthRelay database"
+    return "other"
 
 
 def _smoke_call_result(text: str) -> JsonObject:
@@ -252,12 +317,14 @@ def _smoke_context_result(text: str) -> JsonObject:
 
 def _stdio_request_from_json(line: str) -> JsonObject:
     raw_request = required_object(cast("JsonValue", json.loads(line)))
-    return {
+    request: JsonObject = {
         "jsonrpc": "2.0",
-        "id": optional_request_id(raw_request.get("id")),
         "method": required_string(raw_request["method"]),
         "params": raw_request.get("params", {}),
     }
+    if "id" in raw_request:
+        request["id"] = optional_request_id(raw_request["id"])
+    return request
 
 
 def _error(request_id: int | str | None, code: int, message: str) -> JsonObject:
