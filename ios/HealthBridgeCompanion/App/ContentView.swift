@@ -385,14 +385,23 @@ struct ContentView: View {
                 subtitle: "Add lab results from an Apple Health export.zip file."
             )
 
-            PrimaryButton(
-                title: "Choose Export File",
-                subtitle: "Settings \u{2192} [your name] \u{2192} Export All Health Data",
-                systemImage: "doc.zipper",
-                isDisabled: !viewModel.canRunPrimaryAction
-            ) {
+            // A rare, secondary action: a quiet capsule, so Sync Now stays the only mint button.
+            Button {
                 showExportFileImporter = true
+            } label: {
+                Label("Choose Export File", systemImage: "doc.zipper")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
             }
+            .relaySecondaryButtonStyle()
+            .controlSize(.large)
+            .disabled(!viewModel.canRunPrimaryAction)
+
+            // Visible, not just a VoiceOver hint: people need to know where the file comes from.
+            Text("In the Health app: profile picture \u{2192} Export All Health Data.")
+                .font(.footnote)
+                .foregroundStyle(.relaySecondaryText)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .cardStyle()
     }
@@ -1090,6 +1099,17 @@ private extension View {
             buttonStyle(.glassProminent)
         } else {
             buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
+        }
+    }
+
+    /// Quiet capsule for secondary actions: glass on iOS 26 and later, bordered before that.
+    @ViewBuilder
+    func relaySecondaryButtonStyle() -> some View {
+        if #available(iOS 26.0, *) {
+            buttonStyle(.glass)
+        } else {
+            buttonStyle(.bordered)
                 .buttonBorderShape(.capsule)
         }
     }
