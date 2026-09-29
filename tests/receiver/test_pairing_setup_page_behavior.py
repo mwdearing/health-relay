@@ -147,7 +147,16 @@ def test_print_resets_every_dark_token(page: str) -> None:
         assert f"{token}:" in print_block
 
 
-def test_mailbox_renewal_uses_the_public_transport_name() -> None:
-    source = Path("src/health_bridge/receiver/pairing_setup_page.py").read_text()
-    assert "--transport icloud-mailbox" in source
-    assert "--transport mailbox" not in source
+def test_mailbox_renewal_uses_the_public_transport_name(tmp_path: Path) -> None:
+    bundle = create_receiver_pairing_invitation_bundle(
+        tmp_path / "receiver.sqlite",
+        label="mailbox-iphone",
+        receiver_url="https://health.example.test/v1/batches",
+        transport="mailbox",
+    )
+    rendered = render_pairing_setup_page(bundle, pairing_deep_link(bundle))
+    expired = rendered.split('id="expired"', 1)[1].split("</div>", 1)[0]
+    assert "--transport icloud-mailbox" in expired
+    assert "--transport mailbox" not in expired
+    assert "&lt;" not in expired
+    assert "&quot;$HEALTH_BRIDGE_MAILBOX_ROOT&quot;" in expired

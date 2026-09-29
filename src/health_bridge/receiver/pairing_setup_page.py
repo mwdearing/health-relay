@@ -201,7 +201,7 @@ def _renewal_command(bundle: ReceiverPairingInvitationBundle) -> str:
     ]
     if bundle.transport == ReceiverTransport.MAILBOX:
         parts.append("--transport icloud-mailbox")
-        parts.append("--mailbox-root <your HealthBridgeMailbox/v1 path>")
+        parts.append('--mailbox-root "$HEALTH_BRIDGE_MAILBOX_ROOT"')
     parts.append(_CMD_PAGE)
     return html.escape(" ".join(parts), quote=True)
 
