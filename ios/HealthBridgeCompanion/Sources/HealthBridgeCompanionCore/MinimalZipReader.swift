@@ -209,11 +209,11 @@ enum MinimalZipReader {
             // writer that caps it without ZIP64 records): size and offset are real, so
             // the classic values are still correct. A sentinel size/offset without a
             // locator is genuinely broken.
-            guard diskNumber == 0, centralDirectoryDisk == 0 else {
-                throw ZipError.multiDiskArchive
-            }
             guard size32 != sentinel32, offset32 != sentinel32 else {
                 throw ZipError.invalidZip64Structure
+            }
+            guard diskNumber == 0, centralDirectoryDisk == 0 else {
+                throw ZipError.multiDiskArchive
             }
             return EndOfCentralDirectory(
                 centralDirectoryOffset: Int(offset32),
