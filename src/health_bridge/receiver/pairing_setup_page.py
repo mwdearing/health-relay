@@ -21,19 +21,23 @@ _SETUP_PAGE_STYLE: Final = """
     :root {
       color-scheme: light dark;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      --bg: #edf2f2; --card: #ffffff; --inset: #f2f6f6; --ink: #0f1b1f;
-      --muted: #4b5b61; --line: #c9d6d8; --field: #6f8287;
-      --accent: #0b3d4a; --on-accent: #ffffff;
-      --secondary: #e3f1f0; --on-secondary: #0b3d4a;
-      --warn-bg: #fff4e0; --warn-ink: #7a4100;
+      --bg: #F2F2F7; --card: #FFFFFF; --inset: #F2F2F7; --ink: #000000;
+      --muted: #6C6C70; --line: #C6C6C8; --field: #8E8E93;
+      --primary: #5EEAD4; --on-primary: #07222E;
+      --accent: #0F6B78; --on-accent: #FFFFFF;
+      --secondary: #E3F1F0; --on-secondary: #0B3D4A;
+      --warn-bg: #FFE6CC; --warn-ink: #7A3E00;
+      --fail-bg: #FFDCD8; --fail-ink: #8A1C14;
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg: #07222e; --card: #0e2f3b; --inset: #0a2833; --ink: #eaf6f5;
-        --muted: #a9c1c4; --line: #1e4553; --field: #6d949c;
-        --accent: #5eead4; --on-accent: #07222e;
-        --secondary: #15404d; --on-secondary: #5eead4;
-        --warn-bg: #3a2a0a; --warn-ink: #fcd9a0;
+        --bg: #000000; --card: #1C1C1E; --inset: #2C2C2E; --ink: #FFFFFF;
+        --muted: #AEAEB2; --line: #38383A; --field: #636366;
+        --primary: #5EEAD4; --on-primary: #07222E;
+        --accent: #5EEAD4; --on-accent: #07222E;
+        --secondary: #15404D; --on-secondary: #5EEAD4;
+        --warn-bg: #3A2610; --warn-ink: #FFCB94;
+        --fail-bg: #3D1512; --fail-ink: #FFB3AB;
       }
     }
     * { box-sizing: border-box; }
@@ -47,7 +51,7 @@ _SETUP_PAGE_STYLE: Final = """
     main {
       width: min(100% - 2rem, 720px); margin: 1rem auto;
       padding: clamp(1.25rem, 4vw, 2rem);
-      border: 1px solid var(--line); border-radius: 28px;
+      border: 1px solid var(--line); border-radius: 26px;
       background: var(--card); overflow: visible;
     }
     .brand {
@@ -56,7 +60,7 @@ _SETUP_PAGE_STYLE: Final = """
     }
     .brand svg {
       width: 40px; height: 40px; flex-shrink: 0;
-      border-radius: 9px; box-shadow: 0 0 0 1px var(--line);
+      border-radius: 12px; box-shadow: 0 0 0 1px var(--line);
     }
     h1 { margin: 0 0 0.5rem; font-size: clamp(1.8rem, 5vw, 2.6rem); line-height: 1.15; }
     h2 { margin: 1.5rem 0 0.25rem; font-size: 1.25rem; }
@@ -68,8 +72,8 @@ _SETUP_PAGE_STYLE: Final = """
     }
     .qr {
       display: block; max-width: 100%;
-      padding: clamp(0.75rem, 3vw, 1.25rem); border-radius: 22px;
-      background: #ffffff; color: #111111; border: 1px solid var(--line);
+      padding: clamp(0.75rem, 3vw, 1.25rem); border-radius: 12px;
+      background: #FFFFFF; color: #111111; border: 1px solid var(--line);
       overflow: visible;
     }
     .qr svg {
@@ -90,7 +94,7 @@ _SETUP_PAGE_STYLE: Final = """
     }
     .fallback {
       margin-top: 1.5rem; padding: 1rem 1.25rem;
-      border-radius: 20px; background: var(--inset);
+      border-radius: 12px; background: var(--inset);
     }
     .fallback h2 { margin-top: 0; }
     dl {
@@ -107,8 +111,12 @@ _SETUP_PAGE_STYLE: Final = """
     ol.methods { margin: 1rem 0 1.5rem; padding-left: 1.5rem; }
     ol.methods li { margin: 0.7rem 0; }
     .warning {
-      margin: 1.5rem 0; padding: 0.9rem 1.1rem; border-radius: 16px;
+      margin: 1.5rem 0; padding: 0.9rem 1.1rem; border-radius: 12px;
       background: var(--warn-bg); color: var(--warn-ink);
+    }
+    .fail-state {
+      margin: 1.5rem 0; padding: 0.9rem 1.1rem; border-radius: 12px;
+      background: var(--fail-bg); color: var(--fail-ink);
     }
     details { margin-top: 0.5rem; }
     summary {
@@ -125,8 +133,16 @@ _SETUP_PAGE_STYLE: Final = """
     }
     textarea {
       width: 100%; min-height: 6.5rem; margin-top: 0.5rem; padding: 0.8rem;
-      border-radius: 14px; border: 1px solid var(--field);
+      border-radius: 12px; border: 1px solid var(--field);
       background: var(--inset); color: var(--ink); font: inherit;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+    }
+    @media print {
+      body { background: #FFFFFF; color: #000000; }
+      main { border: none; padding: 0; }
+      a.button, button { border: 1px solid #000000; }
     }
 """
 
@@ -185,11 +201,16 @@ def _render_invitation_setup_page(
     <h2>Scan with iPhone Camera</h2>
     <p>Open this page on a trusted screen, then scan the QR code.</p>
     <div class="qr-shell">
-      <div class="qr" aria-label="Pairing QR code">{qr_svg}</div>
+      <div class="qr" role="img" aria-label="Pairing QR code">{qr_svg}</div>
     </div>
     <p>
       <a class="button" href="{escaped_pairing_url}">Open in HealthRelay</a>
     </p>
+    <ol>
+      <li>Open <strong>Settings</strong> on your iPhone.</li>
+      <li>Tap <strong>Camera</strong>, then <strong>Scan QR Code</strong>.</li>
+      <li>Point the camera at the QR code above.</li>
+    </ol>
     <section class="fallback">
       <h2>Use a code instead</h2>
       <p>In HealthRelay, choose <strong>Use a code instead</strong> and enter:</p>
@@ -197,26 +218,83 @@ def _render_invitation_setup_page(
         <dt>Device</dt><dd>{escaped_label}</dd>
         <dt>Server</dt><dd>{escaped_receiver_url}</dd>
         <dt>Code</dt><dd><code>{escaped_code}</code></dd>
-        <dt>Expires</dt><dd>{escaped_expires_at}</dd>
+        <dt>Expires</dt><dd><time datetime="{escaped_expires_at}">{escaped_expires_at}</time></dd>
       </dl>
     </section>
+    <h2>After pairing</h2>
+    <ol>
+      <li>Copy code</li>
+      <li>Delete this setup page after pairing.</li>
+    </ol>
     <p class="warning">
       <strong>Private setup artifact.</strong> {escaped_warning}
       {SETUP_PAGE_DELETE_NOTICE}
     </p>
+    <div id="expired" class="fail-state" hidden>
+      <strong>This invitation has expired.</strong>
+      <p>Generate a new setup page from the terminal:</p>
+      <code>health-bridge receiver create-pairing --format setup-page</code>
+    </div>
     <details>
       <summary>Show setup link</summary>
       <button type="button" onclick="copyPairingLink()">Copy setup link</button>
       <textarea id="pairing-url" readonly>{escaped_pairing_url}</textarea>
     </details>
   </main>
+  <div id="copy-status" aria-live="polite" style="position:absolute;left:-9999px;"></div>
   <script>
-    async function copyPairingLink() {{
-      const field = document.getElementById('pairing-url');
-      field.focus(); field.select();
-      try {{ await navigator.clipboard.writeText(field.value); }}
-      catch (_) {{ document.execCommand('copy'); }}
-    }}
+    (function() {{
+      var expires = new Date('{escaped_expires_at}').getTime();
+      var countdownEl = null;
+
+      function updateCountdown() {{
+        var now = Date.now();
+        var diff = expires - now;
+        if (diff <= 0) {{
+          if (countdownEl) countdownEl.textContent = 'Expired';
+          var expiredEl = document.getElementById('expired');
+          if (expiredEl) expiredEl.removeAttribute('hidden');
+          return;
+        }}
+        var minutes = Math.floor(diff / 60000);
+        var seconds = Math.floor((diff % 60000) / 1000);
+        if (countdownEl) {{
+          countdownEl.textContent = 'Expires in ' + minutes + 'm ' + seconds + 's';
+        }}
+      }}
+
+      countdownEl = document.createElement('p');
+      countdownEl.className = 'hint';
+      countdownEl.id = 'countdown';
+      countdownEl.textContent = 'Expires in ...';
+      document.querySelector('main').insertBefore(countdownEl, document.querySelector('section'));
+
+      updateCountdown();
+      setInterval(updateCountdown, 1000);
+
+      function announceCopied() {{
+        var el = document.getElementById('copy-status');
+        if (el) el.textContent = 'Copied';
+      }}
+
+      function copyText(fieldId) {{
+        var field = document.getElementById(fieldId);
+        field.focus(); field.select();
+        try {{ navigator.clipboard.writeText(field.value); announceCopied(); }}
+        catch (_) {{ document.execCommand('copy'); announceCopied(); }}
+      }}
+
+      window.copyPairingLink = function() {{ copyText('pairing-url'); }}
+    }})();
+
+    (function() {{
+      var ua = navigator.userAgent;
+      var isApple = /iPhone|iPad/.test(ua);
+      var details = document.querySelector('details[data-device]');
+      if (details && isApple) {{
+        details.open = true;
+      }}
+    }})();
   </script>
 </body>
 </html>
