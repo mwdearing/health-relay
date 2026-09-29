@@ -6,6 +6,7 @@ from pydantic import TypeAdapter
 from health_bridge.queries._common import (
     connect_readonly,
     date_bounds,
+    empty_window_notes,
     notes_for_count,
     seconds_between,
     source_from_row,
@@ -66,7 +67,10 @@ def get_sleep_summary(
         session_count=session_count,
         stage_seconds=stage_seconds,
         sources_used=sources,
-        missing_data_notes=notes_for_count(session_count),
+        missing_data_notes=(
+            *empty_window_notes(start_date, end_date),
+            *notes_for_count(session_count),
+        ),
         truncated=False,
     )
 
