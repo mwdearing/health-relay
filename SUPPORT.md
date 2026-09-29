@@ -20,12 +20,8 @@ Use the **Bug report** form. Include the smallest synthetic reproduction, the pr
 
 Use the **Feature request** form. Describe the user need and the impact on HealthKit permissions, read-only behavior, local storage, networking, privacy disclosures, and App Review.
 
-## Response targets
+## Response times
 
-These are maintainer targets rather than guaranteed service levels:
+This is a small, best-effort project. There are no response-time commitments for issues, security reports or pull requests.
 
-- private security reports: acknowledgement within 72 hours;
-- new issues: initial triage within five business days;
-- new pull requests: initial response within seven days.
-
-Accepted work without a scheduled release will be labeled rather than assigned a promised date.
+HealthRelay is a fork of [apple-health-ai-bridge](https://github.com/roian6/apple-health-ai-bridge) by roian6; upstream is credited for attribution only and is not a support or reporting channel for this project.
