@@ -31,7 +31,7 @@ final class LastSyncedTests: XCTestCase {
     func testStoreRoundTripsAndStartsEmpty() throws {
         let suite = "LastSyncedTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        addTeardownBlock { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
         let store = LastSyncedStore(userDefaults: defaults)
 
         XCTAssertNil(store.lastSyncedAt)
