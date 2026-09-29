@@ -212,6 +212,9 @@ enum MinimalZipReader {
             guard size32 != sentinel32, offset32 != sentinel32 else {
                 throw ZipError.invalidZip64Structure
             }
+            guard diskNumber == 0, centralDirectoryDisk == 0 else {
+                throw ZipError.multiDiskArchive
+            }
             return EndOfCentralDirectory(
                 centralDirectoryOffset: Int(offset32),
                 centralDirectorySize: Int(size32)
