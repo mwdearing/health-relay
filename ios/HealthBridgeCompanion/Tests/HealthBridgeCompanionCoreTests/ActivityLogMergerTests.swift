@@ -107,3 +107,30 @@ final class ActivityLogRowIdentityTests: XCTestCase {
         XCTAssertTrue(ActivityLogMerger.identifiedRows(from: []).isEmpty)
     }
 }
+
+final class ActivityLogExportTextTests: XCTestCase {
+    func testExportIsTheDisplayedRowsOldestFirstOnePerLine() {
+        let entries = ["08:00 — Steps: Sync in progress", "08:01 — Steps: Sync progress saved"]
+        XCTAssertEqual(
+            ActivityLogMerger.exportText(from: entries),
+            "08:00 — Steps: Sync in progress\n08:01 — Steps: Sync progress saved"
+        )
+    }
+
+    func testEmptyLogExportsEmptyText() {
+        XCTAssertEqual(ActivityLogMerger.exportText(from: []), "")
+    }
+
+    func testRowsCarryingPairingMaterialAreNeverExported() {
+        let entries = [
+            "08:00 — Sync started",
+            "08:01 — opened healthrelay://pair?payload=AAAA",
+            "08:02 — key hbi_synthetic_secret leaked",
+            "08:03 — Sync finished",
+        ]
+        XCTAssertEqual(
+            ActivityLogMerger.exportText(from: entries),
+            "08:00 — Sync started\n08:03 — Sync finished"
+        )
+    }
+}

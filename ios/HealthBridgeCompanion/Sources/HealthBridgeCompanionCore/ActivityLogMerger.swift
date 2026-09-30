@@ -99,4 +99,21 @@ public enum ActivityLogMerger {
             return ActivityLogRow(id: "\(occurrence)|\(entry)", text: entry)
         }
     }
+
+    /// Plain text for Share or Copy All: exactly the rows the log shows, oldest first, one per
+    /// line. A row that carries a setup link or key material is left out instead of exported.
+    public static func exportText(from entries: [String]) -> String {
+        entries
+            .filter { !containsPairingMaterial($0) }
+            .joined(separator: "\n")
+    }
+
+    private static let pairingMarkers = [
+        "healthrelay://", "healthbridge://", "payload=", "hbi_", "hb_pairing", "bearer ",
+    ]
+
+    private static func containsPairingMaterial(_ entry: String) -> Bool {
+        let lowered = entry.lowercased()
+        return pairingMarkers.contains { lowered.contains($0) }
+    }
 }

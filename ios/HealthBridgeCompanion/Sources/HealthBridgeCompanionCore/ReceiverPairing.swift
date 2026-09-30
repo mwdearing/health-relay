@@ -248,6 +248,44 @@ public struct ReceiverManualPairing: Equatable, Sendable {
     }
 }
 
+/// Groups an invitation code as it is typed or pasted. The output is the same canonical
+/// `ABCDE-FGHJK-MNPQR` form `ReceiverManualPairing` produces, so a complete code is accepted
+/// exactly as shown. Characters outside the code alphabet are kept (not silently dropped) so
+/// the existing validation still reports a wrong code.
+public enum InvitationCodeFormatter {
+    private static let groupSize = 5
+
+    public static func formatted(_ input: String) -> String {
+        let compact = input
+            .uppercased()
+            .filter { !$0.isWhitespace && $0 != "-" }
+        var grouped = ""
+        for (index, character) in compact.enumerated() {
+            if index > 0 && index % groupSize == 0 {
+                grouped.append("-")
+            }
+            grouped.append(character)
+        }
+        return grouped
+    }
+}
+
+/// What a scanned QR string should be fed into. Both routes are the existing import paths;
+/// this only picks between the deep-link route and the pasted-text route.
+public enum PairingQRPayload: Equatable, Sendable {
+    case deepLink(URL)
+    case text(String)
+
+    public static func classify(_ scanned: String) -> PairingQRPayload {
+        let trimmed = scanned.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = URL(string: trimmed),
+           (try? ReceiverPairingMaterial(deepLink: url)) != nil {
+            return .deepLink(url)
+        }
+        return .text(trimmed)
+    }
+}
+
 private enum PairingLinkDecoder {
     static func pairingURL(from string: String) -> URL? {
         guard let url = URL(string: string), isSupportedPairingURL(url) else {
