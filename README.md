@@ -165,12 +165,13 @@ The Beta applies application-layer encryption and signatures before an envelope 
 
 ## Use it with Hermes Agent
 
-If your agent is [Hermes Agent](https://github.com/NousResearch/hermes-agent), two companion plugins connect it to this receiver. Both are separate repositories, both are read-only or local-only, and neither is required to use HealthRelay.
+If your agent is [Hermes Agent](https://github.com/NousResearch/hermes-agent), companion plugins connect it to this receiver. They are separate repositories, read-only or local-only, and none is required to use HealthRelay. The [Full setup guide](docs/full-setup.md) walks through the whole chain in order, with a check after each step.
 
 | Plugin | What it gives your agent |
 | --- | --- |
 | [**hermes-healthrelay**](https://github.com/mwdearing/hermes-healthrelay) | Read-only MCP access to your receiver database (nine tools: sync status, synced metrics, time series, daily, sleep and workout summaries, sources) plus skills for setup, review and troubleshooting |
 | [**hermes-health-insights**](https://github.com/mwdearing/hermes-health-insights) | A local analysis tool and skills: weekly trends, rule-based concern checks, nutrition against Dietary Reference Intakes, an energy target and lab results |
+| [**hermes-medlog**](https://github.com/mwdearing/hermes-medlog) | A deterministic medication log with skills: record doses, list what is missing, import dose events from this receiver (never infers a dose or gives advice) |
 
 ```bash
 hermes plugins install mwdearing/hermes-healthrelay --no-enable
@@ -251,7 +252,7 @@ The app ships as an unsigned IPA on GitHub Releases (`app-v<marketing-version>` 
 
 | Use HealthRelay | Reference | Contribute |
 | --- | --- | --- |
-| [Setup](docs/setup.md) | [Architecture and trust boundaries](docs/architecture.md) | [Contribution ideas](docs/contribution-ideas.md) |
+| [Setup](docs/setup.md), [Full setup with Hermes](docs/full-setup.md) | [Architecture and trust boundaries](docs/architecture.md) | [Contribution ideas](docs/contribution-ideas.md) |
 | [Build the iOS app](docs/self-build.md) | [Batch contract](docs/reference/batch-v1.md) | [Maintainer workflow](docs/maintainer-guide.md) |
 | [Supported health data](docs/supported-health-data.md) | [SQLite schema](docs/reference/sqlite-v1.md) | [Contributing](CONTRIBUTING.md) |
 | [Support routes](SUPPORT.md) | [Brand guide](docs/brand.md) | [Security policy](SECURITY.md) |
