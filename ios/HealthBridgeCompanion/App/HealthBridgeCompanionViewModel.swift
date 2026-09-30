@@ -2928,7 +2928,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
 
     func automaticSyncSelectedEligibleTypeCodes() -> [String] {
         #if canImport(HealthKit)
-        return HealthKitReadTypeCatalog.availableTypeCodes(
+        return HealthKitReadTypeCatalog.availableLaneTypeCodes(
             forTypeCodes: HealthBridgeBackgroundSync.supportedAutomaticLaneTypeCodes
         )
         #else
@@ -2981,7 +2981,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             succeeded: false,
             summary: "HealthKit background delivery registration requested for \(expectedTypeCount) type(s); active_observers=\(automaticSyncActiveObserverCount)."
         )
-        backgroundSyncStatus = "Automatic sync scope includes steps, workouts, sleep, ECG recordings, and \(availableQuantityTypeCount) runtime-available supported quantity types. Background delivery registration is in progress; iOS still decides timing."
+        backgroundSyncStatus = "Automatic sync scope includes steps, workouts, sleep, medication doses (once you allow HealthRelay to read them), ECG recordings, and \(availableQuantityTypeCount) runtime-available supported quantity types. Background delivery registration is in progress; iOS still decides timing."
         #endif
     }
 
@@ -3664,6 +3664,11 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             )
         case HealthBridgeHealthType.sleepAnalysis.typeCode:
             _ = await syncRecentSleepSessions(
+                executionMode: .automatic,
+                pendingGenerationRetirements: retirementGenerations
+            )
+        case HealthBridgeHealthType.medicationDoseEvents.typeCode:
+            _ = await syncRecentMedicationDoseEvents(
                 executionMode: .automatic,
                 pendingGenerationRetirements: retirementGenerations
             )
@@ -4645,51 +4650,71 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         #endif
     }
 
-    /// HealthRelay addition: foreground medication dose event lane (iOS 26+; per-object authorization).
-    func syncRecentMedicationDoseEvents() async {
+    /// HealthRelay addition: medication dose event lane (iOS 26+; per-object authorization).
+    ///
+    /// Foreground (Sync Now) asks for per-object read access, which can show UI. The automatic
+    /// lane never does: HealthKit cannot report read access, so it queries directly and uploads
+    /// only when it finds doses (see `MedicationDoseLanePolicy`).
+    @discardableResult
+    func syncRecentMedicationDoseEvents(
+        executionMode: HealthBridgeSyncExecutionMode = .foreground,
+        pendingGenerationRetirements: [String: Int] = [:]
+    ) async -> Bool {
         guard let url = URL(string: receiverURLString) else {
+            noteBackgroundAutomaticSyncFailure(.unknown, executionMode: executionMode)
             statusIsError = true
             statusMessage = "[Medication] Bridge URL is invalid."
-            return
+            return false
         }
 
         #if canImport(HealthKit)
         guard #available(iOS 26.0, *) else {
             statusIsError = false
             statusMessage = "[Medication] Medication dose events need iOS 26 or later. Skipped."
-            return
+            return false
         }
+        var failureStage = AutomaticSyncDiagnosticFailureStage.read
         do {
             statusIsError = false
             statusMessage = "[Medication] Reading medication dose events from HealthKit..."
             let reader = HealthKitMedicationDoseEventReader()
-            guard try await reader.requestPerObjectReadAuthorization() else {
-                statusIsError = false
-                statusMessage = "[Medication] Medication access was not granted. Skipped."
-                return
+            if MedicationDoseLanePolicy.requestsPerObjectAuthorization(for: executionMode) {
+                guard try await reader.requestPerObjectReadAuthorization() else {
+                    statusIsError = false
+                    statusMessage = "[Medication] Medication access was not granted. Skipped."
+                    return false
+                }
             }
             let now = Date()
             let calendar = utcCalendar()
             let end = now
-            // First sync honours the user's Apple Health history window; later syncs continue from the cursor.
+            // First foreground sync honours the user's Apple Health history window; later syncs
+            // continue from the cursor. The automatic lane replays the same 3-day window.
             let fallbackStart = healthHistoryDepth.sanitized.lowerBoundDate(now: now, calendar: calendar)
                 ?? Date.distantPast
+            failureStage = .store
             let (cursorStore, progressScope) = try captureReceiverSyncProgressScope()
             let receiverBindingID = progressScope.receiverBindingID
             let cursorValue = try cursorStore.cursorValue(
                 receiverBindingID: receiverBindingID,
                 sourceKey: "apple_health.phone",
-                cursorKind: MedicationDoseEventSyncBatchFactory.foregroundCursorKind
+                cursorKind: MedicationDoseLanePolicy.cursorKind
             )
-            let start = ForegroundSyncWindowPolicy.windowStart(
-                fallbackStart: fallbackStart,
+            let start = MedicationDoseLanePolicy.windowStart(
+                mode: executionMode,
+                historyFallbackStart: fallbackStart,
                 end: end,
                 cursorValue: cursorValue,
-                replayOverlapDays: 3,
-                alignToStartOfDay: false,
                 calendar: calendar
             )
+            failureStage = .read
+            noteAutomaticSyncQueryStarted(executionMode: executionMode)
             let events = try await reader.readMedicationDoseEvents(start: start, end: end)
+            noteAutomaticSyncQueryResult(
+                hasRecords: !events.isEmpty,
+                newestSampleEnd: events.map(\.start).max(),
+                executionMode: executionMode
+            )
             let batch = MedicationDoseEventSyncBatchFactory.makeMedicationDoseEventBatch(
                 events: events,
                 windowStart: start,
@@ -4697,34 +4722,44 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 generatedAt: now
             )
 
-            guard ForegroundSyncUploadPolicy.shouldUpload(batch) else {
+            guard MedicationDoseLanePolicy.shouldUpload(batch, mode: executionMode) else {
                 statusIsError = false
-                statusMessage = "[Medication] HealthKit returned no medication sync payload for the selected sync window. Nothing sent."
-                return
+                statusMessage = executionMode == .automatic
+                    ? "[Medication] No new medication dose events (or no read access yet). Nothing sent."
+                    : "[Medication] HealthKit returned no medication sync payload for the selected sync window. Nothing sent."
+                return false
             }
 
             let uploadDescription = batch.medicationDoseEvents.isEmpty
                 ? "medication cursor-only sync"
                 : "\(batch.medicationDoseEvents.count) medication dose events"
             statusMessage = "[Medication] Uploading \(uploadDescription) to \(url.host() ?? url.absoluteString)..."
+            failureStage = .encoding
             let data = try encoder.encode(batch)
             let cursor = batch.sync.cursors.first(where: {
                 $0.sourceKey == "apple_health.phone"
-                    && $0.cursorKind == MedicationDoseEventSyncBatchFactory.foregroundCursorKind
+                    && $0.cursorKind == MedicationDoseLanePolicy.cursorKind
             })
-            let cursorCheckpoint = cursor.map {
+            let cursorCheckpoint = MedicationDoseLanePolicy.shouldPersistCursor(
+                mode: executionMode,
+                cursorValue: cursorValue,
+                end: end
+            ) ? cursor.map {
                 FileOutboxCursorCheckpoint(
                     receiverIdentity: receiverBindingID,
                     sourceKey: $0.sourceKey,
                     cursorKind: $0.cursorKind,
                     cursorValue: $0.cursorValue
                 )
-            }
+            } : nil
+            failureStage = .transport
             try requireCurrentReceiverSyncProgressScope(progressScope)
             let deliveryResult = try await uploadPayloadsWithOutbox(
                 [data],
                 to: url,
-                cursorCheckpoint: cursorCheckpoint
+                cursorCheckpoint: cursorCheckpoint,
+                executionMode: executionMode,
+                pendingGenerationRetirements: pendingGenerationRetirements
             )
             try requireCurrentReceiverSyncProgressScope(
                 progressScope,
@@ -4741,13 +4776,28 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 queuedDescription: "Queued \(uploadDescription) behind earlier pending upload(s)",
                 outboxNotice: outboxNotice
             )
+            return !batch.medicationDoseEvents.isEmpty
         } catch {
+            noteBackgroundAutomaticSyncFailure(
+                stage: failureStage,
+                error: error,
+                executionMode: executionMode
+            )
             statusIsError = true
             statusMessage = "[Medication] Medication sync failed: \(describe(error))"
+            return false
         }
         #else
+        noteBackgroundAutomaticSyncFailure(
+            AutomaticSyncDiagnosticFailure(
+                stage: .read,
+                category: .operationFailed
+            ),
+            executionMode: executionMode
+        )
         statusIsError = true
         statusMessage = "[Medication] HealthKit is not available on this platform."
+        return false
         #endif
     }
 

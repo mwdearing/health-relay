@@ -724,8 +724,11 @@ final class BackgroundSyncTests: XCTestCase {
             [HKObjectType.medicationDoseEventType().identifier]
         )
         XCTAssertEqual(
-            HealthKitReadTypeCatalog.availableTypeCodes(forTypeCodes: ["medication_dose_event"]),
+            HealthKitReadTypeCatalog.availableLaneTypeCodes(forTypeCodes: ["medication_dose_event"]),
             ["medication_dose_event"]
+        )
+        XCTAssertTrue(
+            HealthKitReadTypeCatalog.availableTypeCodes(forTypeCodes: ["medication_dose_event"]).isEmpty
         )
         // requestAuthorization throws for per-object types: they must stay out of these sets.
         XCTAssertTrue(HealthKitReadTypeCatalog.objectTypes(forTypeCodes: ["medication_dose_event"]).isEmpty)

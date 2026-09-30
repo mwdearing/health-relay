@@ -6,6 +6,7 @@ public enum AutomaticSyncDiagnosticLane: String, Codable, Equatable, Hashable, S
     case workouts
     case sleep
     case quantity
+    case medication
     case mixed
     case noWork = "no_work"
 
@@ -18,6 +19,8 @@ public enum AutomaticSyncDiagnosticLane: String, Codable, Equatable, Hashable, S
             self = .workouts
         case HealthBridgeHealthType.sleepAnalysis.typeCode:
             self = .sleep
+        case HealthBridgeHealthType.medicationDoseEvents.typeCode:
+            self = .medication
         case let typeCode where HealthBridgeBackgroundSync.dailyActivityTypeCodes.contains(typeCode):
             self = .dailyActivity
         default:
@@ -31,7 +34,7 @@ public enum AutomaticSyncDiagnosticLane: String, Codable, Equatable, Hashable, S
             return "daily activity"
         case .noWork:
             return "none"
-        case .steps, .workouts, .sleep, .quantity, .mixed:
+        case .steps, .workouts, .sleep, .quantity, .medication, .mixed:
             return rawValue
         }
     }
