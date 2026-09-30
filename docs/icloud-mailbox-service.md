@@ -24,6 +24,9 @@ that developer-no-access boundary remains true.
 
 ## Install and verify the signed helper
 
+> [!WARNING]
+> The release assets below are published by the upstream Apple Health AI Bridge project, not by HealthRelay. Its wheel has the same package name as this repository's receiver, so `uv tool install` of that wheel replaces the HealthRelay receiver with the upstream one (without the lab results migrations and the source-binding fix). HealthRelay does not publish these assets; use the Direct route unless you accept running the upstream receiver.
+
 Use the Receiver/CLI `1.1.1` GitHub Release assets. Download these files with a
 browser into one private local directory; Health Bridge does not silently
 download them:

@@ -12,7 +12,7 @@ body:
         - MCP client setup
         - Local or private receiver setup
         - iOS self-build
-        - IPA installation or self-build
+        - Unsigned IPA download, signing or installation
         - Pairing or setup page
         - Apple Health permission
         - Foreground sync

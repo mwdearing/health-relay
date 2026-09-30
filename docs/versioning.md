@@ -6,7 +6,7 @@ HealthRelay contains independently versioned components. Always include the comp
 
 | Component | Version source | Distribution |
 | --- | --- | --- |
-| iOS Companion (HealthRelay app) | Xcode `MARKETING_VERSION`; build number = the `Build unsigned IPA` workflow run number | Unsigned IPA on GitHub Releases, tag `app-v<marketing-version>.<run>` (for example `app-v1.2.23`). Sign it with your own certificate, or self-build ([self-build guide](self-build.md)). |
+| iOS Companion (HealthRelay app) | Xcode `MARKETING_VERSION`; build number = the `Build unsigned IPA` workflow run number | Unsigned IPA on GitHub Releases, tag `app-v<marketing-version>`. The default marketing version is `1.2.<run>`, so tags look like `app-v1.2.23`; a maintainer may supply a different marketing version when starting the build, and the tag follows it. Sign it with your own certificate, or self-build ([self-build guide](self-build.md)). |
 | Receiver/CLI | `version` in `pyproject.toml` | Installed from this repository's `main`: `uv tool install "git+https://github.com/mwdearing/health-relay.git"`; update with `uv tool upgrade apple-health-ai-bridge`. |
 | Batch Protocol | `health_bridge.batch.v1` | Wire contract only; see below. |
 
@@ -16,9 +16,13 @@ This fork does not push `receiver-v*` or `ios-v*` tags. Those tags trigger the u
 
 ### Upstream bookkeeping (not used by this fork)
 
-[`component-versions.json`](../component-versions.json) and the sections below (marked “inherited from upstream”) describe Apple Health AI Bridge's own release process: signed `receiver-v*` tags, `ios-v*` checkpoints and App Store distribution gates. The file is left unchanged because release tooling and several guardrail tests read it; its `receiver-v1.1.1` tag and iOS build numbers are upstream identifiers, not HealthRelay release numbers.
+[`component-versions.json`](../component-versions.json) and the sections below (marked “inherited from upstream”) describe Apple Health AI Bridge's own release process: signed `receiver-v*` tags, `ios-v*` checkpoints and App Store distribution gates. The `receiver-v1.1.1` tag and iOS build numbers in it are upstream identifiers, not HealthRelay release numbers.
 
-## Inherited from upstream: compatibility model
+## Inherited from upstream
+
+Everything below this heading describes upstream's process and is not used by HealthRelay. Do not create `receiver-v*` or `ios-v*` tags from it.
+
+### Compatibility model
 
 | Surface | Current version | Public identifier |
 | --- | --- | --- |
@@ -28,9 +32,9 @@ This fork does not push `receiver-v*` or `ios-v*` tags. Those tags trigger the u
 
 The authoritative machine-readable copy is [`component-versions.json`](../component-versions.json). It declares `release_scope` explicitly rather than deriving scope from equal version numbers. Release validation compares the index with `pyproject.toml`, the Xcode project settings, and the canonical batch fixture. For a tagged release, it also requires the tag target to equal the trusted default-main commit and compares the candidate with that commit’s first-parent baseline. A stale branch or regressing Receiver/CLI, iOS Companion, or Batch Protocol value therefore fails before publication.
 
-## Version surfaces
+### Version surfaces
 
-### Receiver/CLI
+#### Receiver/CLI
 
 The Python package, receiver service, CLI, and MCP server share one semantic version from `pyproject.toml`. Receiver-only fixes may advance this version without changing the iOS app.
 
@@ -44,7 +48,7 @@ receiver-v1.0.2
 
 Release notes use the same tag in their filename and install examples.
 
-### iOS Companion
+#### iOS Companion
 
 The user-visible app version is Xcode `MARKETING_VERSION`. App Store Connect additionally requires a monotonically increasing `CURRENT_PROJECT_VERSION` build number. Display both when identifying an installed build:
 
@@ -60,11 +64,11 @@ ios-v1.1.1-build.50
 
 An iOS tag does not publish Receiver/CLI artifacts. App Store release gates remain authoritative for distributed app builds.
 
-### Batch Protocol
+#### Batch Protocol
 
 Batch Protocol versions describe the wire contract, not either product artifact. A compatible Receiver/CLI or iOS Companion patch must not bump the protocol merely to align numbers. Breaking protocol changes require a new schema identifier/version and an explicit compatibility or migration policy.
 
-## Compatibility policy
+### Compatibility policy
 
 - Do not bump an unchanged component merely to make the numbers match.
 - Future release notes must state the exact compatible iOS Companion version/build and Batch Protocol schema identifier/version.
@@ -78,7 +82,7 @@ Batch Protocol versions describe the wire contract, not either product artifact.
 - Existing `v1.0.0` and `v1.0.1` tags remain immutable. They are historical receiver release tags and are not renamed.
 - Future Receiver/CLI tags use `receiver-v<semver>`; future iOS source/distribution tags use `ios-v<marketing-version>-build.<build>`.
 
-## Release presentation
+### Release presentation
 
 Use labels such as:
 
