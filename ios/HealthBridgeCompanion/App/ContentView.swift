@@ -112,6 +112,16 @@ struct ContentView: View {
                     .font(.subheadline)
                     .foregroundStyle(.relaySecondaryText)
                     .fixedSize(horizontal: false, vertical: true)
+                if let lastSyncedAt = viewModel.lastSuccessfulSyncAt {
+                    // Re-evaluated every minute so the relative time does not go stale.
+                    TimelineView(.everyMinute) { context in
+                        if let line = LastSyncedFormatter.line(lastSyncedAt: lastSyncedAt, now: context.date) {
+                            Text(line)
+                                .font(.footnote)
+                                .foregroundStyle(.relaySecondaryText)
+                        }
+                    }
+                }
             }
             Spacer(minLength: 0)
         }
@@ -350,7 +360,7 @@ struct ContentView: View {
                 title: "Sync Now",
                 subtitle: syncActionSubtitle,
                 systemImage: viewModel.syncPresentationIsActive ? "arrow.triangle.2.circlepath" : "arrow.up.arrow.down.circle.fill",
-                isDisabled: !viewModel.canRunPrimaryAction,
+                isDisabled: !viewModel.canRunPrimaryAction || viewModel.isReadingExport,
                 isLoading: viewModel.syncPresentationIsActive
             ) {
                 Task { await viewModel.performPrimaryAction() }
@@ -400,12 +410,41 @@ struct ContentView: View {
             }
             .relaySecondaryButtonStyle()
             .controlSize(.large)
-            .disabled(!viewModel.canRunPrimaryAction)
+            .disabled(!viewModel.canRunPrimaryAction || viewModel.isReadingExport)
 
-            if !viewModel.canRunPrimaryAction {
+            // Only explain the disabled button when a sync is the reason; not while unpaired.
+            if viewModel.syncPresentationIsActive && !viewModel.isReadingExport {
                 Text("Available when sync finishes.")
                     .font(.footnote)
                     .foregroundStyle(.relaySecondaryText)
+            }
+
+            if viewModel.isReadingExport {
+                HStack(spacing: 12) {
+                    ProgressView()
+                    Text("Reading export\u{2026}")
+                        .font(.footnote)
+                        .foregroundStyle(.relaySecondaryText)
+                    Spacer(minLength: 8)
+                    Button("Cancel") {
+                        viewModel.cancelAppleHealthExportRead()
+                    }
+                    .font(.footnote.weight(.semibold))
+                }
+                .accessibilityElement(children: .contain)
+            }
+
+            if let notice = viewModel.exportSendNotice {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Label(notice, systemImage: "checkmark.circle.fill")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.relaySecondaryText)
+                    Spacer(minLength: 8)
+                    Button("Dismiss") {
+                        viewModel.dismissExportSendNotice()
+                    }
+                    .font(.footnote)
+                }
             }
 
             // Visible, not just a VoiceOver hint: people need to know where the file comes from.
@@ -463,14 +502,10 @@ struct ContentView: View {
     }
 
     private var syncErrorTitle: String {
-        let message = viewModel.statusMessage.lowercased()
-        if message.contains("sync") || message.contains("queued upload") || message.contains("outbox") {
-            return "Sync Failed"
-        }
-        if message.contains("connection") || message.contains("bridge") || message.contains("server") || message.contains("receiver") {
-            return "Connection Failed"
-        }
-        return "Needs Attention"
+        CompanionStatusPresentation.syncErrorTitle(
+            status: viewModel.status,
+            message: viewModel.statusMessage
+        )
     }
 
     private var statusTone: StatusTone {
@@ -603,39 +638,24 @@ private struct ReceiverSettingsView: View {
     }
 
     private var connectionIsReachable: Bool {
-        let message = viewModel.statusMessage.lowercased()
-        return !viewModel.statusIsError
-            && (message.contains("connection check passed")
-                || message.contains("server connected")
-                || message.contains("local bridge verified")
-                || message.contains("connected to local bridge"))
+        CompanionStatusPresentation.connectionIsReachable(
+            status: viewModel.status,
+            isError: viewModel.statusIsError
+        )
     }
 
     private var mailboxFolderIsReady: Bool {
-        !viewModel.statusIsError
-            && viewModel.usesMailboxTransport
-            && viewModel.statusMessage.contains("Mailbox folder is ready")
+        CompanionStatusPresentation.mailboxFolderIsReady(
+            status: viewModel.status,
+            isError: viewModel.statusIsError,
+            usesMailbox: viewModel.usesMailboxTransport
+        )
     }
 
     private var connectionNotice: String {
-        let rawMessage = viewModel.statusMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-        let message = rawMessage.lowercased()
-        guard !rawMessage.isEmpty else { return "" }
-        guard !message.contains("permission"), !message.contains("apple health") else { return "" }
-        guard message.contains("connection")
-            || message.contains("receiver")
-            || message.contains("bridge url")
-            || message.contains("local bridge")
-            || message.contains("your server")
-            || message.contains("setup link")
-            || message.contains("disconnect")
-            || message.contains("queued upload")
-            || message.contains("private sync")
-            || message.contains("mailbox")
-        else {
-            return "" }
-        return CompanionPrimaryStatusMessage.sanitized(
-            from: rawMessage,
+        CompanionStatusPresentation.connectionNotice(
+            status: viewModel.status,
+            message: viewModel.statusMessage,
             isError: viewModel.statusIsError
         )
     }
@@ -939,8 +959,8 @@ private struct ActivityLogView: View {
                     .font(.footnote)
                     .foregroundStyle(.relaySecondaryText)
             } else {
-                ForEach(Array(viewModel.activityLogMessages.enumerated()), id: \.offset) { _, message in
-                    Text(message)
+                ForEach(ActivityLogMerger.identifiedRows(from: viewModel.activityLogMessages)) { row in
+                    Text(row.text)
                         .font(.footnote)
                         .textSelection(.enabled)
                 }
