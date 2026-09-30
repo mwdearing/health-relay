@@ -47,6 +47,8 @@
 	</dict>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>HealthRelay uses the camera only to scan the setup QR code on this device. Nothing is stored or sent.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>HealthRelay reads the Apple Health data you choose and sends it only to your own receiver. Nothing is sent to the developer.</string>
 	<key>NSHealthUpdateUsageDescription</key>
