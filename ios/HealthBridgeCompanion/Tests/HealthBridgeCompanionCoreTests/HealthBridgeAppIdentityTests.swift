@@ -46,4 +46,49 @@ final class HealthBridgeAppIdentityTests: XCTestCase {
             "\(bundleIdentifier).receiver"
         )
     }
+
+    func testAppRefreshIdentifierPrefersInfoPlistPermittedIdentifier() {
+        XCTAssertEqual(
+            HealthBridgeAppIdentity.appRefreshIdentifier(
+                permittedIdentifiers: ["com.mwdearing.HealthRelay.refresh"],
+                bundleIdentifier: "team.example.Custom"
+            ),
+            "com.mwdearing.HealthRelay.refresh"
+        )
+    }
+
+    func testAppRefreshIdentifierSkipsBlankPermittedIdentifiers() {
+        XCTAssertEqual(
+            HealthBridgeAppIdentity.appRefreshIdentifier(
+                permittedIdentifiers: ["  ", "", " a.b.refresh "],
+                bundleIdentifier: "team.example.Custom"
+            ),
+            "a.b.refresh"
+        )
+    }
+
+    func testAppRefreshIdentifierFallsBackToBundleIdentifier() {
+        for permitted in [nil, [], ["", "   "]] as [[String]?] {
+            XCTAssertEqual(
+                HealthBridgeAppIdentity.appRefreshIdentifier(
+                    permittedIdentifiers: permitted,
+                    bundleIdentifier: "team.example.Custom"
+                ),
+                "team.example.Custom.refresh"
+            )
+        }
+    }
+
+    func testAppRefreshIdentifierFromBundleMatchesPermittedIdentifiers() {
+        let permitted = Bundle.main.object(
+            forInfoDictionaryKey: HealthBridgeAppIdentity.permittedTaskIdentifiersInfoKey
+        ) as? [String]
+        XCTAssertEqual(
+            HealthBridgeAppIdentity.appRefreshIdentifier,
+            HealthBridgeAppIdentity.appRefreshIdentifier(
+                permittedIdentifiers: permitted,
+                bundleIdentifier: HealthBridgeAppIdentity.bundleIdentifier
+            )
+        )
+    }
 }
