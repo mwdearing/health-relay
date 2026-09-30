@@ -20,8 +20,32 @@ public enum HealthBridgeAppIdentity {
         return candidate
     }
 
+    public static let permittedTaskIdentifiersInfoKey = "BGTaskSchedulerPermittedIdentifiers"
+
+    /// The refresh task id the system permits. It is read from Info.plist so
+    /// it matches what was built into the IPA even if a signer later changed
+    /// the bundle identifier.
     public static var appRefreshIdentifier: String {
-        "\(bundleIdentifier).refresh"
+        appRefreshIdentifier(from: .main)
+    }
+
+    public static func appRefreshIdentifier(from bundle: Bundle) -> String {
+        appRefreshIdentifier(
+            permittedIdentifiers: bundle.object(
+                forInfoDictionaryKey: permittedTaskIdentifiersInfoKey
+            ) as? [String],
+            bundleIdentifier: bundleIdentifier(from: bundle)
+        )
+    }
+
+    public static func appRefreshIdentifier(
+        permittedIdentifiers: [String]?,
+        bundleIdentifier: String
+    ) -> String {
+        let permitted = (permittedIdentifiers ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+        return permitted ?? "\(bundleIdentifier).refresh"
     }
 
     public static var backgroundUploadSessionIdentifier: String {
