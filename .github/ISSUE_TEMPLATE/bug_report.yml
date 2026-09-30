@@ -62,12 +62,12 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: Include OS, Python/uv version, and iOS/Xcode/TestFlight details when relevant.
+      description: Include OS, Python/uv version, and iOS/Xcode/app build (IPA or self-build) details when relevant.
       placeholder: |
         OS:
         Python:
         uv:
-        iOS/Xcode/TestFlight:
+        iOS/Xcode/app build (IPA or self-build):
     validations:
       required: true
 

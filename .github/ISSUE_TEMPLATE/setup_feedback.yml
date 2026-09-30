@@ -1,5 +1,5 @@
 name: Setup feedback
-description: Report friction in quickstart, MCP, receiver, pairing, TestFlight, or self-build flows
+description: Report friction in quickstart, MCP, receiver, pairing, IPA install, or self-build flows
 title: "[Setup]: "
 labels: ["question"]
 body:
@@ -12,7 +12,7 @@ body:
         - MCP client setup
         - Local or private receiver setup
         - iOS self-build
-        - TestFlight installation
+        - Unsigned IPA download, signing or installation
         - Pairing or setup page
         - Apple Health permission
         - Foreground sync
@@ -32,7 +32,7 @@ body:
         uv:
         health-bridge version:
         MCP client:
-        iPhone/iOS/Xcode/TestFlight:
+        iPhone/iOS/Xcode/app build (IPA or self-build):
     validations:
       required: true
 

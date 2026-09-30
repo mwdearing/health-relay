@@ -114,8 +114,8 @@ The MCP surface is intentionally read-only. It exposes fixed tools for status, c
 Agents can reduce setup burden, but they cannot fully remove Apple platform and local-network constraints. These cases may still require user action or a future product surface:
 
 - the user only has an iPhone and no always-on computer for a receiver;
-- Apple Developer Program enrollment and App Store Connect approval;
-- physical TestFlight install, Health permission, and local network permission taps;
+- an Apple Developer account or certificate to sign the unsigned IPA (not needed for a self-build with a free Apple ID);
+- physical app install (unsigned IPA signed with your own certificate, or a self-build), Health permission, and local network permission taps;
 - Mac/Xcode signing or keychain approval that requires GUI interaction;
 - sleeping laptops, firewalls, router rules, corporate networks, or VPN/private-network misconfiguration;
 - receiver host changes after pairing;
@@ -124,6 +124,6 @@ Agents can reduce setup burden, but they cannot fully remove Apple platform and 
 
 ## Product implication
 
-Near-term accessibility should focus on TestFlight plus clear agent-assisted setup docs. A desktop/tray receiver app should be reconsidered after TestFlight feedback shows repeated receiver/MCP setup failures that local agents cannot solve.
+Near-term accessibility should focus on the unsigned IPA from GitHub Releases plus clear agent-assisted setup docs. A desktop/tray receiver app should be reconsidered after early user feedback shows repeated receiver/MCP setup failures that local agents cannot solve.
 
 Hosted relay, manual export import, and Shortcuts fallback remain outside near-term scope unless the project explicitly changes direction.
