@@ -240,6 +240,23 @@ def test_database_error_names_locked_snapshot(tmp_path: Path) -> None:
     )
 
 
+def test_database_error_names_non_private_lock_files(tmp_path: Path) -> None:
+    db_path = initialized_fixture_db(tmp_path)
+    lock_files = sorted(db_path.parent.glob(f"{db_path.name}.*.lock"))
+    assert lock_files, "the fixture database should have lock files"
+    for lock_file in lock_files:
+        lock_file.chmod(0o644)
+
+    error = _error(db_path, "get_bridge_status", {})
+
+    assert error.code == -32000
+    assert error.message == (
+        "HealthRelay database could not be read "
+        "(lock files are not private: make them mode 0600). "
+        f"{DB_HINT}"
+    )
+
+
 def test_stdio_does_not_answer_requests_without_an_id(tmp_path: Path) -> None:
     db_path = initialized_fixture_db(tmp_path)
     stdin = (
