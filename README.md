@@ -87,6 +87,14 @@ HealthRelay is not on the App Store. Build it yourself, then sign and install it
 
 Either way, the IPA you get is **unsigned**. You must sign it with your own Apple developer certificate before it will install — the same way you'd sideload any other unsigned iOS app (a sideload signer such as AltStore or Sideloadly, or Xcode with your own team). HealthRelay has no App Store listing and the maintainer does not distribute a pre-signed build.
 
+#### Sign with an App ID that has HealthKit
+
+Sign with a **provisioning profile for an explicit App ID that has the HealthKit capability**, and keep that profile's HealthKit entitlement in the signed app. A wildcard App ID, or a signer that drops the entitlement, still installs the app, but Apple Health will not list it and its permissions cannot work.
+
+- **Set the bundle identifier to that App ID *before* the IPA is built.** Run the `Build unsigned IPA` workflow with your final App ID as the bundle identifier. The app derives its background-refresh task identifier (`<bundle id>.refresh`) from the bundle identifier at run time, while the permitted identifier is written into the IPA at build time, so an IPA that is only re-signed under a different bundle identifier will have background refresh requests rejected unless the signer also rewrites `BGTaskSchedulerPermittedIdentifiers` to match.
+- **Check the Health listing:** after installing, look under Health › Profile › Privacy › Apps. HealthRelay should already be listed; if it is not, open the app, allow Health access when asked, and look again. If it is still missing, the signature lacks the HealthKit entitlement: fix the profile and re-sign.
+- **Changing the bundle identifier later means pairing again,** because the receiver sees the new install as a new source.
+
 > [!TIP]
 > If you previously used the upstream Health Bridge for AI app, remove it before pairing HealthRelay so a scanned pairing QR code opens the right app.
 
