@@ -196,4 +196,103 @@ final class AppleHealthExportLabImporterTests: XCTestCase {
         XCTAssertEqual(stored.compressionMethod, 0)
         XCTAssertEqual(stored.compressedSize, stored.uncompressedSize)
     }
+
+    // MARK: - Honest failures
+
+    func testNonZipFileSurfacesTheZipReadersPlainMessage() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("not-a-zip.zip")
+        try Data("this is not a zip archive at all".utf8).write(to: url)
+
+        XCTAssertThrowsError(try AppleHealthExportLabImporter.importLabResults(fromZipAt: url)) { error in
+            guard case let AppleHealthExportLabImporter.ImportError.cannotOpenArchive(reason) = error else {
+                return XCTFail("unexpected error \(error)")
+            }
+            XCTAssertEqual(reason, MinimalZipReader.ZipError.endOfCentralDirectoryNotFound.errorDescription)
+            XCTAssertEqual(error.localizedDescription, reason)
+        }
+    }
+
+    func testEncryptedClinicalEntryIsCountedNotDropped() throws {
+        let zipURL = try writeSyntheticExportZip()
+        var bytes = try Data(contentsOf: zipURL)
+        // Set the "encrypted" general-purpose flag (bit 0) on the first central-directory
+        // header, which belongs to clinical-records/Observation-1.json.
+        let signature: [UInt8] = [0x50, 0x4B, 0x01, 0x02]
+        let headerStart = try XCTUnwrap(
+            (0 ..< bytes.count - 4).first { Array(bytes[$0 ..< $0 + 4]) == signature }
+        )
+        bytes[headerStart + 8] |= 0x01
+        try bytes.write(to: zipURL)
+
+        let summary = try AppleHealthExportLabImporter.importLabResults(fromZipAt: zipURL)
+
+        XCTAssertEqual(summary.unreadableEntryCount, 1)
+        XCTAssertEqual(summary.observationCount, 1)
+        XCTAssertEqual(summary.labResults.count, 1)
+        XCTAssertEqual(
+            summary.unreadableNotice,
+            "1 clinical record file could not be read (encrypted or damaged) and was skipped."
+        )
+    }
+
+    func testCleanArchiveReportsNoUnreadableEntries() throws {
+        let summary = try AppleHealthExportLabImporter.importLabResults(
+            fromZipAt: try writeSyntheticExportZip()
+        )
+
+        XCTAssertEqual(summary.unreadableEntryCount, 0)
+        XCTAssertNil(summary.unreadableNotice)
+    }
+
+    func testUnreadableNoticePluralizes() {
+        let summary = AppleHealthExportLabImporter.Summary(
+            labResults: [], observationCount: 0, skippedCount: 0, unreadableEntryCount: 3
+        )
+
+        XCTAssertEqual(
+            summary.unreadableNotice,
+            "3 clinical record files could not be read (encrypted or damaged) and were skipped."
+        )
+    }
+
+    func testCoordinatedReadMatchesPlainRead() throws {
+        let zipURL = try writeSyntheticExportZip()
+
+        let plain = try AppleHealthExportLabImporter.importLabResults(fromZipAt: zipURL)
+        let coordinated = try AppleHealthExportLabImporter.importLabResultsCoordinated(fromZipAt: zipURL)
+
+        XCTAssertEqual(coordinated, plain)
+    }
+
+    func testCoordinatedReadOfMissingFileThrows() {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("missing.zip")
+
+        XCTAssertThrowsError(try AppleHealthExportLabImporter.importLabResultsCoordinated(fromZipAt: missing))
+    }
+
+    func testCancelledTaskStopsTheImport() async throws {
+        let zipURL = try writeSyntheticExportZip()
+        let task = Task.detached { () -> Bool in
+            // Wait until the surrounding test has cancelled this task.
+            while !Task.isCancelled { await Task.yield() }
+            do {
+                _ = try AppleHealthExportLabImporter.importLabResults(fromZipAt: zipURL)
+                return false
+            } catch is CancellationError {
+                return true
+            } catch {
+                return false
+            }
+        }
+        task.cancel()
+
+        let sawCancellation = await task.value
+        XCTAssertTrue(sawCancellation)
+    }
 }

@@ -22,6 +22,9 @@ struct ExportImportReviewView: View {
                     if summary.skippedCount > 0 {
                         LabeledContent("Skipped (no usable value or date)", value: "\(summary.skippedCount)")
                     }
+                    if summary.unreadableEntryCount > 0 {
+                        LabeledContent("Could not be read (encrypted or damaged)", value: "\(summary.unreadableEntryCount)")
+                    }
                 } header: {
                     Text("Review")
                 } footer: {

@@ -629,3 +629,147 @@ public enum CompanionCopy {
         return "\(version) (\(build))"
     }
 }
+
+/// Persists the time of the last successful sync so the status card can show it after a
+/// relaunch. Presentation only: nothing here influences what or when anything is sent.
+public struct LastSyncedStore {
+    private static let key = "healthRelay.lastSuccessfulSyncAt"
+    private let userDefaults: UserDefaults
+
+    public init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+    }
+
+    public var lastSyncedAt: Date? {
+        guard let seconds = userDefaults.object(forKey: Self.key) as? Double else { return nil }
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    public func record(_ date: Date) {
+        userDefaults.set(date.timeIntervalSince1970, forKey: Self.key)
+    }
+
+    public func clear() {
+        userDefaults.removeObject(forKey: Self.key)
+    }
+}
+
+public enum LastSyncedFormatter {
+    /// "Last synced 5 minutes ago", or nil when nothing has synced yet.
+    public static func line(lastSyncedAt: Date?, now: Date) -> String? {
+        guard let lastSyncedAt else { return nil }
+        return "Last synced \(relative(from: lastSyncedAt, to: now))"
+    }
+
+    static func relative(from date: Date, to now: Date) -> String {
+        let seconds = now.timeIntervalSince(date)
+        // A clock that moved backwards must never produce a negative age.
+        if seconds < 60 { return "just now" }
+        let minutes = Int(seconds / 60)
+        if minutes < 60 { return "\(CompanionCopy.count(minutes, "minute")) ago" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(CompanionCopy.count(hours, "hour")) ago" }
+        let days = hours / 24
+        if days == 1 { return "yesterday" }
+        return "\(days) days ago"
+    }
+}
+
+public enum CompanionSyncArea: Equatable, Sendable {
+    case steps, dailyActivity, workouts, sleep, otherMetrics
+}
+
+/// The kind of the current status, set by the writers of sync and connection outcomes.
+/// `.notice` is every status that is not one of these: it carries no meaning of its own
+/// and is judged by its text (see `CompanionStatusPresentation`'s legacy rules).
+public enum CompanionStatus: Equatable, Sendable {
+    case notice
+    case connectionVerified
+    case mailboxFolderReady
+    case connectionFailed
+    case syncFailed(CompanionSyncArea)
+}
+
+/// The status card's and connection card's decisions about the current status text.
+/// These are the original substring rules, moved out of the views unchanged.
+public enum CompanionStatusPresentation {
+    public static func syncErrorTitle(message rawMessage: String) -> String {
+        let message = rawMessage.lowercased()
+        if message.contains("sync") || message.contains("queued upload") || message.contains("outbox") {
+            return "Sync Failed"
+        }
+        if message.contains("connection") || message.contains("bridge") || message.contains("server") || message.contains("receiver") {
+            return "Connection Failed"
+        }
+        return "Needs Attention"
+    }
+
+    public static func connectionIsReachable(message rawMessage: String, isError: Bool) -> Bool {
+        let message = rawMessage.lowercased()
+        return !isError
+            && (message.contains("connection check passed")
+                || message.contains("server connected")
+                || message.contains("local bridge verified")
+                || message.contains("connected to local bridge"))
+    }
+
+    public static func mailboxFolderIsReady(message: String, isError: Bool, usesMailbox: Bool) -> Bool {
+        !isError && usesMailbox && message.contains("Mailbox folder is ready")
+    }
+
+    public static func connectionNotice(message: String, isError: Bool) -> String {
+        let rawMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let message = rawMessage.lowercased()
+        guard !rawMessage.isEmpty else { return "" }
+        guard !message.contains("permission"), !message.contains("apple health") else { return "" }
+        guard message.contains("connection")
+            || message.contains("receiver")
+            || message.contains("bridge url")
+            || message.contains("local bridge")
+            || message.contains("your server")
+            || message.contains("setup link")
+            || message.contains("disconnect")
+            || message.contains("queued upload")
+            || message.contains("private sync")
+            || message.contains("mailbox")
+        else {
+            return ""
+        }
+        return CompanionPrimaryStatusMessage.sanitized(from: rawMessage, isError: isError)
+    }
+
+    // MARK: - Typed status
+
+    public static func syncErrorTitle(status: CompanionStatus, message: String) -> String {
+        switch status {
+        case .syncFailed:
+            return "Sync Failed"
+        case .connectionFailed:
+            return "Connection Failed"
+        case .notice, .connectionVerified, .mailboxFolderReady:
+            // The single remaining substring fallback for unclassified text.
+            return syncErrorTitle(message: message)
+        }
+    }
+
+    /// Typed only: no text is consulted. Every writer of a "connection verified" outcome
+    /// sets `.connectionVerified`.
+    public static func connectionIsReachable(status: CompanionStatus, isError: Bool) -> Bool {
+        !isError && status == .connectionVerified
+    }
+
+    public static func mailboxFolderIsReady(status: CompanionStatus, isError: Bool, usesMailbox: Bool) -> Bool {
+        !isError && usesMailbox && status == .mailboxFolderReady
+    }
+
+    public static func connectionNotice(status: CompanionStatus, message: String, isError: Bool) -> String {
+        switch status {
+        case .connectionVerified, .mailboxFolderReady, .connectionFailed:
+            let raw = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !raw.isEmpty else { return "" }
+            return CompanionPrimaryStatusMessage.sanitized(from: raw, isError: isError)
+        case .notice, .syncFailed:
+            return connectionNotice(message: message, isError: isError)
+        }
+    }
+}

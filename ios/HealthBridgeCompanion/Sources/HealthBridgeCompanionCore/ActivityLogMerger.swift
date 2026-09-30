@@ -5,6 +5,12 @@ public enum ActivityLogLaneUpdate: Equatable, Sendable {
     case finished
 }
 
+/// One displayed activity-log line with an identity that survives list changes.
+public struct ActivityLogRow: Equatable, Identifiable, Sendable {
+    public let id: String
+    public let text: String
+}
+
 public enum ActivityLogMerger {
     public static let entryLimit = 30
     private static let separator = " — "
@@ -79,5 +85,18 @@ public enum ActivityLogMerger {
 
     private static func trimmed(_ entries: [String], limit: Int) -> [String] {
         entries.count > limit ? Array(entries.suffix(limit)) : entries
+    }
+
+    /// Rows for display. The identity is the entry text plus how many identical entries
+    /// precede it, so it does not depend on list position: trimming the oldest entries or
+    /// collapsing the newest one never re-identifies the rows in between, and repeated
+    /// identical lines still get distinct ids.
+    public static func identifiedRows(from entries: [String]) -> [ActivityLogRow] {
+        var seen: [String: Int] = [:]
+        return entries.map { entry in
+            let occurrence = seen[entry, default: 0]
+            seen[entry] = occurrence + 1
+            return ActivityLogRow(id: "\(occurrence)|\(entry)", text: entry)
+        }
     }
 }

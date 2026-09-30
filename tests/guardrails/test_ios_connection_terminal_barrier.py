@@ -792,8 +792,18 @@ def test_disconnect_failure_is_presented_immediately_in_settings() -> None:
     assert '"Delete Queued Uploads (' not in body
     assert '.confirmationDialog("Reset private sync state?"' in body
     assert 'Button("Reset Private Sync State", role: .destructive)' in body
-    assert 'message.contains("disconnect")' in body
-    assert 'message.contains("queued upload")' in body
+    # The connection notice rules live in Core; the settings view only calls them.
+    assert "CompanionStatusPresentation.connectionNotice(" in body
+    presentation = (
+        ROOT
+        / "ios"
+        / "HealthBridgeCompanion"
+        / "Sources"
+        / "HealthBridgeCompanionCore"
+        / "CompanionUXState.swift"
+    ).read_text()
+    assert 'message.contains("disconnect")' in presentation
+    assert 'message.contains("queued upload")' in presentation
 
 
 def test_healthkit_callbacks_are_invalidated_when_observers_stop() -> None:
