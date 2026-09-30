@@ -45,3 +45,15 @@ def test_inherited_release_machinery_is_labelled() -> None:
         assert "inherited from upstream" in path.read_text(encoding="utf-8").lower(), (
             path
         )
+
+
+def test_signing_docs_require_a_healthkit_app_id() -> None:
+    for path in (Path("README.md"), Path("SECURITY.md"), Path("docs/setup.md")):
+        text = path.read_text(encoding="utf-8")
+        assert "HealthKit" in text, path
+        assert "App ID" in text, path
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "Privacy \u203a Apps" in readme
+    assert "pairing again" in readme
+    assert "BGTaskSchedulerPermittedIdentifiers" in readme
+    assert "provisioning profile" in readme
