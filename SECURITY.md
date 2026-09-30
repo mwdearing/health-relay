@@ -67,6 +67,7 @@ Out of scope:
 - For a release download, check the IPA against the attached checksum (workflow artifacts include one too): `sha256sum -c HealthRelay-unsigned.ipa.sha256` (on macOS: `shasum -a 256 -c HealthRelay-unsigned.ipa.sha256`).
 - Each release names the commit and the "Build unsigned IPA" workflow run that built it.
 - You sign the IPA with your own Apple developer certificate. Keep that signing identity private.
+- Sign with an explicit App ID that has the HealthKit capability (in Feather, set the bundle identifier to your certificate's App ID; with AltStore, Sideloadly or Xcode, use an App ID with HealthKit). A wildcard or unchanged identifier installs, but Health will not list the app and permissions fail. Right after installing, before opening the app, confirm it appears under Health › Profile › Privacy › Apps. Changing the identifier later means pairing again (the receiver sees a new source).
 
 ## Deploy the receiver safely
 

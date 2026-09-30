@@ -87,6 +87,12 @@ HealthRelay is not on the App Store. Build it yourself, then sign and install it
 
 Either way, the IPA you get is **unsigned**. You must sign it with your own Apple developer certificate before it will install — the same way you'd sideload any other unsigned iOS app (a sideload signer such as AltStore or Sideloadly, or Xcode with your own team). HealthRelay has no App Store listing and the maintainer does not distribute a pre-signed build.
 
+#### Sign with an App ID that has HealthKit
+
+Sign the IPA with an **explicit App ID that has the HealthKit capability**. In Feather, set the bundle identifier to your certificate's App ID; with AltStore, Sideloadly or Xcode, use an App ID that includes HealthKit. A wildcard App ID, or leaving the bundle identifier unchanged, still installs the app, but Apple Health will not list it and its permissions cannot work.
+
+Check right after installing, **before you open the app**: HealthRelay must already appear under Health › Profile › Privacy › Apps. If it is missing, re-sign with a HealthKit App ID and reinstall. Changing the bundle identifier later means pairing again, because the receiver sees the new install as a new source.
+
 > [!TIP]
 > If you previously used the upstream Health Bridge for AI app, remove it before pairing HealthRelay so a scanned pairing QR code opens the right app.
 
