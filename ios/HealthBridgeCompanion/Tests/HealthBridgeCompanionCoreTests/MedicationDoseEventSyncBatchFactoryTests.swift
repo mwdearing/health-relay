@@ -159,27 +159,24 @@ final class MedicationDoseEventSyncBatchFactoryTests: XCTestCase {
         )
     }
 
-    func testBackgroundLaneNeverMovesTheSharedCursorAndBoundsItsLookback() throws {
+    func testBackgroundLaneNeverMovesTheSharedCursorAndReplaysTheWholeGap() throws {
         let end = try date("2026-06-10T08:00:00Z")
         let fallback = try date("2026-01-01T00:00:00Z")
         for cursor in [nil, "2026-06-09T20:00:00Z"] {
             XCTAssertTrue(MedicationDoseLanePolicy.shouldPersistCursor(mode: .foreground, cursorValue: cursor, end: end))
             XCTAssertFalse(MedicationDoseLanePolicy.shouldPersistCursor(mode: .automatic, cursorValue: cursor, end: end))
         }
-        // A stale foreground cursor is replayed in full by Sync Now but capped for background runs.
+        // The shared cursor is stale (the app slept for weeks): no dose in the gap may be skipped.
         let stale = "2026-05-01T00:00:00Z"
-        XCTAssertEqual(
-            MedicationDoseLanePolicy.windowStart(
-                mode: .foreground, historyFallbackStart: fallback, end: end, cursorValue: stale
-            ),
-            try date("2026-04-28T00:00:00Z")
-        )
-        XCTAssertEqual(
-            MedicationDoseLanePolicy.windowStart(
-                mode: .automatic, historyFallbackStart: fallback, end: end, cursorValue: stale
-            ),
-            try date("2026-06-03T08:00:00Z")
-        )
+        for mode in [HealthBridgeSyncExecutionMode.foreground, .automatic] {
+            XCTAssertEqual(
+                MedicationDoseLanePolicy.windowStart(
+                    mode: mode, historyFallbackStart: fallback, end: end, cursorValue: stale
+                ),
+                try date("2026-04-28T00:00:00Z"),
+                "\(mode)"
+            )
+        }
     }
 
     func testBackgroundLaneSkipsCursorOnlyBatchesSoMissingAccessNeverAdvancesTheCursor() throws {

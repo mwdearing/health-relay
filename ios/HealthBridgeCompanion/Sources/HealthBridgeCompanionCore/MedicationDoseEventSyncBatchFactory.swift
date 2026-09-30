@@ -84,15 +84,15 @@ public enum MedicationDoseEventSyncBatchFactory {
 public enum MedicationDoseLanePolicy {
     public static let cursorKind = MedicationDoseEventSyncBatchFactory.foregroundCursorKind
     public static let replayOverlapDays = 3
-    public static let automaticMaxLookbackDays = 7
 
     public static func requestsPerObjectAuthorization(for mode: HealthBridgeSyncExecutionMode) -> Bool {
         mode.shouldRequestReadAuthorization
     }
 
     /// Start of the read window. With a usable cursor both modes replay the last
-    /// `replayOverlapDays` before it (the receiver dedups by record id); the background lane never
-    /// reads further back than `automaticMaxLookbackDays`. Without a cursor, the foreground lane
+    /// `replayOverlapDays` before it (the receiver dedups by record id). The background lane never writes the cursor, so a
+    /// stale cursor means it replays the whole gap until Sync Now advances it: no dose is skipped
+    /// however long iOS kept the app asleep. Without a cursor, the foreground lane
     /// honours the history depth and the background lane reads one day.
     public static func windowStart(
         mode: HealthBridgeSyncExecutionMode,
@@ -107,7 +107,7 @@ public enum MedicationDoseLanePolicy {
         } else {
             fallbackStart = historyFallbackStart
         }
-        let start = ForegroundSyncWindowPolicy.windowStart(
+        return ForegroundSyncWindowPolicy.windowStart(
             fallbackStart: fallbackStart,
             end: end,
             cursorValue: cursorValue,
@@ -115,11 +115,6 @@ public enum MedicationDoseLanePolicy {
             alignToStartOfDay: false,
             calendar: calendar
         )
-        guard mode == .automatic else { return start }
-        // The background lane does not move the cursor, so bound its reads: a stale foreground
-        // cursor must not make every background run re-upload the whole backlog.
-        let earliest = end.addingTimeInterval(-TimeInterval(automaticMaxLookbackDays * 24 * 60 * 60))
-        return max(start, earliest)
     }
 
     /// Only the foreground lane persists the shared cursor. A background read can be partial
