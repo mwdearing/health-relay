@@ -16,7 +16,7 @@ This fork does not push `receiver-v*` or `ios-v*` tags. Those tags trigger the u
 
 ### Upstream bookkeeping (not used by this fork)
 
-[`component-versions.json`](../component-versions.json) and the sections below (marked “inherited from upstream”) describe Apple Health AI Bridge's own release process: signed `receiver-v*` tags, `ios-v*` checkpoints and App Store distribution gates. The `receiver-v1.1.1` tag and iOS build numbers in it are upstream identifiers, not HealthRelay release numbers.
+[`component-versions.json`](../component-versions.json) is machine-readable bookkeeping for upstream's release tooling. Its iOS Companion marketing version follows the Xcode project, but its `receiver-v1.1.1` tag and build number are upstream identifiers, not HealthRelay release numbers. The sections below describe Apple Health AI Bridge's own process: signed `receiver-v*` tags, `ios-v*` checkpoints and App Store distribution gates.
 
 ## Inherited from upstream
 

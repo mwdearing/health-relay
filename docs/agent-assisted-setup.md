@@ -114,7 +114,7 @@ The MCP surface is intentionally read-only. It exposes fixed tools for status, c
 Agents can reduce setup burden, but they cannot fully remove Apple platform and local-network constraints. These cases may still require user action or a future product surface:
 
 - the user only has an iPhone and no always-on computer for a receiver;
-- Apple Developer Program enrollment and App Store Connect approval;
+- an Apple Developer account or certificate to sign the unsigned IPA (not needed for a self-build with a free Apple ID);
 - physical app install (unsigned IPA signed with your own certificate, or a self-build), Health permission, and local network permission taps;
 - Mac/Xcode signing or keychain approval that requires GUI interaction;
 - sleeping laptops, firewalls, router rules, corporate networks, or VPN/private-network misconfiguration;

@@ -238,7 +238,7 @@ The repository contains independently released components. Always include the co
 | iOS Companion (HealthRelay) | `1.2.0` | release tag `app-v<marketing-version>` (default `1.2.<run>`); build number = `Build unsigned IPA` workflow run number |
 | Batch Protocol | `1.0.0` | `health_bridge.batch.v1` |
 
-These numbers do not need to match. Receiver-only fixes must not force an unchanged iOS Companion update, and compatible product patches must not bump the Batch Protocol. The canonical machine-readable mapping is [`component-versions.json`](component-versions.json); see the complete [versioning and compatibility policy](docs/versioning.md).
+These numbers do not need to match. Receiver-only fixes must not force an unchanged iOS Companion update, and compatible product patches must not bump the Batch Protocol. The versions in the table above are authoritative for HealthRelay; [`component-versions.json`](component-versions.json) is upstream bookkeeping. See the complete [versioning and compatibility policy](docs/versioning.md).
 
 <details>
 <summary><strong>How releases are published</strong></summary>

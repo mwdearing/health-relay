@@ -1,5 +1,8 @@
 # Maintainer guide
 
+> [!NOTE]
+> The release sections of this guide are inherited from upstream Apple Health AI Bridge and are not used by HealthRelay. Do not create `receiver-v*` or `ios-v*` tags; see [versioning](versioning.md) for how this fork releases.
+
 This guide records the public triage, merge, and release process for Apple Health AI Bridge. It complements [CONTRIBUTING.md](../CONTRIBUTING.md), [SECURITY.md](../SECURITY.md), and [SUPPORT.md](../SUPPORT.md).
 
 ## Solo-maintainer phase
