@@ -235,7 +235,7 @@ The repository contains independently released components. Always include the co
 | Surface | Current version | Identifier |
 | --- | --- | --- |
 | Receiver/CLI | `1.1.1` | `version` in `pyproject.toml`, installed from `main` |
-| iOS Companion (HealthRelay) | `1.2.0` | release tag `app-v1.2.<run>`; build number = `Build unsigned IPA` workflow run number |
+| iOS Companion (HealthRelay) | `1.2.0` | release tag `app-v<marketing-version>` (default `1.2.<run>`); build number = `Build unsigned IPA` workflow run number |
 | Batch Protocol | `1.0.0` | `health_bridge.batch.v1` |
 
 These numbers do not need to match. Receiver-only fixes must not force an unchanged iOS Companion update, and compatible product patches must not bump the Batch Protocol. The canonical machine-readable mapping is [`component-versions.json`](component-versions.json); see the complete [versioning and compatibility policy](docs/versioning.md).
@@ -243,7 +243,7 @@ These numbers do not need to match. Receiver-only fixes must not force an unchan
 <details>
 <summary><strong>How releases are published</strong></summary>
 
-The app ships as an unsigned IPA on GitHub Releases (`app-v1.2.<run>` tags from the `Build unsigned IPA` and `Publish IPA release` workflows). New builds are pre-releases (betas); the stable release is marked Latest after an approval-gated promotion. The receiver is installed from `main` of this repository, so a fix lands for users once it is merged; there are no `receiver-v*` or `ios-v*` tags in this fork. See [versioning](docs/versioning.md).
+The app ships as an unsigned IPA on GitHub Releases (`app-v<marketing-version>` tags, default marketing version `1.2.<run>`, from the `Build unsigned IPA` and `Publish IPA release` workflows). New builds are pre-releases (betas); the stable release is marked Latest after an approval-gated promotion. The receiver is installed from `main` of this repository, so a fix lands for users once it is merged; there are no `receiver-v*` or `ios-v*` tags in this fork. See [versioning](docs/versioning.md).
 
 </details>
 

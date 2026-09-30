@@ -2,6 +2,8 @@
 
 HealthRelay is a fork of Apple Health AI Bridge. The iOS app ships as an unsigned IPA on GitHub Releases (betas first, then a promoted stable release) and the receiver is installed from this repository's `main`. Upstream's 1.1.0 coordinated release (Receiver/CLI `1.1.0`, iOS Companion `1.1.0 (39)`, Batch Protocol `health_bridge.batch.v1 (1.0.0)`) is the history this fork started from.
 
+> The sections below are carried over from the upstream Apple Health AI Bridge roadmap and are being revised for HealthRelay. Where they mention TestFlight-era constraints, Mac/Xcode-only signing or the upstream release criteria, treat them as upstream history: HealthRelay ships an unsigned IPA (see [versioning](versioning.md)).
+
 ## Current state
 
 Works today:
