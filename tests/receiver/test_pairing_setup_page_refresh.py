@@ -160,15 +160,29 @@ def test_shapes_follow_the_spec(any_page: str) -> None:
     assert "border-radius: 999px" in any_page
 
 
-def test_page_makes_no_network_requests(any_page: str) -> None:
-    resource_tags = [
+def _network_resource_tags(page: str) -> list[str]:
+    tags = [
         m.group(0)
-        for m in re.finditer(r"<(?:link|script|img|iframe|source)\b[^>]*>", any_page)
+        for m in re.finditer(
+            r"<(?:link|script|img|iframe|source)\b[^>]*>", page, re.IGNORECASE
+        )
     ]
-    for tag in resource_tags:
-        assert not re.search(
-            r"(?:src|href)\s*=\s*[\"']https?://", tag, re.IGNORECASE
-        ), tag
+    return [
+        tag
+        for tag in tags
+        if re.search(r"(?:src|href)\s*=\s*[\"']https?://", tag, re.IGNORECASE)
+    ]
+
+
+def test_network_resource_check_catches_uppercase_tags() -> None:
+    page = '<p>x</p><SCRIPT SRC="https://example.com/a.js"></SCRIPT>'
+    assert _network_resource_tags(page) == ['<SCRIPT SRC="https://example.com/a.js">']
+    assert _network_resource_tags('<Img src="http://example.com/a.png">')
+    assert not _network_resource_tags('<script src="/local.js"></script>')
+
+
+def test_page_makes_no_network_requests(any_page: str) -> None:
+    assert not _network_resource_tags(any_page)
     assert "@import" not in any_page
     assert not re.search(r"url\(\s*[\"']?https?://", any_page, re.IGNORECASE)
     assert "fetch(" not in any_page
