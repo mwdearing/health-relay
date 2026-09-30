@@ -278,6 +278,8 @@ def _database_failure_reason(db_path: Path, error: Exception) -> str:
         return "locked"
     if "not a database" in message:
         return "not a HealthRelay database"
+    if "lock permissions are not private" in message:
+        return "lock files are not private: make them mode 0600"
     return "other"
 
 
