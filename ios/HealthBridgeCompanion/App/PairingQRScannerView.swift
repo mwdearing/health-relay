@@ -23,6 +23,7 @@ struct PairingQRScannerSheet: View {
     let onScan: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @State private var access: CameraAccess = .checking
 
     private enum CameraAccess {
@@ -45,6 +46,12 @@ struct PairingQRScannerSheet: View {
                 }
         }
         .task { access = await Self.resolveAccess() }
+        // Coming back from Settings after allowing the camera: the sheet never left the
+        // screen, so check again instead of staying on the denied guidance.
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active, access == .denied else { return }
+            Task { access = await Self.resolveAccess() }
+        }
     }
 
     @ViewBuilder
