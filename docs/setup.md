@@ -132,15 +132,17 @@ After setup, use the printed receiver command with the same bind and port. Keep 
 
 ## Install and run core setup
 
-Install the current signed receiver release:
+Install the receiver from this repository's `main` branch (the package keeps its upstream name, `apple-health-ai-bridge`; the command is `health-bridge`):
 
 ```bash
-uv tool install "git+https://github.com/roian6/apple-health-ai-bridge.git@receiver-v1.1.1"
+uv tool install "git+https://github.com/mwdearing/health-relay.git"
 ```
+
+To update it later, run `uv tool upgrade apple-health-ai-bridge`. Do not install upstream `roian6/apple-health-ai-bridge`: it lacks this repository's receiver changes.
 
 After the selected route has set `HEALTH_BRIDGE_RECEIVER_URL` to its real, configured `/v1/batches` URL, run exactly one setup command.
 
-This core setup uses Direct, the default transport. Encrypted iCloud Mailbox is a separate explicit opt-in, Mac-only Beta and is never selected automatically when Direct is unavailable; see the [mailbox service guide](icloud-mailbox-service.md) only if you intentionally choose that transport.
+This core setup uses Direct, the default transport. Encrypted iCloud Mailbox is a separate explicit opt-in, Mac-only Beta and is never selected automatically when Direct is unavailable; see the [mailbox service guide](icloud-mailbox-service.md) only if you intentionally choose that transport. HealthRelay does not publish that guide's helper assets. They come from the upstream project, and installing the upstream wheel replaces this repository's receiver, so stay on Direct unless you accept running the upstream receiver.
 
 The mailbox guide uses the existing `health-bridge setup --transport icloud-mailbox` command with an explicit mailbox root and iCloud container identifier. It also requires the separately downloaded, verified, signed ACK helper before service installation. Direct setup commands in this guide never require that helper and never fall back to mailbox delivery.
 

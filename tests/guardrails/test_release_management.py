@@ -1078,22 +1078,14 @@ def test_brand_readme_local_links_resolve_inside_repository() -> None:
         assert target.exists(), destination
 
 
-def test_public_install_commands_are_pinned_to_current_receiver_release() -> None:
+def test_public_install_commands_use_this_repository() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     setup = (ROOT / "docs/setup.md").read_text(encoding="utf-8")
 
-    pinned = "git+https://github.com/roian6/apple-health-ai-bridge.git@receiver-v1.1.1"
-    assert pinned in readme
-    assert pinned in setup
+    fork = "git+https://github.com/mwdearing/health-relay.git"
+    assert fork in readme
+    assert fork in setup
     for content, name in ((readme, "README.md"), (setup, "docs/setup.md")):
-        pins = re.findall(
-            r'git\+https://github\.com/roian6/apple-health-ai-bridge\.git@([^\s"]+)',
-            content,
-        )
-        assert pins, f"No versioned install pin found in {name}"
-        assert set(pins) == {"receiver-v1.1.1"}, (
-            f"Found stale install pins in {name}: {pins}"
-        )
-    unpinned = "git+https://github.com/roian6/apple-health-ai-bridge.git\n"
-    assert unpinned not in readme
-    assert unpinned not in setup
+        assert "roian6/apple-health-ai-bridge.git" not in content.replace(
+            "Do not install upstream `roian6/apple-health-ai-bridge`", ""
+        ), f"Upstream install command found in {name}"
