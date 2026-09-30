@@ -7,7 +7,7 @@ The normal path is: install the iPhone companion, prepare a receiver on the comp
 You need:
 
 - an iPhone running iOS 18 or later;
-- your own HealthRelay build (the `Build unsigned IPA` workflow or Xcode; HealthRelay has no App Store listing), or a self-build, signed with an explicit App ID that has the HealthKit capability (see [Sign with an App ID that has HealthKit](../README.md#sign-with-an-app-id-that-has-healthkit); confirm the app is listed under Health › Profile › Privacy › Apps before you open it);
+- your own HealthRelay build (the `Build unsigned IPA` workflow or Xcode; HealthRelay has no App Store listing), or a self-build, built and signed with an explicit App ID that has the HealthKit capability (see [Sign with an App ID that has HealthKit](../README.md#sign-with-an-app-id-that-has-healthkit));
 - a macOS or Linux computer for the receiver and private database; native Windows is not currently supported;
 - [`uv`](https://docs.astral.sh/uv/);
 - for continuous sync away from home, either an existing Tailscale connection or an agent-assisted private HTTPS ingress; for an explicit local-only evaluation, a same-LAN route with the limitations below;

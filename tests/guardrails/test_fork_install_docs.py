@@ -55,3 +55,5 @@ def test_signing_docs_require_a_healthkit_app_id() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
     assert "Privacy \u203a Apps" in readme
     assert "pairing again" in readme
+    assert "BGTaskSchedulerPermittedIdentifiers" in readme
+    assert "provisioning profile" in readme

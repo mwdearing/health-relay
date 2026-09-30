@@ -89,9 +89,11 @@ Either way, the IPA you get is **unsigned**. You must sign it with your own Appl
 
 #### Sign with an App ID that has HealthKit
 
-Sign the IPA with an **explicit App ID that has the HealthKit capability**. In Feather, set the bundle identifier to your certificate's App ID; with AltStore, Sideloadly or Xcode, use an App ID that includes HealthKit. A wildcard App ID, or leaving the bundle identifier unchanged, still installs the app, but Apple Health will not list it and its permissions cannot work.
+Sign with a **provisioning profile for an explicit App ID that has the HealthKit capability**, and keep that profile's HealthKit entitlement in the signed app. A wildcard App ID, or a signer that drops the entitlement, still installs the app, but Apple Health will not list it and its permissions cannot work.
 
-Check right after installing, **before you open the app**: HealthRelay must already appear under Health › Profile › Privacy › Apps. If it is missing, re-sign with a HealthKit App ID and reinstall. Changing the bundle identifier later means pairing again, because the receiver sees the new install as a new source.
+- **Set the bundle identifier to that App ID *before* the IPA is built.** Run the `Build unsigned IPA` workflow with your final App ID as the bundle identifier. The app derives its background-refresh task identifier (`<bundle id>.refresh`) from the bundle identifier at run time, while the permitted identifier is written into the IPA at build time, so an IPA that is only re-signed under a different bundle identifier will have background refresh requests rejected unless the signer also rewrites `BGTaskSchedulerPermittedIdentifiers` to match.
+- **Check the Health listing:** after installing, look under Health › Profile › Privacy › Apps. HealthRelay should already be listed; if it is not, open the app, allow Health access when asked, and look again. If it is still missing, the signature lacks the HealthKit entitlement: fix the profile and re-sign.
+- **Changing the bundle identifier later means pairing again,** because the receiver sees the new install as a new source.
 
 > [!TIP]
 > If you previously used the upstream Health Bridge for AI app, remove it before pairing HealthRelay so a scanned pairing QR code opens the right app.
