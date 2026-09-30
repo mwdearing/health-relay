@@ -6,7 +6,7 @@ HealthRelay contains independently versioned components. Always include the comp
 
 | Component | Version source | Distribution |
 | --- | --- | --- |
-| iOS Companion (HealthRelay app) | Xcode `MARKETING_VERSION`; build number = the `Build unsigned IPA` workflow run number | Unsigned IPA on GitHub Releases, tag `app-v<marketing-version>`. The default marketing version is `1.2.<run>`, so tags look like `app-v1.2.23`; a maintainer may supply a different marketing version when starting the build, and the tag follows it. Sign it with your own certificate, or self-build ([self-build guide](self-build.md)). |
+| iOS Companion (HealthRelay app) | Xcode `MARKETING_VERSION`; build number = the `Build unsigned IPA` workflow run number for CI-built IPAs; a self-build uses `CURRENT_PROJECT_VERSION` from the Xcode project | Unsigned IPA on GitHub Releases, tag `app-v<marketing-version>`. The default marketing version is `1.2.<run>`, so tags look like `app-v1.2.23`; a maintainer may supply a different marketing version when starting the build, and the tag follows it. Sign it with your own certificate, or self-build ([self-build guide](self-build.md)). |
 | Receiver/CLI | `version` in `pyproject.toml` | Installed from this repository's `main`: `uv tool install "git+https://github.com/mwdearing/health-relay.git"`; update with `uv tool upgrade apple-health-ai-bridge`. |
 | Batch Protocol | `health_bridge.batch.v1` | Wire contract only; see below. |
 
