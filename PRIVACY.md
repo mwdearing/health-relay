@@ -7,6 +7,7 @@ HealthRelay reads Apple Health data on your iPhone and sends it only to a receiv
 - **No telemetry.** There is no analytics, advertising, crash-reporting upload or third-party AI upload in the app or receiver.
 - **Your receiver.** Once data reaches your receiver it is stored in a database you own. Securing that host, its network path and its backups is your responsibility.
 - **Pairing material.** Setup links and tokens are private until they expire or are redeemed. Never post them publicly.
+- **Camera.** The camera is used only to scan the setup QR code on the device. Camera images are not stored or sent.
 - **Control.** You can revoke Health access in the Health app (profile picture > Privacy > Apps > HealthRelay) and disconnect the app from the receiver inside the app.
 
 Questions or concerns: open an issue at https://github.com/mwdearing/health-relay/issues (never include real health data or pairing links). Security reports: see [SECURITY.md](SECURITY.md).

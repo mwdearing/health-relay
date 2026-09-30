@@ -132,38 +132,23 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 16) {
             SectionHeader(
                 title: "Connect Your Server",
-                subtitle: "Scan the private QR with iPhone Camera, open its setup link, or paste it here. After pairing, the secret key stays on this iPhone."
+                subtitle: "Scan the private QR from your receiver's setup page, open its setup link, or paste it here. The link also tells the app how to connect. After pairing, the secret key stays on this iPhone."
             )
 
-            VStack(alignment: .leading, spacing: 12) {
-                Label("Direct / Tailscale-compatible", systemImage: "network")
-                    .font(.headline)
-                Text("Recommended on Linux and Mac. The receiver setup invitation selects this transport by default.")
-                    .font(.footnote)
-                    .foregroundStyle(.relaySecondaryText)
-
-                Label("Encrypted iCloud Mailbox (Beta)", systemImage: "lock.icloud.fill")
-                    .font(.headline)
-                Text("No VPN required • Mac only • Best-effort, eventual delivery")
-                    .font(.footnote)
-                    .foregroundStyle(.relaySecondaryText)
-
-                Text("Custom HTTPS remains a Direct connection. Local same-network-only setup is Advanced / Limited.")
-                    .font(.footnote)
-                    .foregroundStyle(.relaySecondaryText)
+            DisclosureGroup("How connections work") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Direct / Tailscale-compatible (the default): this iPhone sends data straight to your receiver over your home network, Tailscale or your own HTTPS address. Custom HTTPS is still a Direct connection. Recommended on Linux and Mac.")
+                    Text("Encrypted iCloud Mailbox (Beta): Mac only. No VPN required. Data is encrypted and left in an iCloud folder that your Mac picks up. Best-effort, eventual delivery, so it can be delayed.")
+                    Text("Advanced / Limited: a receiver that works only on the same Wi-Fi network. Syncing waits until this iPhone is back on that network.")
+                }
+                .font(.footnote)
+                .foregroundStyle(.relaySecondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 8)
             }
-            .padding(14)
-            .background(Color(.tertiarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: HealthBridgeRadius.inset, style: .continuous))
+            .font(.subheadline.weight(.semibold))
 
-            TextField("Paste private setup link", text: $viewModel.pairingImportText, axis: .vertical)
-                .lineLimit(2...4)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .font(.body)
-                .padding(14)
-                .background(Color(.tertiarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: HealthBridgeRadius.inset, style: .continuous))
+            SetupLinkInput(viewModel: viewModel)
 
             PrimaryButton(
                 title: "Connect",
@@ -178,7 +163,7 @@ struct ContentView: View {
             Divider()
 
             DisclosureGroup {
-                manualPairingFields
+                ManualPairingFields(viewModel: viewModel)
                     .padding(.top, 12)
             } label: {
                 Text("Use a code instead")
@@ -233,36 +218,6 @@ struct ContentView: View {
             Button("Keep Pending Pairing", role: .cancel) {}
         } message: {
             Text("This removes the pending invitation and also removes the currently saved connection. Apple Health data is not deleted.")
-        }
-    }
-
-    private var manualPairingFields: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            TextField("Server address", text: $viewModel.manualPairingServer)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .keyboardType(.URL)
-                .padding(12)
-                .background(Color(.tertiarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: HealthBridgeRadius.inset, style: .continuous))
-
-            TextField("Invitation code", text: $viewModel.manualPairingCode)
-                .textInputAutocapitalization(.characters)
-                .autocorrectionDisabled()
-                .keyboardType(.asciiCapable)
-                .padding(12)
-                .background(Color(.tertiarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: HealthBridgeRadius.inset, style: .continuous))
-
-            PrimaryButton(
-                title: "Connect with Code",
-                subtitle: "Codes expire and work only once",
-                systemImage: "number.square.fill",
-                isDisabled: !viewModel.canRedeemManualPairing,
-                isLoading: viewModel.isPairing
-            ) {
-                Task { await viewModel.redeemManualPairing() }
-            }
         }
     }
 
@@ -356,16 +311,6 @@ struct ContentView: View {
     /// Primary actions sit at the bottom of the screen, above the home indicator.
     private var syncBar: some View {
         VStack(spacing: 8) {
-            PrimaryButton(
-                title: "Sync Now",
-                subtitle: syncActionSubtitle,
-                systemImage: viewModel.syncPresentationIsActive ? "arrow.triangle.2.circlepath" : "arrow.up.arrow.down.circle.fill",
-                isDisabled: !viewModel.canRunPrimaryAction || viewModel.isReadingExport,
-                isLoading: viewModel.syncPresentationIsActive
-            ) {
-                Task { await viewModel.performPrimaryAction() }
-            }
-
             // Gated on the same flag the "Sync Now" spinner/disabled state uses
             // (syncPresentationIsActive = isSyncing || automaticSyncOwnerIsActive),
             // not just isSyncing alone. A HealthKit-observer-driven Automatic Sync
@@ -374,19 +319,32 @@ struct ContentView: View {
             // (Michael, 2026-09-29: "Cancel button never shows up in auto"), leaving
             // no way to interrupt it short of disabling Automatic Sync entirely.
             if viewModel.syncPresentationIsActive {
-                PrimaryButton(
+                SyncProgressRow()
+
+                CompactSecondaryButton(
                     title: "Cancel",
-                    subtitle: "Stop this sync. Already queued uploads are kept.",
-                    systemImage: "xmark.circle.fill",
-                    emphasis: .caution,
-                    isDisabled: false
+                    systemImage: "xmark.circle",
+                    hint: "Stop this sync. Already queued uploads are kept."
                 ) {
                     Task { await viewModel.cancelCurrentForegroundAction() }
+                }
+            } else {
+                PrimaryButton(
+                    title: "Sync Now",
+                    subtitle: syncActionSubtitle,
+                    systemImage: "arrow.up.arrow.down.circle.fill",
+                    isDisabled: !viewModel.canRunPrimaryAction || viewModel.isReadingExport,
+                    isLoading: false
+                ) {
+                    Task { await viewModel.performPrimaryAction() }
                 }
             }
         }
         .padding(.horizontal, HealthBridgeSpacing.screen)
+        .padding(.top, 10)
         .padding(.bottom, 8)
+        // Scrolling cards would otherwise show through behind the buttons.
+        .background(.bar)
     }
 
     /// HealthRelay addition: a manual, one-shot import of an Apple Health export.zip
@@ -790,14 +748,7 @@ private struct ReceiverSettingsView: View {
                 title: viewModel.canSendConnectionTest ? "Replace Connection" : "Setup Link",
                 subtitle: viewModel.canSendConnectionTest ? "Paste a new setup link only if you want to replace this iPhone's saved connection." : "Setup links contain private connection details. Only paste them here. Do not share them in chat or screenshots."
             )
-            TextField("Paste private setup link", text: $viewModel.pairingImportText, axis: .vertical)
-                .lineLimit(2...4)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .font(.body)
-                .padding(14)
-                .background(Color(.tertiarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: HealthBridgeRadius.inset, style: .continuous))
+            SetupLinkInput(viewModel: viewModel)
             PrimaryButton(
                 title: viewModel.canSendConnectionTest ? "Replace Connection" : "Connect from Setup Link",
                 subtitle: "Save connection details securely on this iPhone",
@@ -819,32 +770,8 @@ private struct ReceiverSettingsView: View {
             )
 
             DisclosureGroup {
-                VStack(alignment: .leading, spacing: 14) {
-                    TextField("Server address", text: $viewModel.manualPairingServer)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                        .padding(12)
-                        .background(Color(.tertiarySystemGroupedBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: HealthBridgeRadius.inset, style: .continuous))
-                    TextField("Invitation code", text: $viewModel.manualPairingCode)
-                        .textInputAutocapitalization(.characters)
-                        .autocorrectionDisabled()
-                        .keyboardType(.asciiCapable)
-                        .padding(12)
-                        .background(Color(.tertiarySystemGroupedBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: HealthBridgeRadius.inset, style: .continuous))
-                    PrimaryButton(
-                        title: "Connect with Code",
-                        subtitle: "Codes expire and work only once",
-                        systemImage: "number.square.fill",
-                        isDisabled: !viewModel.canRedeemManualPairing,
-                        isLoading: viewModel.isPairing
-                    ) {
-                        Task { await viewModel.redeemManualPairing() }
-                    }
-                }
-                .padding(.top, 12)
+                ManualPairingFields(viewModel: viewModel)
+                    .padding(.top, 12)
             } label: {
                 Text("Use a code instead")
                     .font(.headline)
@@ -967,6 +894,21 @@ private struct ActivityLogView: View {
             }
         }
         .navigationTitle("Activity Log")
+        .toolbar {
+            if !viewModel.activityLogMessages.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    // Shares only the rows shown above, as plain text. The share sheet also
+                    // offers Copy. Rows are status lines and never hold setup links or keys.
+                    ShareLink(
+                        item: ActivityLogMerger.exportText(from: viewModel.activityLogMessages),
+                        subject: Text("HealthRelay activity log")
+                    ) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .accessibilityLabel("Share or copy all log rows")
+                }
+            }
+        }
     }
 }
 
@@ -1047,6 +989,166 @@ private struct SectionHeader: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+}
+
+/// Setup-link entry shared by the first-run card and the Connection settings screen:
+/// the text field, a Paste button, and the QR scanner when the device supports it.
+private struct SetupLinkInput: View {
+    @ObservedObject var viewModel: HealthBridgeCompanionViewModel
+    @State private var showsScanner = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                TextField("Paste private setup link", text: $viewModel.pairingImportText, axis: .vertical)
+                    .lineLimit(2...4)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .font(.body)
+                    .padding(14)
+                    .background(Color(.tertiarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: HealthBridgeRadius.inset, style: .continuous))
+                PasteButton(payloadType: String.self) { strings in
+                    guard let pasted = strings.first else { return }
+                    Task { @MainActor in
+                        viewModel.pairingImportText = pasted
+                    }
+                }
+                .labelStyle(.iconOnly)
+                .buttonBorderShape(.capsule)
+                .padding(.top, 8)
+            }
+
+            if SetupQRScanner.isOffered {
+                Button {
+                    showsScanner = true
+                } label: {
+                    Label("Scan Setup QR", systemImage: "qrcode.viewfinder")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+                .relaySecondaryButtonStyle()
+                .controlSize(.large)
+                .disabled(viewModel.isPairing)
+            }
+        }
+        .sheet(isPresented: $showsScanner) {
+            PairingQRScannerSheet { scanned in
+                handleScanned(scanned)
+            }
+        }
+    }
+
+    /// Feeds the scanned string into the existing import paths. Anything the import does not
+    /// accept shows the same error a pasted link would.
+    private func handleScanned(_ scanned: String) {
+        switch PairingQRPayload.classify(scanned) {
+        case let .deepLink(url):
+            Task { await viewModel.importPairingURL(url) }
+        case let .text(text):
+            viewModel.pairingImportText = text
+            Task { await viewModel.importPairingText() }
+        }
+    }
+}
+
+/// Server address and invitation code fields, shared by the first-run card and the
+/// Connection settings screen. The code is grouped as `ABCDE-FGHJK-MNPQR` while typing.
+private struct ManualPairingFields: View {
+    @ObservedObject var viewModel: HealthBridgeCompanionViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                TextField("Server address", text: $viewModel.manualPairingServer)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .padding(12)
+                    .background(Color(.tertiarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: HealthBridgeRadius.inset, style: .continuous))
+                PasteButton(payloadType: String.self) { strings in
+                    guard let pasted = strings.first else { return }
+                    Task { @MainActor in
+                        viewModel.manualPairingServer = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                }
+                .labelStyle(.iconOnly)
+                .buttonBorderShape(.capsule)
+            }
+
+            HStack(spacing: 10) {
+                TextField("Invitation code", text: $viewModel.manualPairingCode)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .keyboardType(.asciiCapable)
+                    .padding(12)
+                    .background(Color(.tertiarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: HealthBridgeRadius.inset, style: .continuous))
+                    .onChange(of: viewModel.manualPairingCode) { _, newValue in
+                        let grouped = InvitationCodeFormatter.formatted(newValue)
+                        if grouped != newValue {
+                            viewModel.manualPairingCode = grouped
+                        }
+                    }
+                PasteButton(payloadType: String.self) { strings in
+                    guard let pasted = strings.first else { return }
+                    Task { @MainActor in
+                        viewModel.manualPairingCode = InvitationCodeFormatter.formatted(pasted)
+                    }
+                }
+                .labelStyle(.iconOnly)
+                .buttonBorderShape(.capsule)
+            }
+
+            PrimaryButton(
+                title: "Connect with Code",
+                subtitle: "Codes expire and work only once",
+                systemImage: "number.square.fill",
+                isDisabled: !viewModel.canRedeemManualPairing,
+                isLoading: viewModel.isPairing
+            ) {
+                Task { await viewModel.redeemManualPairing() }
+            }
+        }
+    }
+}
+
+/// Small quiet capsule for an action that should not compete with the primary one.
+private struct CompactSecondaryButton: View {
+    let title: String
+    let systemImage: String
+    let hint: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline.weight(.semibold))
+        }
+        .relaySecondaryButtonStyle()
+        .controlSize(.small)
+        .tint(.relayWaitingInk)
+        .accessibilityHint(hint)
+    }
+}
+
+/// Shown in the bottom bar while a sync runs, in place of the Sync Now button.
+private struct SyncProgressRow: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .tint(.relayOnMint)
+            Text("Syncing\u{2026}")
+                .font(.headline)
+                .foregroundStyle(.relayOnMint)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .background(.relayMint, in: Capsule())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Sync in progress")
     }
 }
 
