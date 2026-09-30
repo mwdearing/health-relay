@@ -2,7 +2,8 @@ name: CodeQL
 
 # HealthRelay fork: advanced setup replacing GitHub's default setup (2026-09-29).
 # Actions and Python are scanned on every pull request (Ubuntu, cheap). Swift needs a
-# macOS build, so it runs only on pushes to main, weekly and on manual dispatch.
+# macOS build, so it runs only nightly and on manual dispatch: a push trigger let
+# successive merges to main cancel each other's Swift scan.
 on:
   pull_request:
     branches:
@@ -11,19 +12,20 @@ on:
     branches:
       - main
   schedule:
-    - cron: "17 6 * * 1"
+    - cron: "0 8 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: codeql-${{ github.ref }}
+  group: codeql-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -55,7 +57,7 @@ jobs:
 
   analyze-swift:
     name: Analyze (swift)
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: macos-26
     timeout-minutes: 60
     permissions:
