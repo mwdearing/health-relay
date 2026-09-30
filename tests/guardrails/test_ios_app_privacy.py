@@ -720,6 +720,34 @@ def test_ios_companion_exposes_public_privacy_and_support_links() -> None:
     assert "chanhyo.dev" not in content_view
 
 
+def test_ios_permission_usage_descriptions_are_pinned_and_consistent() -> None:
+    # Given
+    plist = _info_plist()
+    project = XCODE_PROJECT.read_text()
+
+    # When
+    usage_keys = {key for key in plist if key.endswith("UsageDescription")}
+    camera_copy = str(plist.get("NSCameraUsageDescription", ""))
+    build_setting_copies = re.findall(
+        r'INFOPLIST_KEY_NSCameraUsageDescription = "([^"]*)";',
+        project,
+    )
+
+    # Then: a new permission, or a string that differs between the plist and the
+    # two app build configurations, must be a deliberate change to this test.
+    assert usage_keys == {
+        "NSCameraUsageDescription",
+        "NSHealthShareUsageDescription",
+        "NSHealthUpdateUsageDescription",
+        "NSLocalNetworkUsageDescription",
+    }
+    assert project.count("INFOPLIST_KEY_NSCameraUsageDescription") == 2
+    assert build_setting_copies == [camera_copy, camera_copy]
+    lowered = camera_copy.lower()
+    assert "setup qr" in lowered
+    assert "nothing is stored or sent" in lowered
+
+
 def test_ios_healthkit_access_stays_read_only() -> None:
     # Given / When
     healthkit_catalog = HEALTHKIT_CATALOG.read_text()

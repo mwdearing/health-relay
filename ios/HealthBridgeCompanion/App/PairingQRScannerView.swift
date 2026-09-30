@@ -5,13 +5,15 @@ import VisionKit
 
 /// Whether the in-app setup-QR scanner can be offered on this device.
 enum SetupQRScanner {
-    /// Hidden when the device has no scanner or the camera is restricted. It stays visible
-    /// after a denied permission so the scanner sheet can explain how to turn it back on.
+    /// Hidden only when the device has no scanner or the camera is restricted. The scanner's
+    /// own `isAvailable` is deliberately not part of this gate: it is false until camera
+    /// access has been granted, so using it here would hide the button on a first run (before
+    /// the permission prompt) and after a denial (before the guidance). The sheet handles the
+    /// not-determined, denied and unavailable states itself.
     @MainActor
     static var isOffered: Bool {
-        guard DataScannerViewController.isSupported else { return false }
-        return DataScannerViewController.isAvailable
-            || AVCaptureDevice.authorizationStatus(for: .video) == .denied
+        DataScannerViewController.isSupported
+            && AVCaptureDevice.authorizationStatus(for: .video) != .restricted
     }
 }
 
