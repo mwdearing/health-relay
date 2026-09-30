@@ -50,10 +50,10 @@ final class HealthBridgeAppIdentityTests: XCTestCase {
     func testAppRefreshIdentifierPrefersInfoPlistPermittedIdentifier() {
         XCTAssertEqual(
             HealthBridgeAppIdentity.appRefreshIdentifier(
-                permittedIdentifiers: ["com.mwdearing.HealthRelay.refresh"],
+                permittedIdentifiers: ["com.example.BuiltAs.refresh"],
                 bundleIdentifier: "team.example.Custom"
             ),
-            "com.mwdearing.HealthRelay.refresh"
+            "com.example.BuiltAs.refresh"
         )
     }
 
