@@ -132,11 +132,13 @@ After setup, use the printed receiver command with the same bind and port. Keep 
 
 ## Install and run core setup
 
-Install the current signed receiver release:
+Install the receiver from this repository's `main` branch (the package keeps its upstream name, `apple-health-ai-bridge`; the command is `health-bridge`):
 
 ```bash
-uv tool install "git+https://github.com/roian6/apple-health-ai-bridge.git@receiver-v1.1.1"
+uv tool install "git+https://github.com/mwdearing/health-relay.git"
 ```
+
+To update it later, run `uv tool upgrade apple-health-ai-bridge`. Do not install upstream `roian6/apple-health-ai-bridge`: it lacks this repository's receiver changes.
 
 After the selected route has set `HEALTH_BRIDGE_RECEIVER_URL` to its real, configured `/v1/batches` URL, run exactly one setup command.
 

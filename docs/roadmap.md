@@ -1,6 +1,6 @@
 # Apple Health AI Bridge Roadmap
 
-Apple Health AI Bridge 1.1.0 is a coordinated release of Receiver/CLI `1.1.0` and iOS Companion `1.1.0 (39)` with the unchanged Batch Protocol `health_bridge.batch.v1 (1.0.0)`. The exact iOS candidate, approved TestFlight Public Link, receiver tag, package artifacts, and install site are handled as one verified set.
+HealthRelay is a fork of Apple Health AI Bridge. The iOS app ships as an unsigned IPA on GitHub Releases (betas first, then a promoted stable release) and the receiver is installed from this repository's `main`. Upstream's 1.1.0 coordinated release (Receiver/CLI `1.1.0`, iOS Companion `1.1.0 (39)`, Batch Protocol `health_bridge.batch.v1 (1.0.0)`) is the history this fork started from.
 
 ## Current state
 
@@ -25,7 +25,7 @@ Current operational constraints:
 
 1. Keep the public docs short, current, and free of internal planning notes.
 2. Keep the synthetic quickstart and MCP smoke path reliable for first-time users.
-3. Prepare every TestFlight candidate from the current release tree with a unique build number and fresh validation.
+3. Build every release candidate from the current release tree with a unique build number (the workflow run number) and fresh validation.
 4. Keep the tester-facing install and review guidance current for the exact approved build.
 5. Improve receiver setup guidance and failure recovery.
 6. Keep the [release criteria](../.github/release/criteria.md) passing.

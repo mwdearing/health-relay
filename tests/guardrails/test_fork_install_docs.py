@@ -42,4 +42,6 @@ def test_versioning_describes_fork_release_process() -> None:
 
 def test_inherited_release_machinery_is_labelled() -> None:
     for path in (Path(".github/release/README.md"), Path("docs/maintainers/README.md")):
-        assert "inherited from upstream" in path.read_text(encoding="utf-8").lower(), path
+        assert "inherited from upstream" in path.read_text(encoding="utf-8").lower(), (
+            path
+        )

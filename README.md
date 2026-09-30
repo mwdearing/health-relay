@@ -105,11 +105,13 @@ The project does not give you a receiver URL. The URL is the private address by 
 
 ### 3. Install and run setup
 
-Install the current signed receiver release:
+Install the receiver from this repository's `main` branch (the package keeps its upstream name, `apple-health-ai-bridge`; the command is `health-bridge`):
 
 ```bash
-uv tool install "git+https://github.com/roian6/apple-health-ai-bridge.git@receiver-v1.1.1"
+uv tool install "git+https://github.com/mwdearing/health-relay.git"
 ```
+
+To update it later, run `uv tool upgrade apple-health-ai-bridge`. Do not install upstream `roian6/apple-health-ai-bridge`: it lacks this repository's receiver changes.
 
 The route-specific guide sets `HEALTH_BRIDGE_RECEIVER_URL` to the exact configured `/v1/batches` URL. Only then run:
 
@@ -232,16 +234,16 @@ The repository contains independently released components. Always include the co
 
 | Surface | Current version | Identifier |
 | --- | --- | --- |
-| Receiver/CLI | `1.1.1` | signed tag `receiver-v1.1.1` |
-| iOS Companion (HealthRelay) | `1.2.0` | build number = `Build unsigned IPA` workflow run number |
+| Receiver/CLI | `1.1.1` | `version` in `pyproject.toml`, installed from `main` |
+| iOS Companion (HealthRelay) | `1.2.0` | release tag `app-v1.2.<run>`; build number = `Build unsigned IPA` workflow run number |
 | Batch Protocol | `1.0.0` | `health_bridge.batch.v1` |
 
 These numbers do not need to match. Receiver-only fixes must not force an unchanged iOS Companion update, and compatible product patches must not bump the Batch Protocol. The canonical machine-readable mapping is [`component-versions.json`](component-versions.json); see the complete [versioning and compatibility policy](docs/versioning.md).
 
 <details>
-<summary><strong>How receiver releases are published</strong></summary>
+<summary><strong>How releases are published</strong></summary>
 
-User installs are pinned to a signed Receiver/CLI release tag instead of the moving `main` branch. Each GitHub Release publishes the exact-tag wheel and source archive together with the signed mailbox helper and its public manifest, SHA-256 checksums, build provenance, and metadata that ties the Receiver/CLI, compatible iOS Companion, helper source tree, Git tree, and Batch Protocol together. Existing `v1.0.0`, `v1.0.1`, and `receiver-v1.1.0` releases remain immutable; current and future receiver releases use component-scoped tags such as `receiver-v1.1.1`.
+The app ships as an unsigned IPA on GitHub Releases (`app-v1.2.<run>` tags from the `Build unsigned IPA` and `Publish IPA release` workflows). New builds are pre-releases (betas); the stable release is marked Latest after an approval-gated promotion. The receiver is installed from `main` of this repository, so a fix lands for users once it is merged; there are no `receiver-v*` or `ios-v*` tags in this fork. See [versioning](docs/versioning.md).
 
 </details>
 

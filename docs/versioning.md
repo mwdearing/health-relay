@@ -1,8 +1,24 @@
 # Versioning and compatibility
 
-Apple Health AI Bridge contains independently released components. Always include the component name when presenting a version; the phrase “repository version” is intentionally avoided because a Git checkout is identified by a commit or tag, not by a single product version.
+HealthRelay contains independently versioned components. Always include the component name when presenting a version; the phrase “repository version” is intentionally avoided because a Git checkout is identified by a commit, not by a single product version.
 
-## Current compatibility
+## How this fork releases
+
+| Component | Version source | Distribution |
+| --- | --- | --- |
+| iOS Companion (HealthRelay app) | Xcode `MARKETING_VERSION`; build number = the `Build unsigned IPA` workflow run number | Unsigned IPA on GitHub Releases, tag `app-v<marketing-version>.<run>` (for example `app-v1.2.23`). Sign it with your own certificate, or self-build ([self-build guide](self-build.md)). |
+| Receiver/CLI | `version` in `pyproject.toml` | Installed from this repository's `main`: `uv tool install "git+https://github.com/mwdearing/health-relay.git"`; update with `uv tool upgrade apple-health-ai-bridge`. |
+| Batch Protocol | `health_bridge.batch.v1` | Wire contract only; see below. |
+
+App releases come from the `Build unsigned IPA` and `Publish IPA release` workflows. A new build is published as a **pre-release** (beta). The stable release, marked **Latest**, is chosen through the approval-gated `Promote IPA release` workflow after the build has been installed and checked on a device. The receiver has no separate release step: a fix is available once it is merged to `main`.
+
+This fork does not push `receiver-v*` or `ios-v*` tags. Those tags trigger the upstream release workflows, which HealthRelay does not use.
+
+### Upstream bookkeeping (not used by this fork)
+
+[`component-versions.json`](../component-versions.json) and the sections below (marked “inherited from upstream”) describe Apple Health AI Bridge's own release process: signed `receiver-v*` tags, `ios-v*` checkpoints and App Store distribution gates. The file is left unchanged because release tooling and several guardrail tests read it; its `receiver-v1.1.1` tag and iOS build numbers are upstream identifiers, not HealthRelay release numbers.
+
+## Inherited from upstream: compatibility model
 
 | Surface | Current version | Public identifier |
 | --- | --- | --- |
@@ -30,7 +46,7 @@ Release notes use the same tag in their filename and install examples.
 
 ### iOS Companion
 
-The user-visible app version is Xcode `MARKETING_VERSION`. App Store Connect and TestFlight additionally require a monotonically increasing `CURRENT_PROJECT_VERSION` build number. Display both when identifying an installed build:
+The user-visible app version is Xcode `MARKETING_VERSION`. App Store Connect additionally requires a monotonically increasing `CURRENT_PROJECT_VERSION` build number. Display both when identifying an installed build:
 
 ```text
 iOS Companion 1.1.1 (build 50)
@@ -42,7 +58,7 @@ An iOS source or distribution checkpoint may use a component-scoped tag such as:
 ios-v1.1.1-build.50
 ```
 
-An iOS tag does not publish Receiver/CLI artifacts. TestFlight/App Store release gates remain authoritative for distributed app builds.
+An iOS tag does not publish Receiver/CLI artifacts. App Store release gates remain authoritative for distributed app builds.
 
 ### Batch Protocol
 
@@ -58,7 +74,7 @@ Batch Protocol versions describe the wire contract, not either product artifact.
 - Receiver-only transitions keep iOS Companion and Batch Protocol values identical to the predecessor baseline while Receiver/CLI advances.
 - iOS-only transitions declare `release_scope` as `ios`, keep Receiver/CLI and Batch Protocol identical to the predecessor baseline, and advance the iOS marketing version and/or build with a higher build number.
 - Coordinated transitions declare `release_scope` as `coordinated`, advance Receiver/CLI plus at least one other component, and must not regress any component.
-- App-only releases verify compatibility with the published receiver before TestFlight or App Store promotion.
+- App-only releases verify compatibility with the published receiver before App Store promotion.
 - Existing `v1.0.0` and `v1.0.1` tags remain immutable. They are historical receiver release tags and are not renamed.
 - Future Receiver/CLI tags use `receiver-v<semver>`; future iOS source/distribution tags use `ios-v<marketing-version>-build.<build>`.
 

@@ -13,7 +13,7 @@ These are intentionally documentation, examples, or fixture-focused. They should
 | Implement and test Windows database locking | Enables a safe native Windows receiver path | Match POSIX lifecycle/access lock semantics before documenting support |
 | Add a Linux systemd example for a local receiver | Helps self-hosted users keep the receiver running | Keep it local/private-network oriented; no public internet hardening claim |
 | Expand sample MCP prompts | Shows how agents can query status, daily summaries, workouts, sleep, and sources | Prompts must avoid diagnosis/medical advice claims |
-| Add troubleshooting for Local Network permission | Helps TestFlight/self-build users understand iPhone receiver reachability | Do not include real IPs or screenshots with health values |
+| Add troubleshooting for Local Network permission | Helps IPA/self-build users understand iPhone receiver reachability | Do not include real IPs or screenshots with health values |
 | Improve no-data/denied-permission documentation | Explains why denied HealthKit reads can look empty | Keep wording general; no personal examples |
 | Add synthetic sleep edge-case fixture | Improves tests without private data | Synthetic fixture only |
 | Add a docs glossary | Clarifies receiver, setup page, pairing, source provenance, cursor, MCP | No implementation diary or private notes |
@@ -38,14 +38,14 @@ Use GitHub issues with one report per issue:
 - **Synthetic quickstart**: fresh checkout, `uv sync`, fixture ingest, status, MCP smoke.
 - **MCP/client integration**: Claude Desktop, Cursor, Hermes, or other MCP client config.
 - **Receiver setup**: local/private-network reachability, `/health`, pairing setup material.
-- **TestFlight/self-build iPhone path**: install, pairing, Health permission, foreground sync, recovery states.
+- **IPA/self-build iPhone path**: install, pairing, Health permission, foreground sync, recovery states.
 - **Docs/positioning**: unclear privacy boundary, misleading wording, missing caveats.
 
 ## Feedback template
 
 ```text
 Flow: README / synthetic quickstart / MCP config / receiver / pairing / permission / sync / recovery / docs
-Environment: OS, Python version, uv version, MCP client, iOS/Xcode/TestFlight if relevant
+Environment: OS, Python version, uv version, MCP client, iOS/Xcode/app build (IPA or self-build) if relevant
 What I tried:
 Expected:
 Actual visible text or command output:
