@@ -744,30 +744,6 @@ final class BackgroundSyncTests: XCTestCase {
             "\(HealthBridgeAppIdentity.bundleIdentifier).refresh"
         )
     }
-}
-
-private final class FailingObserverDirtinessStore: BackgroundObserverDirtinessStoring {
-    private let failLoad: Bool
-
-    init(failLoad: Bool) {
-        self.failLoad = failLoad
-    }
-
-    func loadGenerations() throws -> [String: Int] {
-        if failLoad {
-            throw BackgroundSyncSettingsStoreError.persistenceFailed
-        }
-        return [:]
-    }
-
-    func saveGenerations(_ generations: [String: Int]) throws {
-        _ = generations
-        throw BackgroundSyncSettingsStoreError.persistenceFailed
-    }
-}
-
-private enum SyntheticBackgroundLaneFailure: Error {
-    case injected
 
     func testAutomaticLaneTypeCodesExcludeForegroundOnlyDedicatedTypes() {
         let lanes = HealthBridgeBackgroundSync.supportedAutomaticLaneTypeCodes
@@ -798,5 +774,31 @@ private enum SyntheticBackgroundLaneFailure: Error {
         XCTAssertEqual(AutomaticSyncDiagnosticLane(typeCode: "medication_dose_event"), .medication)
         XCTAssertEqual(AutomaticSyncDiagnosticLane.medication.displayName, "medication")
         XCTAssertEqual(AutomaticSyncDiagnosticLane(typeCode: "heart_rate"), .quantity)
+        XCTAssertEqual(BackgroundRecoveryLane(typeCode: "medication_dose_event"), .medication)
+        XCTAssertEqual(BackgroundRecoveryLane(typeCode: "heart_rate"), .quantity)
     }
+}
+
+private final class FailingObserverDirtinessStore: BackgroundObserverDirtinessStoring {
+    private let failLoad: Bool
+
+    init(failLoad: Bool) {
+        self.failLoad = failLoad
+    }
+
+    func loadGenerations() throws -> [String: Int] {
+        if failLoad {
+            throw BackgroundSyncSettingsStoreError.persistenceFailed
+        }
+        return [:]
+    }
+
+    func saveGenerations(_ generations: [String: Int]) throws {
+        _ = generations
+        throw BackgroundSyncSettingsStoreError.persistenceFailed
+    }
+}
+
+private enum SyntheticBackgroundLaneFailure: Error {
+    case injected
 }

@@ -79,19 +79,21 @@ public enum MedicationDoseEventSyncBatchFactory {
 /// simply do not appear. Access is granted once by the manual Sync Now lane.
 ///
 /// Because "no access" and "no new doses" look identical, the background lane never uploads a
-/// cursor-only batch: an empty read must not advance the cursor shared with the foreground lane,
-/// or doses shared later could fall outside the replay window.
+/// cursor-only batch and never moves the cursor it shares with the foreground lane: doses shared
+/// later could otherwise fall outside the replay window. Sync Now advances the cursor.
 public enum MedicationDoseLanePolicy {
     public static let cursorKind = MedicationDoseEventSyncBatchFactory.foregroundCursorKind
     public static let replayOverlapDays = 3
+    public static let automaticMaxLookbackDays = 7
 
     public static func requestsPerObjectAuthorization(for mode: HealthBridgeSyncExecutionMode) -> Bool {
         mode.shouldRequestReadAuthorization
     }
 
     /// Start of the read window. With a usable cursor both modes replay the last
-    /// `replayOverlapDays` before it (the receiver dedups by record id). Without one, the
-    /// foreground lane honours the history depth and the background lane reads one day.
+    /// `replayOverlapDays` before it (the receiver dedups by record id); the background lane never
+    /// reads further back than `automaticMaxLookbackDays`. Without a cursor, the foreground lane
+    /// honours the history depth and the background lane reads one day.
     public static func windowStart(
         mode: HealthBridgeSyncExecutionMode,
         historyFallbackStart: Date,
@@ -105,7 +107,7 @@ public enum MedicationDoseLanePolicy {
         } else {
             fallbackStart = historyFallbackStart
         }
-        return ForegroundSyncWindowPolicy.windowStart(
+        let start = ForegroundSyncWindowPolicy.windowStart(
             fallbackStart: fallbackStart,
             end: end,
             cursorValue: cursorValue,
@@ -113,18 +115,22 @@ public enum MedicationDoseLanePolicy {
             alignToStartOfDay: false,
             calendar: calendar
         )
+        guard mode == .automatic else { return start }
+        // The background lane does not move the cursor, so bound its reads: a stale foreground
+        // cursor must not make every background run re-upload the whole backlog.
+        let earliest = end.addingTimeInterval(-TimeInterval(automaticMaxLookbackDays * 24 * 60 * 60))
+        return max(start, earliest)
     }
 
-    /// The background lane only persists the shared cursor when it started from a usable one; the
-    /// foreground lane establishes it.
+    /// Only the foreground lane persists the shared cursor. A background read can be partial
+    /// (per-object access may cover only some medications) and cannot tell "no access" from "no
+    /// doses", so letting it advance the cursor could hide doses the user shares later.
     public static func shouldPersistCursor(
         mode: HealthBridgeSyncExecutionMode,
         cursorValue: String?,
         end: Date
     ) -> Bool {
-        mode.shouldPersistSharedProgress(
-            hadUsableCursor: ForegroundSyncWindowPolicy.hasUsableCursorValue(cursorValue, before: end)
-        )
+        mode == .foreground
     }
 
     public static func shouldUpload(_ batch: HealthBridgeBatchV1, mode: HealthBridgeSyncExecutionMode) -> Bool {
