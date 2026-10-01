@@ -24,6 +24,7 @@ receiver-specific parts stay here.
 - Version: do not bump the iOS version by hand. The `Build unsigned IPA` workflow stamps both the marketing version and the build number as `1.2.<run number>`; the tracked values (`MARKETING_VERSION` 1.2.0, `CURRENT_PROJECT_VERSION` 50, `component-versions.json` `ios_companion`) are placeholders that never change on an app change.
 
 ## Modifications (newest first)
+- Upstream sync, 2026-10-01: upstream checked through 8e4065e; took the live-read test from 27ef4a4; skipped version bump, release docs, release-guardrail tests; urllib3 already in PR #35.
 - 2026-09-29: ZIP64 support and clearer errors in the export.zip reader (`MinimalZipReader`), including a disk-number check for split archives. Issue and privacy links, SUPPORT/SECURITY routing, plain-language usage strings, plurals, a Diagnostics page and export-sheet fixes; no sync, outbox or pairing change.
 - 2026-09-29: README gains a "Use it with Hermes Agent" section linking the companion plugins `hermes-healthrelay` (read-only MCP + skills) and `hermes-health-insights` (local analysis CLI + skills). No code change.
 - 2026-09-29: beta/stable release channels. `Publish IPA release` now creates only GitHub
