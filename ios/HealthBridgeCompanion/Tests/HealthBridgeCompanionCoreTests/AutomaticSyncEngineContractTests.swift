@@ -229,6 +229,32 @@ final class AutomaticSyncEngineContractTests: XCTestCase {
     }
 
     @MainActor
+    func testMedicationLaneReadFailureDoesNotStopOtherLanes() async throws {
+        let fixture = try PendingGenerationFixture()
+        defer { fixture.remove() }
+        try fixture.store.markPendingObserverTypeCodes([
+            "medication_dose_event", "sleep_analysis", "steps",
+        ])
+        let observed = TypeCodeRecorder()
+        let engine = AutomaticSyncEngine(
+            pendingStore: fixture.store,
+            processType: { typeCode, _ in
+                await observed.append(typeCode)
+                return typeCode == "medication_dose_event" ? .retryableReadFailure : .payloadEnqueued
+            }
+        )
+
+        try await engine.requestRun()
+        let processed = await observed.values
+
+        XCTAssertEqual(Set(processed), ["medication_dose_event", "sleep_analysis", "steps"])
+        XCTAssertEqual(
+            try fixture.store.loadPendingObserverTypeCodeGenerations(),
+            ["medication_dose_event": 1, "sleep_analysis": 1, "steps": 1]
+        )
+    }
+
+    @MainActor
     func testObserverOpportunityDoesNotSweepUnrelatedPendingTypes() async throws {
         let fixture = try PendingGenerationFixture()
         defer { fixture.remove() }

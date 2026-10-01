@@ -28,6 +28,7 @@ public final class AutomaticSyncDiagnosticStore {
         AutomaticSyncDiagnosticLane.workouts.rawValue,
         AutomaticSyncDiagnosticLane.sleep.rawValue,
         AutomaticSyncDiagnosticLane.quantity.rawValue,
+        AutomaticSyncDiagnosticLane.medication.rawValue,
     ]
 
     public let fileURL: URL

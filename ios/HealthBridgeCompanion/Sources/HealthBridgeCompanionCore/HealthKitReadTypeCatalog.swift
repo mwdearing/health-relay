@@ -10,6 +10,26 @@ public enum HealthKitReadTypeCatalog {
         healthTypes.compactMap { objectType(for: $0.typeCode) as? HKSampleType }
     }
 
+    /// Sample types for observer queries and background delivery. Unlike `sampleTypes(for:)` this
+    /// includes the per-object medication dose event type, which must never reach
+    /// `requestAuthorization` (it throws); observing it needs no read authorization.
+    public static func observerSampleTypes(for healthTypes: [HealthBridgeHealthType]) -> [HKSampleType] {
+        healthTypes.compactMap { healthType in
+            if healthType.typeCode == HealthBridgeHealthType.medicationDoseEvents.typeCode {
+                return medicationDoseEventSampleType()
+            }
+            return objectType(for: healthType.typeCode) as? HKSampleType
+        }
+    }
+
+    /// nil before iOS 26, where the medication dose event type does not exist.
+    private static func medicationDoseEventSampleType() -> HKSampleType? {
+        if #available(iOS 26.0, macOS 26.0, *) {
+            return HKObjectType.medicationDoseEventType()
+        }
+        return nil
+    }
+
     public static func objectTypes(forTypeCodes typeCodes: [String]) -> [HKObjectType] {
         Array(Set(typeCodes))
             .compactMap(objectType(for:))
@@ -19,6 +39,20 @@ public enum HealthKitReadTypeCatalog {
     public static func availableTypeCodes(forTypeCodes typeCodes: [String]) -> [String] {
         typeCodes
             .filter { objectType(for: $0) != nil }
+            .sorted()
+    }
+
+    /// Type codes the automatic engine may schedule as lanes. Same as `availableTypeCodes` plus the
+    /// medication dose event lane, which is schedulable (it reads without prompting) even though
+    /// it is not an authorization type. Use this only for lane selection, never for authorization.
+    public static func availableLaneTypeCodes(forTypeCodes typeCodes: [String]) -> [String] {
+        typeCodes
+            .filter { typeCode in
+                if typeCode == HealthBridgeHealthType.medicationDoseEvents.typeCode {
+                    return medicationDoseEventSampleType() != nil
+                }
+                return objectType(for: typeCode) != nil
+            }
             .sorted()
     }
 
@@ -139,7 +173,7 @@ public final class HealthKitBackgroundDeliveryCoordinator {
         guard HKHealthStore.isHealthDataAvailable(), isCurrent() else { return }
 
         for healthType in healthTypes {
-            guard let sampleType = HealthKitReadTypeCatalog.sampleTypes(for: [healthType]).first else {
+            guard let sampleType = HealthKitReadTypeCatalog.observerSampleTypes(for: [healthType]).first else {
                 continue
             }
             registrationTypes[healthType.typeCode] = sampleType
@@ -239,7 +273,7 @@ public final class HealthKitBackgroundDeliveryCoordinator {
         }
         stopActiveObserverQueries()
 
-        let sampleTypes = HealthKitReadTypeCatalog.sampleTypes(for: healthTypes)
+        let sampleTypes = HealthKitReadTypeCatalog.observerSampleTypes(for: healthTypes)
         for sampleType in sampleTypes {
             healthStore.disableBackgroundDelivery(for: sampleType) { _, _ in }
         }

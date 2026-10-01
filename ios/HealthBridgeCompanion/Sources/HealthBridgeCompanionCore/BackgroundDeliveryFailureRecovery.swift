@@ -1,7 +1,7 @@
 import Foundation
 
 public enum BackgroundRecoveryLane: String, Codable, CaseIterable, Sendable {
-    case steps, dailyActivity = "daily_activity", workouts, sleep, quantity
+    case steps, dailyActivity = "daily_activity", workouts, sleep, quantity, medication
 
     public init(typeCode: String) {
         switch AutomaticSyncDiagnosticLane(typeCode: typeCode) {
@@ -9,6 +9,7 @@ public enum BackgroundRecoveryLane: String, Codable, CaseIterable, Sendable {
         case .dailyActivity: self = .dailyActivity
         case .workouts: self = .workouts
         case .sleep: self = .sleep
+        case .medication: self = .medication
         default: self = .quantity
         }
     }

@@ -1,6 +1,10 @@
 import XCTest
 @testable import HealthBridgeCompanionCore
 
+#if canImport(HealthKit)
+import HealthKit
+#endif
+
 final class BackgroundSyncTests: XCTestCase {
     func testLastRunUserVisibleSummaryDoesNotIncludePersistedDetails() {
         let lastRun = BackgroundSyncLastRun(
@@ -341,7 +345,7 @@ final class BackgroundSyncTests: XCTestCase {
     func testBackgroundDeliveryTracksValidatedForegroundLanesIncludingSleep() {
         XCTAssertEqual(
             HealthBridgeBackgroundSync.observedHealthTypes.map(\.typeCode),
-            ["steps", "workout", "sleep_analysis"]
+            ["steps", "workout", "sleep_analysis", "medication_dose_event"]
         )
     }
 
@@ -354,7 +358,10 @@ final class BackgroundSyncTests: XCTestCase {
                     "oxygen_saturation",
                 ]
             ).map(\.typeCode),
-            ["steps", "workout", "sleep_analysis", "energy", "heart_rate", "oxygen_saturation"]
+            [
+                "steps", "workout", "sleep_analysis", "medication_dose_event",
+                "energy", "heart_rate", "oxygen_saturation",
+            ]
         )
     }
 
@@ -363,7 +370,9 @@ final class BackgroundSyncTests: XCTestCase {
             HealthBridgeBackgroundSync.allKnownBackgroundDeliveryHealthTypes.map(\.typeCode)
         )
 
-        XCTAssertTrue(knownTypeCodes.isSuperset(of: ["steps", "workout", "sleep_analysis"]))
+        XCTAssertTrue(knownTypeCodes.isSuperset(of: [
+            "steps", "workout", "sleep_analysis", "medication_dose_event",
+        ]))
         XCTAssertTrue(
             knownTypeCodes.isSuperset(
                 of: HealthBridgeBackgroundSync.supportedAutomaticQuantityTypeCodes
@@ -382,7 +391,10 @@ final class BackgroundSyncTests: XCTestCase {
 
         XCTAssertEqual(
             plan.observedHealthTypes.map(\.typeCode),
-            ["steps", "workout", "sleep_analysis", "heart_rate", "oxygen_saturation", "weight"]
+            [
+                "steps", "workout", "sleep_analysis", "medication_dose_event",
+                "heart_rate", "oxygen_saturation", "weight",
+            ]
         )
     }
 
@@ -685,19 +697,44 @@ final class BackgroundSyncTests: XCTestCase {
     }
 
     #if canImport(HealthKit)
-    func testBackgroundDeliveryObservedTypesMapToHealthKitSampleTypes() {
+    func testBackgroundDeliveryObservedTypesMapToHealthKitSampleTypes() throws {
+        guard #available(iOS 26.0, macOS 26.0, *) else {
+            throw XCTSkip("Medication dose events need the iOS 26 SDK runtime.")
+        }
         XCTAssertEqual(
-            HealthKitReadTypeCatalog.sampleTypes(for: HealthBridgeBackgroundSync.observedHealthTypes).count,
-            3
+            HealthKitReadTypeCatalog.observerSampleTypes(for: HealthBridgeBackgroundSync.observedHealthTypes).count,
+            4
         )
         XCTAssertEqual(
-            HealthKitReadTypeCatalog.sampleTypes(
+            HealthKitReadTypeCatalog.observerSampleTypes(
                 for: HealthBridgeBackgroundSync.observedHealthTypes(
                     automaticQuantityTypeCodes: ["heart_rate"]
                 )
             ).count,
-            4
+            5
         )
+    }
+
+    func testMedicationObserverTypeResolvesWithoutEnteringTheAuthorizationSet() throws {
+        guard #available(iOS 26.0, macOS 26.0, *) else {
+            throw XCTSkip("Medication dose events need the iOS 26 SDK runtime.")
+        }
+        XCTAssertEqual(
+            HealthKitReadTypeCatalog.observerSampleTypes(for: [.medicationDoseEvents]).map(\.identifier),
+            [HKObjectType.medicationDoseEventType().identifier]
+        )
+        XCTAssertEqual(
+            HealthKitReadTypeCatalog.availableLaneTypeCodes(forTypeCodes: ["medication_dose_event"]),
+            ["medication_dose_event"]
+        )
+        XCTAssertTrue(
+            HealthKitReadTypeCatalog.availableTypeCodes(forTypeCodes: ["medication_dose_event"]).isEmpty
+        )
+        // requestAuthorization throws for per-object types: they must stay out of these sets.
+        XCTAssertTrue(HealthKitReadTypeCatalog.objectTypes(forTypeCodes: ["medication_dose_event"]).isEmpty)
+        XCTAssertTrue(HealthKitReadTypeCatalog.objectTypes(for: [.medicationDoseEvents]).isEmpty)
+        XCTAssertTrue(HealthKitReadTypeCatalog.sampleTypes(for: [.medicationDoseEvents]).isEmpty)
+        XCTAssertTrue(HealthKitReadTypeCatalog.sampleTypes(forTypeCodes: ["medication_dose_event"]).isEmpty)
     }
     #endif
 
@@ -706,6 +743,39 @@ final class BackgroundSyncTests: XCTestCase {
             HealthBridgeBackgroundSync.appRefreshIdentifier,
             "\(HealthBridgeAppIdentity.bundleIdentifier).refresh"
         )
+    }
+
+    func testAutomaticLaneTypeCodesExcludeForegroundOnlyDedicatedTypes() {
+        let lanes = HealthBridgeBackgroundSync.supportedAutomaticLaneTypeCodes
+        let unified = HealthBridgeBackgroundSync.supportedUnifiedReadTypeCodes
+
+        XCTAssertTrue(unified.contains("electrocardiogram"))
+        XCTAssertFalse(lanes.contains("electrocardiogram"))
+        XCTAssertTrue(lanes.contains("medication_dose_event"))
+        for code in ["steps", "workout", "sleep_analysis", "heart_rate", "dietary_zinc"] {
+            XCTAssertTrue(lanes.contains(code), code)
+        }
+        XCTAssertEqual(Set(lanes).subtracting(unified), ["medication_dose_event"])
+    }
+
+    func testMedicationLaneIsSchedulableInTheBackgroundButNeverPartOfReadAuthorization() {
+        // The unified read set feeds requestAuthorization, which throws for per-object types.
+        XCTAssertFalse(
+            HealthBridgeBackgroundSync.supportedUnifiedReadTypeCodes.contains("medication_dose_event")
+        )
+        XCTAssertFalse(HealthBridgeHealthType.dedicatedSyncTypes.contains(.medicationDoseEvents))
+        XCTAssertTrue(
+            HealthBridgeBackgroundSync.supportedAutomaticLaneTypeCodes.contains("medication_dose_event")
+        )
+        XCTAssertTrue(HealthKitTypeCatalog.entry(for: "medication_dose_event")?.backgroundEligible ?? false)
+    }
+
+    func testMedicationDiagnosticLaneIsDistinctAndNamed() {
+        XCTAssertEqual(AutomaticSyncDiagnosticLane(typeCode: "medication_dose_event"), .medication)
+        XCTAssertEqual(AutomaticSyncDiagnosticLane.medication.displayName, "medication")
+        XCTAssertEqual(AutomaticSyncDiagnosticLane(typeCode: "heart_rate"), .quantity)
+        XCTAssertEqual(BackgroundRecoveryLane(typeCode: "medication_dose_event"), .medication)
+        XCTAssertEqual(BackgroundRecoveryLane(typeCode: "heart_rate"), .quantity)
     }
 }
 
@@ -731,17 +801,4 @@ private final class FailingObserverDirtinessStore: BackgroundObserverDirtinessSt
 
 private enum SyntheticBackgroundLaneFailure: Error {
     case injected
-
-    func testAutomaticLaneTypeCodesExcludeForegroundOnlyDedicatedTypes() {
-        let lanes = HealthBridgeBackgroundSync.supportedAutomaticLaneTypeCodes
-        let unified = HealthBridgeBackgroundSync.supportedUnifiedReadTypeCodes
-
-        XCTAssertTrue(unified.contains("electrocardiogram"))
-        XCTAssertFalse(lanes.contains("electrocardiogram"))
-        XCTAssertFalse(lanes.contains("medication_dose_event"))
-        for code in ["steps", "workout", "sleep_analysis", "heart_rate", "dietary_zinc"] {
-            XCTAssertTrue(lanes.contains(code), code)
-        }
-        XCTAssertEqual(Set(lanes).subtracting(unified), [])
-    }
 }

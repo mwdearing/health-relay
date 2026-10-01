@@ -450,7 +450,11 @@ public enum HealthBridgeBackgroundSync {
         HealthBridgeAppIdentity.appRefreshIdentifier
     }
     public static let defaultMinimumInterval: TimeInterval = 15 * 60
-    public static let defaultObservedHealthTypes: [HealthBridgeHealthType] = [.steps, .workouts, .sleepAnalysis]
+    /// HealthRelay: `.medicationDoseEvents` is observed so a newly logged dose wakes the app. It is
+    /// resolved through `HealthKitReadTypeCatalog.observerSampleTypes`, never the authorization set.
+    public static let defaultObservedHealthTypes: [HealthBridgeHealthType] = [
+        .steps, .workouts, .sleepAnalysis, .medicationDoseEvents,
+    ]
     public static let dailyActivityTypeCodes = [
         "basal_energy",
         "distance_walking_running",
@@ -476,10 +480,16 @@ public enum HealthBridgeBackgroundSync {
     /// catalog entries that are not background-eligible (HealthRelay: electrocardiograms are a
     /// dedicated read type for authorization and disclosure, but only the foreground lane
     /// syncs them; scheduling them as a quantity lane can never run and stalls the cycle).
+    ///
+    /// Medication dose events are a background-eligible lane but deliberately NOT part of the
+    /// unified read set: that set feeds `requestAuthorization`, which throws for per-object types.
+    /// The lane reads without prompting (see `MedicationDoseLanePolicy`).
     public static var supportedAutomaticLaneTypeCodes: [String] {
-        supportedUnifiedReadTypeCodes.filter { typeCode in
-            HealthKitTypeCatalog.entry(for: typeCode)?.backgroundEligible ?? true
-        }
+        (supportedUnifiedReadTypeCodes + [HealthBridgeHealthType.medicationDoseEvents.typeCode])
+            .filter { typeCode in
+                HealthKitTypeCatalog.entry(for: typeCode)?.backgroundEligible ?? true
+            }
+            .sorted()
     }
 
     public static var observedHealthTypes: [HealthBridgeHealthType] {
