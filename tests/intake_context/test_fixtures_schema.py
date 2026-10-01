@@ -57,6 +57,7 @@ SEMANTIC_NEGATIVE = {
     "invalid_impossible_timestamp.json": "invalid_timestamp",
     "invalid_localtime_time_zone.json": "unknown_time_zone",
     "invalid_leap_second.json": "invalid_timestamp",
+    "invalid_link_to_compound.json": "link_to_non_nutrient",
 }
 UNPARSEABLE_NEGATIVE = {
     "invalid_duplicate_object_name.json": "duplicate object name",
@@ -934,3 +935,16 @@ def test_pseudo_time_zones_are_rejected_even_when_the_host_lists_them(
         reference.time_zones.cache_clear()
 
     assert zones == frozenset({"America/Chicago"})
+
+
+def test_writer_bundle_change_moves_only_the_client_payload_hash() -> None:
+    batch = _example()
+    operation = _operations(batch)[0]
+    before = expected_hashes(batch, operation)
+
+    batch["writer_bundle_id"] = "com.example.other.writer"
+    after = expected_hashes(batch, operation)
+
+    assert after["client_payload_hash"] != before["client_payload_hash"]
+    assert after["domain_facts_hash"] == before["domain_facts_hash"]
+    assert after["projection_hash"] == before["projection_hash"]

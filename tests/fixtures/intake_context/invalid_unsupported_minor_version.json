@@ -58,7 +58,7 @@
       "nutrition_completeness": "partial",
       "domain_facts_hash": "sha256:93bb96b900c8d22d77630236eb60ec9c453e0627009d9fe01041ea3ef438c4f0",
       "projection_hash": "sha256:8d5f54713418cd2f525dbf176e4d9e6c73241ded8ac5f9288db6e0179b8f71fd",
-      "client_payload_hash": "sha256:7f372efa898437ea41f35493aac0294c051a5f4c65f0f4b52193e6e39de7d048"
+      "client_payload_hash": "sha256:5352f083497dc647ca545f5473f2b6edc6ebc7aa5ea51d6654b267bdcd1556ab"
     }
   ]
 }

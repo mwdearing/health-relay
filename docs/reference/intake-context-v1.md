@@ -82,7 +82,8 @@ Each makes the operation a `permanent_failure`:
 
 - `component_id` is unique among the facts of one `upsert`.
 - Every link's `component_id` in an `upsert` names a fact of that same
-  `upsert`.
+  `upsert`, and that fact is a `nutrient`. Compounds and blends have no
+  HealthKit quantity type and travel in the context only.
 - A `(component_id, healthkit_sample_uuid)` pair appears at most once in one
   `healthkit_links` array, in an `upsert` and in a `link_projection`.
 - `time_zone` is a name in the IANA time zone database. Host-local or
@@ -330,6 +331,7 @@ Present on every operation. The digest of one object:
 ```json
 {
   "producer_id": "<batch producer_id>",
+  "writer_bundle_id": "<batch writer_bundle_id>",
   "installation_id": "<batch installation_id>",
   "schema_version": "<batch schema_version>",
   "operation": "<the operation object without its own client_payload_hash>"
@@ -343,7 +345,8 @@ Use: it identifies the delivered content of one `operation_id`. The same
 `operation_id` with the same `client_payload_hash` is a duplicate. The same
 `operation_id` with a different `client_payload_hash` is a conflict, never a
 duplicate success. It is the only digest that changes when only the installation
-changes.
+or the asserted HealthKit writer (`writer_bundle_id`) changes, so a replay under a
+different writer is a conflict, not a duplicate.
 
 ### Worked values
 
@@ -353,7 +356,7 @@ monohydrate, revision 2, projection sequence 1) the digests are:
 ```text
 domain_facts_hash   sha256:93bb96b900c8d22d77630236eb60ec9c453e0627009d9fe01041ea3ef438c4f0
 projection_hash     sha256:8d5f54713418cd2f525dbf176e4d9e6c73241ded8ac5f9288db6e0179b8f71fd
-client_payload_hash sha256:2d108960383b71144c853a0b6fd8f12ee833d2968b5650df089256173545db96
+client_payload_hash sha256:873b7b15148917d14c17c36b074f8e4bb3fd1d0afea2652c8fb5319e54e81003
 ```
 
 The canonical bytes hashed for `projection_hash` there are:
@@ -381,6 +384,11 @@ An `accepted` result carries the accepted intake revision, the accepted
 projection sequence and a server cursor. A `stale_revision` result carries the
 server's current revision.
 
+Operations in one batch are applied in array order, and each operation sees
+the effects of the operations before it in the same batch: an `upsert` followed
+by a `link_projection` for that same new revision is valid. Each operation still
+gets its own result; a failure does not undo earlier accepted operations.
+
 Receivers evaluate an operation roughly in this order: schema and major version,
 digest recomputation, the `operation_id` receipt (same `client_payload_hash` is a
 duplicate, a different one is a conflict), the tombstone, then the revision and
@@ -396,7 +404,7 @@ projection rules above.
 | `valid_proprietary_blend.json` | A blend with undisclosed members and an unknown energy value. |
 | `scenario_same_operation_different_content.json` | Reusing an `operation_id` with different content is a `domain_conflict`. |
 | `scenario_stale_revision.json` | An older revision delivered after a newer one is `stale_revision`. |
-| `invalid_*.json` | Each is rejected for one reason. Schema failures: unknown major or unsupported minor version, a float amount, an unknown property, a delete carrying facts, an unknown value with an amount, an upsert with a sequence other than 1, a link projection with sequence 1, a revision above the signed 64-bit range, a compound without a quantity basis or with another role, a nutrient with the compound role. Failures of the rules beyond the schema: a duplicate component ID, a duplicate link, a link to a component outside the upsert, an unknown time zone, the host-local `localtime` zone, an impossible timestamp, a leap second. Failures at parse time: a duplicate object name, a float spelling of `revision`, `projection_sequence` or `sync_version`, an unpaired surrogate. |
+| `invalid_*.json` | Each is rejected for one reason. Schema failures: unknown major or unsupported minor version, a float amount, an unknown property, a delete carrying facts, an unknown value with an amount, an upsert with a sequence other than 1, a link projection with sequence 1, a revision above the signed 64-bit range, a compound without a quantity basis or with another role, a nutrient with the compound role. Failures of the rules beyond the schema: a duplicate component ID, a duplicate link, a link to a component outside the upsert, a link to a compound fact, an unknown time zone, the host-local `localtime` zone, an impossible timestamp, a leap second. Failures at parse time: a duplicate object name, a float spelling of `revision`, `projection_sequence` or `sync_version`, an unpaired surrogate. |
 
 A scenario is `{ "description": ..., "steps": [ { "batch": ..., "expect": [ {
 "operation_id": ..., "result": ... } ] } ] }`, with one `expect` entry per

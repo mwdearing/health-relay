@@ -167,6 +167,7 @@ def client_payload_hash(batch: JsonObject, operation: JsonObject) -> str:
     return digest(
         {
             "producer_id": batch["producer_id"],
+            "writer_bundle_id": batch["writer_bundle_id"],
             "installation_id": batch["installation_id"],
             "schema_version": batch["schema_version"],
             "operation": body,
@@ -255,17 +256,31 @@ def _operation_errors(operation: JsonObject, path: str) -> Iterator[str]:
     if isinstance(zone, str) and zone not in time_zones():
         yield f"unknown_time_zone at {path}/time_zone: {zone} is not an IANA zone"
     facts = cast("list[JsonObject]", operation.get("facts", []))
-    component_ids: set[str] = set()
+    yield from _upsert_component_errors(facts, links, path)
+
+
+def _upsert_component_errors(
+    facts: list[JsonObject], links: list[JsonObject], path: str
+) -> Iterator[str]:
+    kinds: dict[str, object] = {}
     for fact in facts:
         component_id = cast("str", fact["component_id"])
-        if component_id in component_ids:
+        if component_id in kinds:
             yield f"duplicate_component_id at {path}/facts: {component_id}"
-        component_ids.add(component_id)
+        kinds[component_id] = fact.get("kind")
     for link in links:
-        if link["component_id"] not in component_ids:
+        component_id = cast("str", link["component_id"])
+        if component_id not in kinds:
             yield (
                 f"unknown_link_component at {path}/healthkit_links: "
-                f"{link['component_id']} is not a fact of this upsert"
+                f"{component_id} is not a fact of this upsert"
+            )
+        elif kinds[component_id] != "nutrient":
+            # Only nutrients have a HealthKit quantity type; compounds and blends
+            # travel in the context only.
+            yield (
+                f"link_to_non_nutrient at {path}/healthkit_links: "
+                f"{component_id} is a {kinds[component_id]}, not a nutrient"
             )
 
 

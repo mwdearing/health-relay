@@ -43,32 +43,22 @@
           "quantity_basis": "compound_mass",
           "aggregation_role": "compound_measurement",
           "provenance": "label_confirmed"
-        },
-        {
-          "component_id": "water",
-          "kind": "nutrient",
-          "code": "hydration",
-          "amount": "500",
-          "unit": "mL",
-          "value_state": "known",
-          "aggregation_role": "context_only",
-          "provenance": "user_confirmed"
         }
       ],
       "healthkit_links": [
         {
-          "component_id": "water",
+          "component_id": "creatine-monohydrate",
           "healthkit_sample_uuid": "2c932bd1-c46d-4e38-b481-e0d842fdd429",
           "healthkit_type": "HKQuantityTypeIdentifierDietaryWater",
-          "sync_identifier": "intake:e6677963-418c-4027-b563-551d8a531eed:water",
+          "sync_identifier": "intake:e6677963-418c-4027-b563-551d8a531eed:creatine-monohydrate",
           "sync_version": 2,
           "disposition": "active"
         }
       ],
       "nutrition_completeness": "partial",
-      "domain_facts_hash": "sha256:98b285ff53058db29cf923c75fb9ae9656e685e20d20b0b15bf75714f0275a2f",
-      "projection_hash": "sha256:8d5f54713418cd2f525dbf176e4d9e6c73241ded8ac5f9288db6e0179b8f71fd",
-      "client_payload_hash": "sha256:09b19d92af4a5217e086234495dba1362d2ffe8e6ee1331f44a35a798d220030"
+      "domain_facts_hash": "sha256:93bb96b900c8d22d77630236eb60ec9c453e0627009d9fe01041ea3ef438c4f0",
+      "projection_hash": "sha256:884d172ce18adc3e359afe8b09ba16f07fcd39e1b9bb5b64916def8aa52a5695",
+      "client_payload_hash": "sha256:0749f29a266b577de9a2f199287d0e3e8e7e06fcde1259a8a621766474164db0"
     }
   ]
 }
