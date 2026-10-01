@@ -1,0 +1,73 @@
+{
+  "schema": "healthrelay.intake-context",
+  "schema_version": "1.0",
+  "batch_id": "2e8b5d93-c071-4f6a-8a14-6d9f0c3b7e52",
+  "producer_id": "nutrition-app",
+  "writer_bundle_id": "com.example.healthrelay.nutrition",
+  "installation_id": "507b8fbb-78d3-450c-a88f-487e90df92e6",
+  "operations": [
+    {
+      "operation_id": "f6a0c3e9-5b72-4d18-9c4e-a83d1b7f2e60",
+      "operation": "upsert",
+      "intake_id": "7d2e9b40-1c85-4a3f-9e67-f0a8b5c3d214",
+      "revision": 1,
+      "projection_sequence": 1,
+      "occurred_at": "2026-09-30T07:45:00-05:00",
+      "time_zone": "America/Chicago",
+      "recorded_at": "2026-09-30T12:46:10Z",
+      "category": "supplement",
+      "display_name": "Synthetic pre-workout drink mix",
+      "serving": {
+        "amount": "1",
+        "unit": "scoop"
+      },
+      "facts": [
+        {
+          "component_id": "caffeine",
+          "kind": "nutrient",
+          "code": "dietary_caffeine",
+          "amount": "200",
+          "unit": "mg",
+          "value_state": "known",
+          "aggregation_role": "context_only",
+          "provenance": "label_confirmed"
+        },
+        {
+          "component_id": "energy-blend",
+          "kind": "blend",
+          "code": "proprietary_energy_blend",
+          "label_name": "Energy Blend",
+          "amount": "1500",
+          "unit": "mg",
+          "value_state": "known",
+          "aggregation_role": "blend_total_only",
+          "provenance": "label_confirmed",
+          "members": [
+            {
+              "label_name": "Taurine"
+            },
+            {
+              "label_name": "Guarana extract"
+            },
+            {
+              "label_name": "Ginseng root extract"
+            }
+          ]
+        },
+        {
+          "component_id": "energy-kcal",
+          "kind": "nutrient",
+          "code": "dietary_energy_consumed",
+          "value_state": "unknown",
+          "aggregation_role": "context_only",
+          "provenance": "label_confirmed"
+        }
+      ],
+      "healthkit_links": [],
+      "nutrition_completeness": "partial",
+      "domain_facts_hash": "sha256:8f5abab1c391270f806fcdc1aad8a29084db9b446bae4e22fdcf4e98bb90043a",
+      "projection_hash": "sha256:38d13e3c4654aa9c0e4dcc0f89d5f539ffc56163372085eb4450dbe5c1acd3b9",
+      "client_payload_hash": "sha256:1fd70b8db39557c8613184c5a8f0d6c5bd5cdf6ae148856949ea42725f6e3129"
+    }
+  ]
+}
