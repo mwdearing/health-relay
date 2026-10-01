@@ -1,0 +1,149 @@
+{
+  "description": "Revision 3 of an intake is accepted, then a delayed delivery of revision 2 arrives and is reported as a stale revision.",
+  "steps": [
+    {
+      "batch": {
+        "schema": "healthrelay.intake-context",
+        "schema_version": "1.0",
+        "batch_id": "6a1d8e35-f492-4c70-8b3a-d5e9c0f1a728",
+        "producer_id": "nutrition-app",
+        "writer_bundle_id": "com.example.healthrelay.nutrition",
+        "installation_id": "507b8fbb-78d3-450c-a88f-487e90df92e6",
+        "operations": [
+          {
+            "operation_id": "3b7e1f94-a8c2-4d06-b5e9-0c4d8a2f6713",
+            "operation": "upsert",
+            "intake_id": "e6677963-418c-4027-b563-551d8a531eed",
+            "revision": 3,
+            "projection_sequence": 1,
+            "occurred_at": "2026-09-30T12:30:00-05:00",
+            "time_zone": "America/Chicago",
+            "recorded_at": "2026-09-30T17:40:00Z",
+            "category": "beverage",
+            "display_name": "Water with creatine (half dose)",
+            "serving": {
+              "amount": "500",
+              "unit": "mL"
+            },
+            "facts": [
+              {
+                "component_id": "water",
+                "kind": "nutrient",
+                "code": "hydration",
+                "amount": "500",
+                "unit": "mL",
+                "value_state": "known",
+                "aggregation_role": "context_only",
+                "provenance": "user_confirmed"
+              },
+              {
+                "component_id": "creatine-monohydrate",
+                "kind": "compound",
+                "code": "creatine_monohydrate",
+                "label_name": "Creatine monohydrate",
+                "amount": "2.5",
+                "unit": "g",
+                "value_state": "known",
+                "quantity_basis": "compound_mass",
+                "aggregation_role": "compound_measurement",
+                "provenance": "label_confirmed"
+              }
+            ],
+            "healthkit_links": [
+              {
+                "component_id": "water",
+                "healthkit_sample_uuid": "2c932bd1-c46d-4e38-b481-e0d842fdd429",
+                "healthkit_type": "HKQuantityTypeIdentifierDietaryWater",
+                "sync_identifier": "intake:e6677963-418c-4027-b563-551d8a531eed:water",
+                "sync_version": 3,
+                "disposition": "active"
+              }
+            ],
+            "nutrition_completeness": "partial",
+            "domain_facts_hash": "sha256:08a23c8e193ccc95385d8956389eb45891f00ce5d5dad2b5e73c6c13dd7d1c86",
+            "projection_hash": "sha256:ff76abeedf63db62229c91e42befcaf4b88442b91d3b279783c9a1931f637495",
+            "client_payload_hash": "sha256:04227f2db1cb3595e0f8e1fc9be6ee44cc035a107c6e91be8b28fb557b3fdaf0"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "operation_id": "3b7e1f94-a8c2-4d06-b5e9-0c4d8a2f6713",
+          "result": "accepted"
+        }
+      ]
+    },
+    {
+      "batch": {
+        "schema": "healthrelay.intake-context",
+        "schema_version": "1.0",
+        "batch_id": "0bda35fc-3eab-47ce-9e31-c684343dd8d7",
+        "producer_id": "nutrition-app",
+        "writer_bundle_id": "com.example.healthrelay.nutrition",
+        "installation_id": "507b8fbb-78d3-450c-a88f-487e90df92e6",
+        "operations": [
+          {
+            "operation_id": "8b8719ea-6bb3-4dd4-8508-a63ee33d1381",
+            "operation": "upsert",
+            "intake_id": "e6677963-418c-4027-b563-551d8a531eed",
+            "revision": 2,
+            "projection_sequence": 1,
+            "occurred_at": "2026-09-30T12:30:00-05:00",
+            "time_zone": "America/Chicago",
+            "recorded_at": "2026-09-30T17:31:02Z",
+            "category": "beverage",
+            "display_name": "Water with creatine",
+            "serving": {
+              "amount": "500",
+              "unit": "mL"
+            },
+            "facts": [
+              {
+                "component_id": "water",
+                "kind": "nutrient",
+                "code": "hydration",
+                "amount": "500",
+                "unit": "mL",
+                "value_state": "known",
+                "aggregation_role": "context_only",
+                "provenance": "user_confirmed"
+              },
+              {
+                "component_id": "creatine-monohydrate",
+                "kind": "compound",
+                "code": "creatine_monohydrate",
+                "label_name": "Creatine monohydrate",
+                "amount": "5",
+                "unit": "g",
+                "value_state": "known",
+                "quantity_basis": "compound_mass",
+                "aggregation_role": "compound_measurement",
+                "provenance": "label_confirmed"
+              }
+            ],
+            "healthkit_links": [
+              {
+                "component_id": "water",
+                "healthkit_sample_uuid": "2c932bd1-c46d-4e38-b481-e0d842fdd429",
+                "healthkit_type": "HKQuantityTypeIdentifierDietaryWater",
+                "sync_identifier": "intake:e6677963-418c-4027-b563-551d8a531eed:water",
+                "sync_version": 2,
+                "disposition": "active"
+              }
+            ],
+            "nutrition_completeness": "partial",
+            "domain_facts_hash": "sha256:93bb96b900c8d22d77630236eb60ec9c453e0627009d9fe01041ea3ef438c4f0",
+            "projection_hash": "sha256:8d5f54713418cd2f525dbf176e4d9e6c73241ded8ac5f9288db6e0179b8f71fd",
+            "client_payload_hash": "sha256:2d108960383b71144c853a0b6fd8f12ee833d2968b5650df089256173545db96"
+          }
+        ]
+      },
+      "expect": [
+        {
+          "operation_id": "8b8719ea-6bb3-4dd4-8508-a63ee33d1381",
+          "result": "stale_revision"
+        }
+      ]
+    }
+  ]
+}
