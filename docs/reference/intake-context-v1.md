@@ -85,9 +85,13 @@ Each makes the operation a `permanent_failure`:
   `upsert`.
 - A `(component_id, healthkit_sample_uuid)` pair appears at most once in one
   `healthkit_links` array, in an `upsert` and in a `link_projection`.
-- `time_zone` is a name in the IANA time zone database.
+- `time_zone` is a name in the IANA time zone database. Host-local or
+  implementation-specific keys (`localtime`, `posixrules`, `Factory`, and the
+  `posix/` and `right/` copies) are rejected: they do not name one zone on every
+  receiver.
 - Every timestamp is a real RFC 3339 instant: a calendar date that exists, an
-  hour from 0 to 23, and in-range minutes, seconds and offsets.
+  hour from 0 to 23, minutes and seconds from 0 to 59, and an in-range offset. A
+  leap second (`:60`) is rejected; the producing platforms cannot represent one.
 
 ## Identity and scope
 
@@ -140,7 +144,8 @@ Required fields: `operation_id`, `operation`, `intake_id`, `revision`,
 
 Reports a change in HealthKit links without rewriting nutrition facts. A later
 HealthKit save may reveal a sample UUID after the facts were already accepted.
-It carries `intake_id`, the target intake `revision`, a `projection_sequence`,
+It carries `intake_id`, the target intake `revision`, a `projection_sequence`
+of 2 or more (sequence 1 belongs to the revision's upsert),
 the complete `healthkit_links` snapshot, its own `operation_id`, and the
 `projection_hash` and `client_payload_hash` digests. It has no `facts` and no
 `domain_facts_hash`. Its facts are not in the operation, so the receiver
@@ -163,7 +168,7 @@ Each fact describes one component of the intake.
 | `value_state` | `known`, `unknown`, `not_applicable` or `below_reporting_threshold`. |
 | `quantity_basis` | `compound_mass`, `active_nutrient_mass` or `unknown`. Required for a compound, optional otherwise. |
 | `aggregation_role` | `context_only`, `compound_measurement` or `blend_total_only`. A compound uses `compound_measurement`, a blend uses `blend_total_only`, and a nutrient never uses `compound_measurement`. |
-| `provenance` | `user_confirmed`, `label_confirmed`, `catalog_reference` or `estimated`. |
+| `provenance` | `user_confirmed`, `label_confirmed`, `ocr_confirmed` (a label read by OCR and confirmed by the user), `catalog_reference`, `recipe_calculated` (derived from a recipe's ingredients) or `estimated`. |
 | `members` | Blends only. Non-empty array of blend members. |
 
 **Decimal strings.** Every amount is a decimal string matching
@@ -172,7 +177,13 @@ floating-point drift cannot enter the contract. The string is hashed exactly as
 written, so `"5"` and `"5.0"` are different content; a sender must keep the
 spelling stable across retries. Only `revision`, `projection_sequence` and
 `sync_version` are integers, and they are written without a decimal point or
-exponent.
+exponent. They range from 1 to 9223372036854775807 (signed 64-bit), the range the
+receiver's SQLite `INTEGER` columns can store.
+
+**Patterns.** Identifier, digest, timestamp and decimal patterns must match the
+whole string. Python's `re` lets `$` match before a final newline, so every
+anchored pattern ends in `(?!\n)$`, which rejects `"value\n"` in both Python and
+ECMA-262 validators.
 
 **Value state.** Unknown is never zero.
 
@@ -385,7 +396,7 @@ projection rules above.
 | `valid_proprietary_blend.json` | A blend with undisclosed members and an unknown energy value. |
 | `scenario_same_operation_different_content.json` | Reusing an `operation_id` with different content is a `domain_conflict`. |
 | `scenario_stale_revision.json` | An older revision delivered after a newer one is `stale_revision`. |
-| `invalid_*.json` | Each is rejected for one reason. Schema failures: unknown major or unsupported minor version, a float amount, an unknown property, a delete carrying facts, an unknown value with an amount, an upsert with a sequence other than 1, a compound without a quantity basis or with another role, a nutrient with the compound role. Failures of the rules beyond the schema: a duplicate component ID, a duplicate link, a link to a component outside the upsert, an unknown time zone, an impossible timestamp. Failures at parse time: a duplicate object name, a float spelling of `revision`, `projection_sequence` or `sync_version`, an unpaired surrogate. |
+| `invalid_*.json` | Each is rejected for one reason. Schema failures: unknown major or unsupported minor version, a float amount, an unknown property, a delete carrying facts, an unknown value with an amount, an upsert with a sequence other than 1, a link projection with sequence 1, a revision above the signed 64-bit range, a compound without a quantity basis or with another role, a nutrient with the compound role. Failures of the rules beyond the schema: a duplicate component ID, a duplicate link, a link to a component outside the upsert, an unknown time zone, the host-local `localtime` zone, an impossible timestamp, a leap second. Failures at parse time: a duplicate object name, a float spelling of `revision`, `projection_sequence` or `sync_version`, an unpaired surrogate. |
 
 A scenario is `{ "description": ..., "steps": [ { "batch": ..., "expect": [ {
 "operation_id": ..., "result": ... } ] } ] }`, with one `expect` entry per

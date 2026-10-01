@@ -196,15 +196,28 @@ def seal(batch: JsonObject) -> JsonObject:
     return batch
 
 
+# Host-local or implementation-specific keys that available_timezones() may list but
+# that do not name one IANA zone everywhere (e.g. "localtime" follows /etc/localtime).
+_PSEUDO_ZONES = frozenset({"localtime", "posixrules", "Factory"})
+_PSEUDO_ZONE_PREFIXES = ("posix/", "right/")
+
+
 @lru_cache(maxsize=1)
-def _time_zones() -> frozenset[str]:
-    return frozenset(available_timezones())
+def time_zones() -> frozenset[str]:
+    """IANA zone names a receiver accepts (host-local pseudo-zones removed)."""
+    return frozenset(
+        zone
+        for zone in available_timezones()
+        if zone not in _PSEUDO_ZONES and not zone.startswith(_PSEUDO_ZONE_PREFIXES)
+    )
 
 
 def _timestamp_is_valid(text: str) -> bool:
-    """RFC 3339 ranges: a real calendar date, hour 0-23, minute and offset in range.
+    """RFC 3339 ranges: a real date, hour 0-23, minute, second and offset in range.
 
-    A second of 60 is allowed for a leap second.
+    A second of 60 is rejected: leap seconds are not representable on the producing
+    platforms, and accepting the numeric range alone would admit instants that never
+    existed.
     """
     match = _TIMESTAMP.fullmatch(text)
     if match is None:
@@ -218,7 +231,7 @@ def _timestamp_is_valid(text: str) -> bool:
     return (
         hour <= 23
         and minute <= 59
-        and second <= 60
+        and second <= 59
         and offset_hour <= 23
         and offset_minute <= 59
     )
@@ -239,7 +252,7 @@ def _operation_errors(operation: JsonObject, path: str) -> Iterator[str]:
     if kind != "upsert":
         return
     zone = operation.get("time_zone")
-    if isinstance(zone, str) and zone not in _time_zones():
+    if isinstance(zone, str) and zone not in time_zones():
         yield f"unknown_time_zone at {path}/time_zone: {zone} is not an IANA zone"
     facts = cast("list[JsonObject]", operation.get("facts", []))
     component_ids: set[str] = set()

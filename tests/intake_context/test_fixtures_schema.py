@@ -10,6 +10,7 @@ import pytest
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
+from tests.intake_context import reference
 from tests.intake_context.reference import (
     FIXTURE_DIR,
     SCHEMA_PATH,
@@ -44,6 +45,8 @@ NEGATIVE = {
     "invalid_compound_without_quantity_basis.json": "quantity_basis",
     "invalid_compound_wrong_role.json": "aggregation_role",
     "invalid_nutrient_compound_measurement.json": "aggregation_role",
+    "invalid_revision_above_int64.json": "maximum",
+    "invalid_link_projection_sequence_one.json": "projection_sequence",
 }
 SEMANTIC_NEGATIVE = {
     "invalid_duplicate_component_id.json": "duplicate_component_id",
@@ -52,6 +55,8 @@ SEMANTIC_NEGATIVE = {
     "invalid_link_unknown_component.json": "unknown_link_component",
     "invalid_unknown_time_zone.json": "unknown_time_zone",
     "invalid_impossible_timestamp.json": "invalid_timestamp",
+    "invalid_localtime_time_zone.json": "unknown_time_zone",
+    "invalid_leap_second.json": "invalid_timestamp",
 }
 UNPARSEABLE_NEGATIVE = {
     "invalid_duplicate_object_name.json": "duplicate object name",
@@ -853,3 +858,79 @@ def test_semantic_errors_report_unpaired_surrogates_and_floats() -> None:
 
     assert any(e.startswith("lone_surrogate") for e in found)
     assert any(e.startswith("float") for e in found)
+
+
+def _top(batch: JsonObject) -> JsonObject:
+    return batch
+
+
+def _upsert(batch: JsonObject) -> JsonObject:
+    return _operations(batch)[0]
+
+
+def _first_link(batch: JsonObject) -> JsonObject:
+    return cast("list[JsonObject]", _upsert(batch)["healthkit_links"])[0]
+
+
+NEWLINE_FIELDS: tuple[tuple[Callable[[JsonObject], JsonObject], str], ...] = (
+    (_top, "batch_id"),
+    (_top, "producer_id"),
+    (_top, "writer_bundle_id"),
+    (_upsert, "intake_id"),
+    (_upsert, "occurred_at"),
+    (_upsert, "time_zone"),
+    (_upsert, "domain_facts_hash"),
+    (_first_fact, "component_id"),
+    (_first_fact, "unit"),
+    (_first_fact, "amount"),
+    (_first_link, "healthkit_type"),
+)
+
+
+@pytest.mark.parametrize(
+    ("holder", "field"), NEWLINE_FIELDS, ids=[field for _, field in NEWLINE_FIELDS]
+)
+def test_anchored_patterns_reject_a_terminal_newline(
+    holder: Callable[[JsonObject], JsonObject], field: str
+) -> None:
+    # Python regular expressions let `$` match before a final newline; the schema
+    # must still reject "value\n" for every anchored identifier, digest and number.
+    batch = _example()
+    parent = holder(batch)
+    original = parent[field]
+    assert isinstance(original, str)
+    assert _errors(batch) == []
+
+    parent[field] = original + "\n"
+
+    assert _errors(batch), f"{field} accepted a terminal newline"
+
+
+@pytest.mark.parametrize("provenance", ["ocr_confirmed", "recipe_calculated"])
+def test_provenance_covers_ocr_and_recipe_sources(provenance: str) -> None:
+    batch = _example()
+    _first_fact(batch)["provenance"] = provenance
+
+    assert _errors(batch) == []
+
+
+def test_pseudo_time_zones_are_rejected_even_when_the_host_lists_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+
+    listed = {
+        "America/Chicago",
+        "localtime",
+        "posixrules",
+        "Factory",
+        "posix/UTC",
+        "right/UTC",
+    }
+    monkeypatch.setattr(reference, "available_timezones", lambda: listed)
+    reference.time_zones.cache_clear()
+    try:
+        zones = reference.time_zones()
+    finally:
+        reference.time_zones.cache_clear()
+
+    assert zones == frozenset({"America/Chicago"})
