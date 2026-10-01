@@ -58,6 +58,9 @@ SEMANTIC_NEGATIVE = {
     "invalid_localtime_time_zone.json": "unknown_time_zone",
     "invalid_leap_second.json": "invalid_timestamp",
     "invalid_link_to_compound.json": "link_to_non_nutrient",
+    "invalid_sample_on_two_components.json": "sample_on_multiple_components",
+    "invalid_link_type_mismatch.json": "healthkit_type_mismatch",
+    "invalid_offset_zone_mismatch.json": "offset_zone_mismatch",
 }
 UNPARSEABLE_NEGATIVE = {
     "invalid_duplicate_object_name.json": "duplicate object name",
@@ -777,11 +780,19 @@ def test_same_component_may_link_different_samples() -> None:
 
 
 @pytest.mark.parametrize(
-    "zone", ["America/Chicago", "Europe/Berlin", "Asia/Kolkata", "UTC"]
+    ("zone", "occurred_at"),
+    [
+        ("America/Chicago", "2026-09-30T12:30:00-05:00"),
+        ("Europe/Berlin", "2026-09-30T19:30:00+02:00"),
+        ("Asia/Kolkata", "2026-09-30T23:00:00+05:30"),
+        ("UTC", "2026-09-30T17:30:00Z"),
+    ],
 )
-def test_iana_time_zones_are_accepted(zone: str) -> None:
+def test_iana_time_zones_are_accepted(zone: str, occurred_at: str) -> None:
+    # The same instant, written with each zone's own offset at that instant.
     batch = _example()
     _operations(batch)[0]["time_zone"] = zone
+    _operations(batch)[0]["occurred_at"] = occurred_at
 
     assert semantic_errors(batch) == []
 
@@ -948,3 +959,25 @@ def test_writer_bundle_change_moves_only_the_client_payload_hash() -> None:
     assert after["client_payload_hash"] != before["client_payload_hash"]
     assert after["domain_facts_hash"] == before["domain_facts_hash"]
     assert after["projection_hash"] == before["projection_hash"]
+
+
+@pytest.mark.parametrize("unit", ["mg\u001e", "mg\u00a0", "m g", "mg\n"])
+def test_unit_pattern_is_printable_ascii_in_every_validator(unit: str) -> None:
+    # ECMA-262 and Python disagree on which characters \S excludes, so units use
+    # an explicit printable-ASCII class that both read the same way.
+    batch = _example()
+    _first_fact(batch)["unit"] = unit
+
+    assert _errors(batch)
+
+
+def test_offset_matching_the_zone_at_that_instant_is_accepted() -> None:
+    batch = _example()
+    operation = _operations(batch)[0]
+    operation["occurred_at"] = (
+        "2026-01-15T12:30:00-06:00"  # Chicago is UTC-6 in January
+    )
+
+    assert not [
+        e for e in semantic_errors(batch) if e.startswith("offset_zone_mismatch")
+    ]

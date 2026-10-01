@@ -86,6 +86,12 @@ Each makes the operation a `permanent_failure`:
   HealthKit quantity type and travel in the context only.
 - A `(component_id, healthkit_sample_uuid)` pair appears at most once in one
   `healthkit_links` array, in an `upsert` and in a `link_projection`.
+- One `healthkit_sample_uuid` is `active` on at most one component in a
+  `healthkit_links` array; a sample is never counted for two components.
+- A link's `healthkit_type` is the type of the linked fact's `code`: `hydration`
+  is `HKQuantityTypeIdentifierDietaryWater`, and every `dietary_<name>` code is
+  `HKQuantityTypeIdentifierDietary<Name>` with each part capitalised
+  (`dietary_vitamin_b6` is `HKQuantityTypeIdentifierDietaryVitaminB6`).
 - `time_zone` is a name in the IANA time zone database. Host-local or
   implementation-specific keys (`localtime`, `posixrules`, `Factory`, and the
   `posix/` and `right/` copies) are rejected: they do not name one zone on every
@@ -93,6 +99,8 @@ Each makes the operation a `permanent_failure`:
 - Every timestamp is a real RFC 3339 instant: a calendar date that exists, an
   hour from 0 to 23, minutes and seconds from 0 to 59, and an in-range offset. A
   leap second (`:60`) is rejected; the producing platforms cannot represent one.
+- The offset of `occurred_at` is the offset of `time_zone` at that instant, so
+  the local wall clock and the instant agree for every consumer.
 
 ## Identity and scope
 
@@ -181,8 +189,9 @@ spelling stable across retries. Only `revision`, `projection_sequence` and
 exponent. They range from 1 to 9223372036854775807 (signed 64-bit), the range the
 receiver's SQLite `INTEGER` columns can store.
 
-**Patterns.** Identifier, digest, timestamp and decimal patterns must match the
-whole string. Python's `re` lets `$` match before a final newline, so every
+**Patterns.** Identifier, digest, timestamp, decimal and unit patterns must match the
+whole string. Units are printable ASCII (`[!-~]`), because ECMA-262 and Python
+disagree on which characters `\S` excludes. Python's `re` lets `$` match before a final newline, so every
 anchored pattern ends in `(?!\n)$`, which rejects `"value\n"` in both Python and
 ECMA-262 validators.
 
@@ -220,8 +229,10 @@ kind may use `compound_measurement`.
 
 A link is a claim that the receiver verifies, not proof. The receiver joins a
 component to an accepted measurement by exact sample UUID, then checks the
-quantity type, the sync identifier and version, and the actual source bundle
-against the registered writer. It never joins on name, timestamp or amount
+quantity type and the actual source bundle against the registered writer. The
+sync identifier and version can be checked only once the HealthKit exporter
+forwards the sample's sync metadata, which the current measurement lane does not
+carry; until then they are recorded from the link and not verified. It never joins on name, timestamp or amount
 alone, and a copied metadata string is not proof of source ownership. Superseded
 and deleted links are kept for audit and never for resurrection. A sample is not
 attributed to more than one active component without a flagged conflict.
@@ -404,7 +415,7 @@ projection rules above.
 | `valid_proprietary_blend.json` | A blend with undisclosed members and an unknown energy value. |
 | `scenario_same_operation_different_content.json` | Reusing an `operation_id` with different content is a `domain_conflict`. |
 | `scenario_stale_revision.json` | An older revision delivered after a newer one is `stale_revision`. |
-| `invalid_*.json` | Each is rejected for one reason. Schema failures: unknown major or unsupported minor version, a float amount, an unknown property, a delete carrying facts, an unknown value with an amount, an upsert with a sequence other than 1, a link projection with sequence 1, a revision above the signed 64-bit range, a compound without a quantity basis or with another role, a nutrient with the compound role. Failures of the rules beyond the schema: a duplicate component ID, a duplicate link, a link to a component outside the upsert, a link to a compound fact, an unknown time zone, the host-local `localtime` zone, an impossible timestamp, a leap second. Failures at parse time: a duplicate object name, a float spelling of `revision`, `projection_sequence` or `sync_version`, an unpaired surrogate. |
+| `invalid_*.json` | Each is rejected for one reason. Schema failures: unknown major or unsupported minor version, a float amount, an unknown property, a delete carrying facts, an unknown value with an amount, an upsert with a sequence other than 1, a link projection with sequence 1, a revision above the signed 64-bit range, a compound without a quantity basis or with another role, a nutrient with the compound role. Failures of the rules beyond the schema: a duplicate component ID, a duplicate link, a link to a component outside the upsert, a link to a compound fact, one sample active on two components, a HealthKit type that does not match the fact's code, an `occurred_at` offset that is not the time zone's offset, an unknown time zone, the host-local `localtime` zone, an impossible timestamp, a leap second. Failures at parse time: a duplicate object name, a float spelling of `revision`, `projection_sequence` or `sync_version`, an unpaired surrogate. |
 
 A scenario is `{ "description": ..., "steps": [ { "batch": ..., "expect": [ {
 "operation_id": ..., "result": ... } ] } ] }`, with one `expect` entry per

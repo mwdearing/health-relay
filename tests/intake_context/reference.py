@@ -8,11 +8,11 @@ import hashlib
 import json
 import re
 from collections.abc import Iterator
-from datetime import date
+from datetime import date, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import NoReturn, TypeAlias, cast
-from zoneinfo import available_timezones
+from zoneinfo import ZoneInfo, available_timezones
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = REPO_ROOT / "schemas" / "healthrelay.intake-context.v1.schema.json"
@@ -139,6 +139,38 @@ def _duplicate_links(links: list[JsonObject]) -> list[tuple[str, str]]:
     return duplicates
 
 
+def _samples_on_several_components(links: list[JsonObject]) -> list[str]:
+    """Sample UUIDs that ACTIVE links attribute to more than one component."""
+    owners: dict[str, set[str]] = {}
+    for link in links:
+        if link.get("disposition") == "active":
+            sample = cast("str", link["healthkit_sample_uuid"])
+            owners.setdefault(sample, set()).add(cast("str", link["component_id"]))
+    return sorted(
+        sample for sample, components in owners.items() if len(components) > 1
+    )
+
+
+def healthkit_type_for(code: str) -> str:
+    """The HealthKit quantity type a nutrient code is written as.
+
+    HealthRelay names water `hydration`; every other nutrient code is
+    `dietary_<name>`, written as HKQuantityTypeIdentifierDietary<Name> with each
+    underscore-separated part capitalised (dietary_vitamin_b6 -> DietaryVitaminB6).
+    """
+    if code == "hydration":
+        return "HKQuantityTypeIdentifierDietaryWater"
+    parts = code.split("_")
+    return "HKQuantityTypeIdentifier" + "".join(
+        part[:1].upper() + part[1:] for part in parts
+    )
+
+
+def _offset_matches_zone(timestamp: str, zone: str) -> bool:
+    instant = datetime.fromisoformat(timestamp)
+    return instant.utcoffset() == instant.astimezone(ZoneInfo(zone)).utcoffset()
+
+
 def projection_hash(batch: JsonObject, operation: JsonObject) -> str:
     links = cast("list[JsonObject]", operation.get("healthkit_links", []))
     if _duplicate_links(links):
@@ -246,28 +278,52 @@ def _operation_errors(operation: JsonObject, path: str) -> Iterator[str]:
             f"duplicate_link at {path}/healthkit_links: "
             f"({component_id}, {sample_uuid}) appears more than once"
         )
+    for sample_uuid in _samples_on_several_components(links):
+        yield (
+            f"sample_on_multiple_components at {path}/healthkit_links: "
+            f"{sample_uuid} is active on more than one component"
+        )
     for field in _TIMESTAMP_FIELDS:
         value = operation.get(field)
         if isinstance(value, str) and not _timestamp_is_valid(value):
             yield f"invalid_timestamp at {path}/{field}: {value} is not a real instant"
     if kind != "upsert":
         return
-    zone = operation.get("time_zone")
-    if isinstance(zone, str) and zone not in time_zones():
-        yield f"unknown_time_zone at {path}/time_zone: {zone} is not an IANA zone"
+    yield from _zone_errors(operation, path)
     facts = cast("list[JsonObject]", operation.get("facts", []))
     yield from _upsert_component_errors(facts, links, path)
+
+
+def _zone_errors(operation: JsonObject, path: str) -> Iterator[str]:
+    zone = operation.get("time_zone")
+    if not isinstance(zone, str):
+        return
+    if zone not in time_zones():
+        yield f"unknown_time_zone at {path}/time_zone: {zone} is not an IANA zone"
+        return
+    occurred = operation.get("occurred_at")
+    if (
+        isinstance(occurred, str)
+        and _timestamp_is_valid(occurred)
+        and not _offset_matches_zone(occurred, zone)
+    ):
+        yield (
+            f"offset_zone_mismatch at {path}/occurred_at: {occurred} is not "
+            f"the {zone} offset at that instant"
+        )
 
 
 def _upsert_component_errors(
     facts: list[JsonObject], links: list[JsonObject], path: str
 ) -> Iterator[str]:
     kinds: dict[str, object] = {}
+    codes: dict[str, str] = {}
     for fact in facts:
         component_id = cast("str", fact["component_id"])
         if component_id in kinds:
             yield f"duplicate_component_id at {path}/facts: {component_id}"
         kinds[component_id] = fact.get("kind")
+        codes[component_id] = cast("str", fact.get("code", ""))
     for link in links:
         component_id = cast("str", link["component_id"])
         if component_id not in kinds:
@@ -281,6 +337,11 @@ def _upsert_component_errors(
             yield (
                 f"link_to_non_nutrient at {path}/healthkit_links: "
                 f"{component_id} is a {kinds[component_id]}, not a nutrient"
+            )
+        elif link.get("healthkit_type") != healthkit_type_for(codes[component_id]):
+            yield (
+                f"healthkit_type_mismatch at {path}/healthkit_links: "
+                f"{link.get('healthkit_type')} is not the type of {codes[component_id]}"
             )
 
 

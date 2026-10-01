@@ -56,7 +56,8 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 32,
-      "pattern": "^\\S+(?!\\n)$"
+      "description": "Printable ASCII only, so ECMA-262 and Python validators agree.",
+      "pattern": "^[!-~]+(?!\\n)$"
     },
     "text": {
       "type": "string",
