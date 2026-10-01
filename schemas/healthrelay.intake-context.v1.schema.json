@@ -1,0 +1,360 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:healthrelay:schema:intake-context:v1",
+  "title": "healthrelay.intake-context v1",
+  "description": "A batch of intake-context operations (upsert, delete, link_projection) sent by a registered producer. Everything here is a proposed extension and is not accepted by the health_bridge.batch.v1 measurement schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "batch_id",
+    "producer_id",
+    "writer_bundle_id",
+    "installation_id",
+    "operations"
+  ],
+  "properties": {
+    "schema": { "const": "healthrelay.intake-context" },
+    "schema_version": {
+      "description": "Major version 1 only; the minor part is a non-negative integer.",
+      "type": "string",
+      "pattern": "^1\\.(0|[1-9][0-9]*)$"
+    },
+    "batch_id": { "$ref": "#/$defs/uuid" },
+    "producer_id": { "$ref": "#/$defs/producerId" },
+    "writer_bundle_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{0,254}$"
+    },
+    "installation_id": { "$ref": "#/$defs/uuid" },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/operation" }
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "description": "Lowercase canonical UUID text.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "producerId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "decimalString": {
+      "description": "Non-negative decimal as a string, hashed exactly as written.",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+    },
+    "unit": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^\\S+$"
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "timestamp": {
+      "description": "RFC 3339 date-time with an explicit offset or Z.",
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "positiveInteger": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "serving": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "unit"],
+      "properties": {
+        "amount": { "$ref": "#/$defs/decimalString" },
+        "unit": { "$ref": "#/$defs/unit" }
+      }
+    },
+    "blendMember": {
+      "description": "A blend member. Amount and unit appear only when the label discloses them.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label_name"],
+      "dependentRequired": {
+        "amount": ["unit"],
+        "unit": ["amount"]
+      },
+      "properties": {
+        "label_name": { "$ref": "#/$defs/text" },
+        "amount": { "$ref": "#/$defs/decimalString" },
+        "unit": { "$ref": "#/$defs/unit" }
+      }
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "component_id",
+        "kind",
+        "code",
+        "value_state",
+        "aggregation_role",
+        "provenance"
+      ],
+      "properties": {
+        "component_id": { "$ref": "#/$defs/slug" },
+        "kind": { "enum": ["nutrient", "compound", "blend"] },
+        "code": {
+          "allOf": [
+            { "$ref": "#/$defs/slug" },
+            { "not": { "const": "dietary_water" } }
+          ]
+        },
+        "label_name": { "$ref": "#/$defs/text" },
+        "amount": { "$ref": "#/$defs/decimalString" },
+        "unit": { "$ref": "#/$defs/unit" },
+        "value_state": {
+          "enum": [
+            "known",
+            "unknown",
+            "not_applicable",
+            "below_reporting_threshold"
+          ]
+        },
+        "quantity_basis": {
+          "enum": ["compound_mass", "active_nutrient_mass", "unknown"]
+        },
+        "aggregation_role": {
+          "enum": ["context_only", "compound_measurement", "blend_total_only"]
+        },
+        "provenance": {
+          "enum": [
+            "user_confirmed",
+            "label_confirmed",
+            "catalog_reference",
+            "estimated"
+          ]
+        },
+        "members": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/blendMember" }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "value_state": { "const": "known" } },
+            "required": ["value_state"]
+          },
+          "then": { "required": ["amount", "unit"] }
+        },
+        {
+          "if": {
+            "properties": {
+              "value_state": { "enum": ["unknown", "not_applicable"] }
+            },
+            "required": ["value_state"]
+          },
+          "then": {
+            "propertyNames": { "not": { "enum": ["amount", "unit"] } }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "value_state": { "const": "below_reporting_threshold" }
+            },
+            "required": ["value_state"]
+          },
+          "then": { "propertyNames": { "not": { "const": "amount" } } }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "blend" } },
+            "required": ["kind"]
+          },
+          "then": {
+            "required": ["members"],
+            "properties": {
+              "aggregation_role": { "const": "blend_total_only" }
+            }
+          },
+          "else": { "propertyNames": { "not": { "const": "members" } } }
+        }
+      ]
+    },
+    "link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "component_id",
+        "healthkit_sample_uuid",
+        "healthkit_type",
+        "sync_identifier",
+        "sync_version",
+        "disposition"
+      ],
+      "properties": {
+        "component_id": { "$ref": "#/$defs/slug" },
+        "healthkit_sample_uuid": { "$ref": "#/$defs/uuid" },
+        "healthkit_type": {
+          "type": "string",
+          "pattern": "^HKQuantityTypeIdentifier[A-Za-z0-9]+$"
+        },
+        "sync_identifier": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sync_version": { "$ref": "#/$defs/positiveInteger" },
+        "disposition": { "enum": ["active", "superseded", "deleted"] }
+      }
+    },
+    "links": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/link" }
+    },
+    "operation": {
+      "type": "object",
+      "required": ["operation"],
+      "properties": {
+        "operation": { "enum": ["upsert", "delete", "link_projection"] }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "operation": { "const": "upsert" } },
+            "required": ["operation"]
+          },
+          "then": { "$ref": "#/$defs/upsertOperation" }
+        },
+        {
+          "if": {
+            "properties": { "operation": { "const": "delete" } },
+            "required": ["operation"]
+          },
+          "then": { "$ref": "#/$defs/deleteOperation" }
+        },
+        {
+          "if": {
+            "properties": { "operation": { "const": "link_projection" } },
+            "required": ["operation"]
+          },
+          "then": { "$ref": "#/$defs/linkProjectionOperation" }
+        }
+      ]
+    },
+    "upsertOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_id",
+        "operation",
+        "intake_id",
+        "revision",
+        "projection_sequence",
+        "occurred_at",
+        "time_zone",
+        "recorded_at",
+        "category",
+        "display_name",
+        "serving",
+        "facts",
+        "healthkit_links",
+        "nutrition_completeness",
+        "domain_facts_hash",
+        "projection_hash",
+        "client_payload_hash"
+      ],
+      "properties": {
+        "operation_id": { "$ref": "#/$defs/uuid" },
+        "operation": { "const": "upsert" },
+        "intake_id": { "$ref": "#/$defs/uuid" },
+        "revision": { "$ref": "#/$defs/positiveInteger" },
+        "projection_sequence": { "$ref": "#/$defs/positiveInteger" },
+        "occurred_at": { "$ref": "#/$defs/timestamp" },
+        "time_zone": {
+          "description": "IANA time zone name.",
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$"
+        },
+        "recorded_at": { "$ref": "#/$defs/timestamp" },
+        "category": { "$ref": "#/$defs/slug" },
+        "display_name": { "$ref": "#/$defs/text" },
+        "serving": { "$ref": "#/$defs/serving" },
+        "facts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/fact" }
+        },
+        "healthkit_links": { "$ref": "#/$defs/links" },
+        "nutrition_completeness": {
+          "description": "Completeness of the source data for this intake, not of the day.",
+          "enum": ["complete", "partial", "unknown"]
+        },
+        "domain_facts_hash": { "$ref": "#/$defs/digest" },
+        "projection_hash": { "$ref": "#/$defs/digest" },
+        "client_payload_hash": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "deleteOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_id",
+        "operation",
+        "intake_id",
+        "revision",
+        "deleted_at",
+        "domain_facts_hash",
+        "client_payload_hash"
+      ],
+      "properties": {
+        "operation_id": { "$ref": "#/$defs/uuid" },
+        "operation": { "const": "delete" },
+        "intake_id": { "$ref": "#/$defs/uuid" },
+        "revision": { "$ref": "#/$defs/positiveInteger" },
+        "deleted_at": { "$ref": "#/$defs/timestamp" },
+        "domain_facts_hash": { "$ref": "#/$defs/digest" },
+        "client_payload_hash": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "linkProjectionOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_id",
+        "operation",
+        "intake_id",
+        "revision",
+        "projection_sequence",
+        "healthkit_links",
+        "projection_hash",
+        "client_payload_hash"
+      ],
+      "properties": {
+        "operation_id": { "$ref": "#/$defs/uuid" },
+        "operation": { "const": "link_projection" },
+        "intake_id": { "$ref": "#/$defs/uuid" },
+        "revision": { "$ref": "#/$defs/positiveInteger" },
+        "projection_sequence": { "$ref": "#/$defs/positiveInteger" },
+        "healthkit_links": { "$ref": "#/$defs/links" },
+        "projection_hash": { "$ref": "#/$defs/digest" },
+        "client_payload_hash": { "$ref": "#/$defs/digest" }
+      }
+    }
+  }
+}
