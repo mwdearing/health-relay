@@ -1,0 +1,43 @@
+{
+  "schema": "healthrelay.intake-context",
+  "schema_version": "1.0",
+  "batch_id": "5f0e8a2c-6d41-4b0e-9c3a-7a1d2b9e4f10",
+  "producer_id": "nutrition-app",
+  "writer_bundle_id": "com.example.healthrelay.nutrition",
+  "installation_id": "507b8fbb-78d3-450c-a88f-487e90df92e6",
+  "operations": [
+    {
+      "operation_id": "c1f4a7d2-93be-4e65-8d0a-2b6f1e7c9a35",
+      "operation": "delete",
+      "intake_id": "e6677963-418c-4027-b563-551d8a531eed",
+      "revision": 3,
+      "deleted_at": "2026-09-30T18:05:00Z",
+      "domain_facts_hash": "sha256:50f3119c404ccf8e69375640b2dfdb83bcd4160dacbc6f125421261b0efb0958",
+      "client_payload_hash": "sha256:6279804b6770dbe282e78ff23336919abbc855762152652ec60fae32f527eeb2",
+      "facts": [
+        {
+          "component_id": "water",
+          "kind": "nutrient",
+          "code": "hydration",
+          "amount": "500",
+          "unit": "mL",
+          "value_state": "known",
+          "aggregation_role": "context_only",
+          "provenance": "user_confirmed"
+        },
+        {
+          "component_id": "creatine-monohydrate",
+          "kind": "compound",
+          "code": "creatine_monohydrate",
+          "label_name": "Creatine monohydrate",
+          "amount": "5",
+          "unit": "g",
+          "value_state": "known",
+          "quantity_basis": "compound_mass",
+          "aggregation_role": "compound_measurement",
+          "provenance": "label_confirmed"
+        }
+      ]
+    }
+  ]
+}
