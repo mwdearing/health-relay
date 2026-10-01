@@ -88,7 +88,12 @@ Each makes the operation a `permanent_failure`:
   `healthkit_links` array, in an `upsert` and in a `link_projection`.
 - One `healthkit_sample_uuid` is `active` on at most one component in a
   `healthkit_links` array; a sample is never counted for two components.
-- A link's `healthkit_type` is the type of the linked fact's `code`: `hydration`
+- One sync identity (`component_id`, `healthkit_type`, `sync_identifier`) is
+  `active` on at most one sample UUID; HealthKit replaces, never duplicates, the
+  object a sync identifier names.
+- A nutrient's `code` is a HealthRelay catalog code (`hydration` or
+  `dietary_<name>`, for example `dietary_caffeine`), and a link's
+  `healthkit_type` is the type of the linked fact's `code`: `hydration`
   is `HKQuantityTypeIdentifierDietaryWater`, and every `dietary_<name>` code is
   `HKQuantityTypeIdentifierDietary<Name>` with each part capitalised
   (`dietary_vitamin_b6` is `HKQuantityTypeIdentifierDietaryVitaminB6`).
@@ -176,7 +181,7 @@ Each fact describes one component of the intake.
 | `amount`, `unit` | Decimal string and unit. Present only as the value state allows. |
 | `value_state` | `known`, `unknown`, `not_applicable` or `below_reporting_threshold`. |
 | `quantity_basis` | `compound_mass`, `active_nutrient_mass` or `unknown`. Required for a compound, optional otherwise. |
-| `aggregation_role` | `context_only`, `compound_measurement` or `blend_total_only`. A compound uses `compound_measurement`, a blend uses `blend_total_only`, and a nutrient never uses `compound_measurement`. |
+| `aggregation_role` | `context_only`, `compound_measurement` or `blend_total_only`. A compound uses `compound_measurement`, a blend uses `blend_total_only`, and a nutrient uses `context_only`. |
 | `provenance` | `user_confirmed`, `label_confirmed`, `ocr_confirmed` (a label read by OCR and confirmed by the user), `catalog_reference`, `recipe_calculated` (derived from a recipe's ingredients) or `estimated`. |
 | `members` | Blends only. Non-empty array of blend members. |
 
@@ -415,7 +420,7 @@ projection rules above.
 | `valid_proprietary_blend.json` | A blend with undisclosed members and an unknown energy value. |
 | `scenario_same_operation_different_content.json` | Reusing an `operation_id` with different content is a `domain_conflict`. |
 | `scenario_stale_revision.json` | An older revision delivered after a newer one is `stale_revision`. |
-| `invalid_*.json` | Each is rejected for one reason. Schema failures: unknown major or unsupported minor version, a float amount, an unknown property, a delete carrying facts, an unknown value with an amount, an upsert with a sequence other than 1, a link projection with sequence 1, a revision above the signed 64-bit range, a compound without a quantity basis or with another role, a nutrient with the compound role. Failures of the rules beyond the schema: a duplicate component ID, a duplicate link, a link to a component outside the upsert, a link to a compound fact, one sample active on two components, a HealthKit type that does not match the fact's code, an `occurred_at` offset that is not the time zone's offset, an unknown time zone, the host-local `localtime` zone, an impossible timestamp, a leap second. Failures at parse time: a duplicate object name, a float spelling of `revision`, `projection_sequence` or `sync_version`, an unpaired surrogate. |
+| `invalid_*.json` | Each is rejected for one reason. Schema failures: unknown major or unsupported minor version, a float amount, an unknown property, a delete carrying facts, an unknown value with an amount, an upsert with a sequence other than 1, a link projection with sequence 1, a revision above the signed 64-bit range, a compound without a quantity basis or with another role, a nutrient with the compound role. Failures of the rules beyond the schema: a duplicate component ID, a duplicate link, a link to a component outside the upsert, a link to a compound fact, one sample active on two components, a HealthKit type that does not match the fact's code, an `occurred_at` offset that is not the time zone's offset, one sync identity active on two samples, a nutrient with the blend role, an unknown time zone, the host-local `localtime` zone, an impossible timestamp, a leap second. Failures at parse time: a duplicate object name, a float spelling of `revision`, `projection_sequence` or `sync_version`, an unpaired surrogate. |
 
 A scenario is `{ "description": ..., "steps": [ { "batch": ..., "expect": [ {
 "operation_id": ..., "result": ... } ] } ] }`, with one `expect` entry per

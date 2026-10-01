@@ -217,7 +217,7 @@
           },
           "then": {
             "properties": {
-              "aggregation_role": { "not": { "const": "compound_measurement" } }
+              "aggregation_role": { "const": "context_only" }
             }
           }
         }

@@ -18,6 +18,7 @@ from tests.intake_context.reference import (
     canonical_json,
     digest,
     expected_hashes,
+    healthkit_type_for,
     load_json,
     semantic_errors,
 )
@@ -47,6 +48,7 @@ NEGATIVE = {
     "invalid_nutrient_compound_measurement.json": "aggregation_role",
     "invalid_revision_above_int64.json": "maximum",
     "invalid_link_projection_sequence_one.json": "projection_sequence",
+    "invalid_nutrient_blend_total_role.json": "aggregation_role",
 }
 SEMANTIC_NEGATIVE = {
     "invalid_duplicate_component_id.json": "duplicate_component_id",
@@ -61,6 +63,7 @@ SEMANTIC_NEGATIVE = {
     "invalid_sample_on_two_components.json": "sample_on_multiple_components",
     "invalid_link_type_mismatch.json": "healthkit_type_mismatch",
     "invalid_offset_zone_mismatch.json": "offset_zone_mismatch",
+    "invalid_sync_identity_on_two_samples.json": "sync_identity_on_multiple_samples",
 }
 UNPARSEABLE_NEGATIVE = {
     "invalid_duplicate_object_name.json": "duplicate object name",
@@ -400,6 +403,9 @@ def test_projection_hash_ignores_link_order() -> None:
     second = copy.deepcopy(links[0])
     second["component_id"] = "zinc"
     second["healthkit_sample_uuid"] = "3d043ce2-d57f-4f59-91f3-e9f1a53e540a"
+    # A second sample has its own sync identity; one sync identity on two active
+    # samples is rejected (sync_identity_on_multiple_samples).
+    second["sync_identifier"] = cast("str", second["sync_identifier"]) + ":2"
     operation["healthkit_links"] = [links[0], second]
     forward = expected_hashes(batch, operation)["projection_hash"]
     operation["healthkit_links"] = [second, links[0]]
@@ -771,6 +777,9 @@ def test_same_component_may_link_different_samples() -> None:
     links = cast("list[JsonObject]", operation["healthkit_links"])
     second = copy.deepcopy(links[0])
     second["healthkit_sample_uuid"] = "3d043ce2-d57f-4f59-91f3-e9f1a53e540a"
+    # A second sample has its own sync identity; one sync identity on two active
+    # samples is rejected (sync_identity_on_multiple_samples).
+    second["sync_identifier"] = cast("str", second["sync_identifier"]) + ":2"
     operation["healthkit_links"] = [links[0], second]
 
     assert semantic_errors(batch) == []
@@ -981,3 +990,32 @@ def test_offset_matching_the_zone_at_that_instant_is_accepted() -> None:
     assert not [
         e for e in semantic_errors(batch) if e.startswith("offset_zone_mismatch")
     ]
+
+
+def test_healthkit_type_only_for_catalog_nutrient_codes() -> None:
+    assert healthkit_type_for("hydration") == "HKQuantityTypeIdentifierDietaryWater"
+    assert (
+        healthkit_type_for("dietary_caffeine")
+        == "HKQuantityTypeIdentifierDietaryCaffeine"
+    )
+    assert healthkit_type_for("caffeine") is None
+
+
+@pytest.mark.parametrize("name", POSITIVE)
+def test_positive_fixtures_use_catalog_nutrient_codes(name: str) -> None:
+    batch = _load(name)
+    for operation in _operations(batch):
+        for fact in cast("list[JsonObject]", operation.get("facts", [])):
+            if fact.get("kind") == "nutrient":
+                assert healthkit_type_for(cast("str", fact["code"])) is not None
+
+
+def test_offset_check_survives_conversion_overflow() -> None:
+    batch = _example()
+    operation = _operations(batch)[0]
+    operation["time_zone"] = "UTC"
+    operation["occurred_at"] = "9999-12-31T23:59:59-23:59"
+
+    errors = semantic_errors(batch)
+
+    assert any(e.startswith("offset_zone_mismatch") for e in errors)

@@ -151,15 +151,18 @@ def _samples_on_several_components(links: list[JsonObject]) -> list[str]:
     )
 
 
-def healthkit_type_for(code: str) -> str:
+def healthkit_type_for(code: str) -> str | None:
     """The HealthKit quantity type a nutrient code is written as.
 
     HealthRelay names water `hydration`; every other nutrient code is
     `dietary_<name>`, written as HKQuantityTypeIdentifierDietary<Name> with each
     underscore-separated part capitalised (dietary_vitamin_b6 -> DietaryVitaminB6).
+    Any other code is not a HealthRelay nutrient code and has no type (None).
     """
     if code == "hydration":
         return "HKQuantityTypeIdentifierDietaryWater"
+    if not code.startswith("dietary_"):
+        return None
     parts = code.split("_")
     return "HKQuantityTypeIdentifier" + "".join(
         part[:1].upper() + part[1:] for part in parts
@@ -168,7 +171,27 @@ def healthkit_type_for(code: str) -> str:
 
 def _offset_matches_zone(timestamp: str, zone: str) -> bool:
     instant = datetime.fromisoformat(timestamp)
-    return instant.utcoffset() == instant.astimezone(ZoneInfo(zone)).utcoffset()
+    try:
+        local = instant.astimezone(ZoneInfo(zone))
+    except (OverflowError, ValueError):
+        return False  # outside the representable range: not a usable instant
+    return instant.utcoffset() == local.utcoffset()
+
+
+def _sync_identities_on_several_samples(links: list[JsonObject]) -> list[str]:
+    """Sync identities that ACTIVE links attach to more than one sample UUID."""
+    samples: dict[tuple[str, str, str], set[str]] = {}
+    for link in links:
+        if link.get("disposition") == "active":
+            key = (
+                cast("str", link["component_id"]),
+                cast("str", link["healthkit_type"]),
+                cast("str", link["sync_identifier"]),
+            )
+            samples.setdefault(key, set()).add(
+                cast("str", link["healthkit_sample_uuid"])
+            )
+    return sorted(key[2] for key, uuids in samples.items() if len(uuids) > 1)
 
 
 def projection_hash(batch: JsonObject, operation: JsonObject) -> str:
@@ -277,6 +300,11 @@ def _operation_errors(operation: JsonObject, path: str) -> Iterator[str]:
         yield (
             f"duplicate_link at {path}/healthkit_links: "
             f"({component_id}, {sample_uuid}) appears more than once"
+        )
+    for sync_identifier in _sync_identities_on_several_samples(links):
+        yield (
+            f"sync_identity_on_multiple_samples at {path}/healthkit_links: "
+            f"{sync_identifier} is active on more than one sample"
         )
     for sample_uuid in _samples_on_several_components(links):
         yield (
