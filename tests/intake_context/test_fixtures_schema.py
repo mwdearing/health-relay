@@ -13,9 +13,12 @@ from jsonschema.exceptions import ValidationError
 from tests.intake_context.reference import (
     FIXTURE_DIR,
     SCHEMA_PATH,
+    ContractError,
     canonical_json,
     digest,
     expected_hashes,
+    load_json,
+    semantic_errors,
 )
 
 JsonObject: TypeAlias = dict[str, object]
@@ -36,6 +39,26 @@ NEGATIVE = {
     "invalid_extra_field.json": "additionalProperties",
     "invalid_delete_with_facts.json": "facts",
     "invalid_unknown_with_amount.json": "amount",
+    "invalid_unsupported_minor_version.json": "schema_version",
+    "invalid_upsert_projection_sequence_two.json": "projection_sequence",
+    "invalid_compound_without_quantity_basis.json": "quantity_basis",
+    "invalid_compound_wrong_role.json": "aggregation_role",
+    "invalid_nutrient_compound_measurement.json": "aggregation_role",
+}
+SEMANTIC_NEGATIVE = {
+    "invalid_duplicate_component_id.json": "duplicate_component_id",
+    "invalid_duplicate_link.json": "duplicate_link",
+    "invalid_link_projection_duplicate_link.json": "duplicate_link",
+    "invalid_link_unknown_component.json": "unknown_link_component",
+    "invalid_unknown_time_zone.json": "unknown_time_zone",
+    "invalid_impossible_timestamp.json": "invalid_timestamp",
+}
+UNPARSEABLE_NEGATIVE = {
+    "invalid_duplicate_object_name.json": "duplicate object name",
+    "invalid_float_revision.json": "float",
+    "invalid_float_projection_sequence.json": "float",
+    "invalid_float_sync_version.json": "float",
+    "invalid_lone_surrogate.json": "lone_surrogate",
 }
 RESULTS = {
     "accepted",
@@ -50,7 +73,7 @@ RESULTS = {
 
 def _load(name: str) -> JsonObject:
     text = (FIXTURE_DIR / name).read_text(encoding="utf-8")
-    return cast("JsonObject", json.loads(text))
+    return cast("JsonObject", load_json(text))
 
 
 def _schema() -> JsonObject:
@@ -139,6 +162,11 @@ def test_positive_fixture_validates(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", POSITIVE)
+def test_positive_fixture_passes_the_semantic_rules(name: str) -> None:
+    assert semantic_errors(_load(name)) == []
+
+
+@pytest.mark.parametrize("name", POSITIVE)
 def test_positive_fixture_hashes_are_the_reference_hashes(name: str) -> None:
     batch = _load(name)
 
@@ -215,6 +243,26 @@ def test_negative_fixture_fails_for_the_stated_reason(name: str, key: str) -> No
     assert _fails_on(batch, key)
 
 
+@pytest.mark.parametrize(("name", "code"), SEMANTIC_NEGATIVE.items())
+def test_semantic_negative_fixture_is_schema_valid_but_breaks_a_rule(
+    name: str, code: str
+) -> None:
+    batch = _load(name)
+
+    assert _errors(batch) == []
+    assert any(error.startswith(code) for error in semantic_errors(batch))
+
+
+@pytest.mark.parametrize(("name", "reason"), UNPARSEABLE_NEGATIVE.items())
+def test_unparseable_negative_fixture_is_rejected_by_the_loader(
+    name: str, reason: str
+) -> None:
+    text = (FIXTURE_DIR / name).read_text(encoding="utf-8")
+
+    with pytest.raises(ContractError, match=reason):
+        _ = load_json(text)
+
+
 @pytest.mark.parametrize("name", SCENARIOS)
 def test_scenario_shape_and_batches(name: str) -> None:
     scenario = _load(name)
@@ -226,6 +274,7 @@ def test_scenario_shape_and_batches(name: str) -> None:
         batch = cast("JsonObject", step["batch"])
         expect = cast("list[JsonObject]", step["expect"])
         assert _errors(batch) == []
+        assert semantic_errors(batch) == []
         assert len(expect) == len(_operations(batch))
         for operation, entry in zip(_operations(batch), expect, strict=True):
             assert entry["operation_id"] == operation["operation_id"]
@@ -374,15 +423,16 @@ def test_delete_has_no_projection_hash_and_link_projection_no_facts_hash() -> No
     }
 
 
-@pytest.mark.parametrize("version", ["1.0", "1.7", "1.12"])
-def test_any_one_dot_x_schema_version_is_accepted(version: str) -> None:
+def test_the_supported_minor_is_accepted() -> None:
     batch = _example()
-    batch["schema_version"] = version
+    batch["schema_version"] = "1.0"
 
     assert _errors(batch) == []
 
 
-@pytest.mark.parametrize("version", ["0.9", "2.0", "1", "1.0.0", "1.", "01.0", "v1.0"])
+@pytest.mark.parametrize(
+    "version", ["0.9", "1.1", "1.7", "1.12", "2.0", "1", "1.0.0", "1.", "01.0", "v1.0"]
+)
 def test_other_schema_versions_are_rejected(version: str) -> None:
     batch = _example()
     batch["schema_version"] = version
@@ -635,3 +685,171 @@ def test_blend_requires_members() -> None:
     del fact["members"]
 
     assert _fails_on(batch, "members")
+
+
+def test_upsert_projection_sequence_is_exactly_one() -> None:
+    batch = _example()
+    _operations(batch)[0]["projection_sequence"] = 2
+
+    assert _fails_on(batch, "projection_sequence")
+
+
+def test_link_projection_sequence_may_exceed_one() -> None:
+    operation = _operations(_load("valid_link_projection_seq2.json"))[0]
+
+    assert operation["projection_sequence"] == 2
+
+
+def test_compound_must_state_quantity_basis_and_measurement_role() -> None:
+    compound = cast("list[JsonObject]", _operations(_example())[0]["facts"])[1]
+
+    assert compound["kind"] == "compound"
+    for key, value in (("quantity_basis", None), ("aggregation_role", "context_only")):
+        batch = _example()
+        fact = cast("list[JsonObject]", _operations(batch)[0]["facts"])[1]
+        if value is None:
+            del fact[key]
+        else:
+            fact[key] = value
+
+        assert _fails_on(batch, key)
+
+
+@pytest.mark.parametrize("role", ["compound_measurement"])
+def test_nutrient_cannot_use_the_compound_measurement_role(role: str) -> None:
+    batch = _example()
+    _first_fact(batch)["aggregation_role"] = role
+
+    assert _fails_on(batch, "aggregation_role")
+
+
+def test_duplicate_component_ids_are_a_semantic_error() -> None:
+    batch = _example()
+    facts = cast("list[JsonObject]", _operations(batch)[0]["facts"])
+    facts[1]["component_id"] = facts[0]["component_id"]
+
+    assert _errors(batch) == []
+    assert any(e.startswith("duplicate_component_id") for e in semantic_errors(batch))
+
+
+def test_link_to_a_component_outside_the_upsert_is_a_semantic_error() -> None:
+    batch = _example()
+    links = cast("list[JsonObject]", _operations(batch)[0]["healthkit_links"])
+    links[0]["component_id"] = "not-in-this-upsert"
+
+    assert any(e.startswith("unknown_link_component") for e in semantic_errors(batch))
+
+
+def test_link_projection_links_are_not_resolved_against_facts() -> None:
+    batch = _load("valid_link_projection_seq2.json")
+
+    assert semantic_errors(batch) == []
+
+
+def test_projection_hash_refuses_duplicate_links() -> None:
+    batch = _example()
+    operation = _operations(batch)[0]
+    links = cast("list[JsonObject]", operation["healthkit_links"])
+    operation["healthkit_links"] = [links[0], copy.deepcopy(links[0])]
+
+    with pytest.raises(ContractError, match="duplicate"):
+        _ = expected_hashes(batch, operation)
+
+
+def test_same_component_may_link_different_samples() -> None:
+    batch = _example()
+    operation = _operations(batch)[0]
+    links = cast("list[JsonObject]", operation["healthkit_links"])
+    second = copy.deepcopy(links[0])
+    second["healthkit_sample_uuid"] = "3d043ce2-d57f-4f59-91f3-e9f1a53e540a"
+    operation["healthkit_links"] = [links[0], second]
+
+    assert semantic_errors(batch) == []
+    forward = expected_hashes(batch, operation)["projection_hash"]
+    operation["healthkit_links"] = [second, links[0]]
+    assert expected_hashes(batch, operation)["projection_hash"] == forward
+
+
+@pytest.mark.parametrize(
+    "zone", ["America/Chicago", "Europe/Berlin", "Asia/Kolkata", "UTC"]
+)
+def test_iana_time_zones_are_accepted(zone: str) -> None:
+    batch = _example()
+    _operations(batch)[0]["time_zone"] = zone
+
+    assert semantic_errors(batch) == []
+
+
+@pytest.mark.parametrize("zone", ["Not/AZone", "America/Chicag", "Mars/Olympus"])
+def test_unknown_time_zones_are_a_semantic_error(zone: str) -> None:
+    batch = _example()
+    _operations(batch)[0]["time_zone"] = zone
+
+    assert _errors(batch) == []
+    assert any(e.startswith("unknown_time_zone") for e in semantic_errors(batch))
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2026-99-99T99:99:99+99:99",
+        "2026-02-30T12:00:00Z",
+        "2026-09-30T24:00:00Z",
+        "2026-09-30T12:00:00+25:00",
+    ],
+)
+def test_impossible_timestamps_are_a_semantic_error(value: str) -> None:
+    batch = _example()
+    _operations(batch)[0]["occurred_at"] = value
+
+    assert _errors(batch) == []
+    assert any(e.startswith("invalid_timestamp") for e in semantic_errors(batch))
+
+
+def test_delete_timestamp_is_checked_too() -> None:
+    batch = _load("valid_delete.json")
+    _operations(batch)[0]["deleted_at"] = "2026-13-01T00:00:00Z"
+
+    assert any(e.startswith("invalid_timestamp") for e in semantic_errors(batch))
+
+
+@pytest.mark.parametrize("text", ["2.0", "2e0", "2E+0", "0.5", "1e400"])
+def test_loader_rejects_every_float_spelling(text: str) -> None:
+    with pytest.raises(ContractError, match="float"):
+        _ = load_json(f'{{"revision": {text}}}')
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_loader_rejects_non_finite_constants(constant: str) -> None:
+    with pytest.raises(ContractError, match=constant.lstrip("-")):
+        _ = load_json(f'{{"revision": {constant}}}')
+
+
+def test_loader_rejects_duplicate_names_at_any_depth() -> None:
+    with pytest.raises(ContractError, match="duplicate object name"):
+        _ = load_json('{"a": {"b": 1, "b": 2}}')
+
+
+def test_loader_accepts_integers_and_paired_surrogate_escapes() -> None:
+    assert load_json('{"revision": 2, "s": "\\ud83d\\ude00"}') == {
+        "revision": 2,
+        "s": "\U0001f600",
+    }
+
+
+def test_canonical_json_rejects_unpaired_surrogates_before_encoding() -> None:
+    for value in ({"k": "a\ud800"}, {"\udc00": "v"}, ["\udfff"]):
+        with pytest.raises(ContractError, match="lone_surrogate"):
+            _ = canonical_json(value)
+
+
+def test_semantic_errors_report_unpaired_surrogates_and_floats() -> None:
+    batch = _example()
+    operation = _operations(batch)[0]
+    operation["display_name"] = "Water \ud800"
+    operation["revision"] = 2.0
+
+    found = semantic_errors(batch)
+
+    assert any(e.startswith("lone_surrogate") for e in found)
+    assert any(e.startswith("float") for e in found)

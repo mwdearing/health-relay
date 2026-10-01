@@ -19,9 +19,9 @@ The machine-readable contract is
 executable reference for everything in the hashing sections below. Every UUID,
 bundle ID and sample in the fixtures is synthetic test data.
 
-## Proposed API surface
+## API surface
 
-The routes are explicitly versioned and may be renamed during review:
+The receiver exposes two versioned routes:
 
 - `GET /v1/intake-context/capabilities` reports the supported major and minor
   schema versions, the maximum payload size, the maximum operation count, the
@@ -36,16 +36,20 @@ no field for one. The current single-user receiver stays single-user.
 ## Versioning
 
 - `schema` must be `healthrelay.intake-context`.
-- `schema_version` is `"<major>.<minor>"`. This schema accepts only major
-  version `1`, so `"1.0"` and `"1.7"` pass and `"2.0"`, `"1"` and `"1.0.0"` do
-  not. Consumers must reject unknown major versions before reading anything
-  else, with a `permanent_failure` result.
-- Additive optional fields may appear in a later `1.x` only when an older
-  consumer can safely retain or ignore them without changing any total. Each
-  such change updates the schema file and this document in the same change.
-- Hashes are computed over the object exactly as sent. A consumer that does not
-  understand an additive field still includes it when it recomputes a hash, and
-  retains it with the stored operation.
+- `schema_version` is `"<major>.<minor>"`. This schema describes exactly
+  `"1.0"`. Any other value, including `"1.1"`, `"2.0"`, `"1"` and `"1.0.0"`,
+  fails the schema. Consumers must reject an unknown major version before
+  reading anything else, and a minor they do not support, with a
+  `permanent_failure` result. The supported versions are reported by the
+  capabilities route.
+- All objects are closed, so a minor can only be accepted by a consumer that
+  knows its schema. A later `1.x` may add optional fields only when a consumer
+  of an earlier minor could safely retain them without changing any total. Each
+  such change adds the minor to this schema and updates this document in the
+  same change.
+- Hashes are computed over the object exactly as sent. A consumer that supports
+  a minor but does not interpret an additive field in it still includes the
+  field when it recomputes a hash, and retains it with the stored operation.
 - Anything else, including a new required field, a changed meaning or a
   removed value, is a new major version.
 
@@ -64,6 +68,26 @@ no field for one. The current single-user receiver stays single-user.
 All objects are closed: an unknown property anywhere is a schema failure.
 UUIDs are lowercase canonical text, so a HealthKit sample UUID must be
 lowercased before it is sent.
+
+**JSON text.** A duplicate object name anywhere in the payload makes it
+invalid, as does a number written with a decimal point or an exponent (`2.0`,
+`2e0`), `NaN`, an infinity, or an unpaired surrogate escape such as `\ud800` in a
+string or an object name. A receiver rejects all of these while parsing, before
+schema validation and before any hash is computed, with a `permanent_failure`
+result.
+
+**Rules beyond the schema.** JSON Schema cannot express the following, so the
+receiver checks them and `tests/intake_context/reference.py` implements them.
+Each makes the operation a `permanent_failure`:
+
+- `component_id` is unique among the facts of one `upsert`.
+- Every link's `component_id` in an `upsert` names a fact of that same
+  `upsert`.
+- A `(component_id, healthkit_sample_uuid)` pair appears at most once in one
+  `healthkit_links` array, in an `upsert` and in a `link_projection`.
+- `time_zone` is a name in the IANA time zone database.
+- Every timestamp is a real RFC 3339 instant: a calendar date that exists, an
+  hour from 0 to 23, and in-range minutes, seconds and offsets.
 
 ## Identity and scope
 
@@ -90,9 +114,9 @@ Every field below is required.
 | `operation` | `upsert`. |
 | `intake_id` | Stable intake identity. |
 | `revision` | Integer, at least 1. Monotonic per intake. |
-| `projection_sequence` | Integer, at least 1. See "Projection lifecycle". |
+| `projection_sequence` | Always `1`: an upsert opens the projection lifecycle of its revision. See "Revisions and projection lifecycle". |
 | `occurred_at` | RFC 3339 date-time with an explicit offset or `Z`. |
-| `time_zone` | IANA time zone name, for example `America/Chicago`. |
+| `time_zone` | Name in the IANA time zone database, for example `America/Chicago`. |
 | `recorded_at` | RFC 3339 date-time at which the producer recorded it. |
 | `category` | Lowercase slug such as `beverage`, `food` or `supplement`. |
 | `display_name` | Human-readable name, 1 to 200 characters. |
@@ -119,7 +143,11 @@ HealthKit save may reveal a sample UUID after the facts were already accepted.
 It carries `intake_id`, the target intake `revision`, a `projection_sequence`,
 the complete `healthkit_links` snapshot, its own `operation_id`, and the
 `projection_hash` and `client_payload_hash` digests. It has no `facts` and no
-`domain_facts_hash`.
+`domain_facts_hash`. Its facts are not in the operation, so the receiver
+checks that every link's `component_id` names a fact of the stored target
+revision. A link naming another component is a `permanent_failure`. This is a
+receiver check; the reference validator sees only the operation and cannot
+enforce it.
 
 ## Facts
 
@@ -133,8 +161,8 @@ Each fact describes one component of the intake.
 | `label_name` | Optional name as printed on the label. |
 | `amount`, `unit` | Decimal string and unit. Present only as the value state allows. |
 | `value_state` | `known`, `unknown`, `not_applicable` or `below_reporting_threshold`. |
-| `quantity_basis` | Optional. `compound_mass`, `active_nutrient_mass` or `unknown`. |
-| `aggregation_role` | `context_only`, `compound_measurement` or `blend_total_only`. |
+| `quantity_basis` | `compound_mass`, `active_nutrient_mass` or `unknown`. Required for a compound, optional otherwise. |
+| `aggregation_role` | `context_only`, `compound_measurement` or `blend_total_only`. A compound uses `compound_measurement`, a blend uses `blend_total_only`, and a nutrient never uses `compound_measurement`. |
 | `provenance` | `user_confirmed`, `label_confirmed`, `catalog_reference` or `estimated`. |
 | `members` | Blends only. Non-empty array of blend members. |
 
@@ -164,7 +192,8 @@ never split evenly from the total. Only the blend total counts in any total.
 **Compounds.** A compound has no HealthKit quantity type. It is recorded with
 `kind: "compound"`, a `quantity_basis` (`compound_mass` for the mass of the
 compound itself, `active_nutrient_mass` for the mass of the active nutrient) and
-`aggregation_role: "compound_measurement"`.
+`aggregation_role: "compound_measurement"`. Both are required, and no other
+kind may use `compound_measurement`.
 
 ## HealthKit links
 
@@ -190,7 +219,7 @@ attributed to more than one active component without a flagged conflict.
 - `revision` is monotonic per intake. A newer revision replaces the facts of an
   older one and retires the older projections from active totals.
 - `projection_sequence` is monotonic within one `(intake_id, revision)`. The
-  `upsert` for a revision carries sequence 1 and each later link-only change to
+  `upsert` for a revision always carries sequence 1 (the schema enforces it) and each later link-only change to
   the same revision uses the next integer, without rewriting facts. A
   `link_projection` always carries the complete link snapshot, never a delta.
 - Equal sequence with an equal `projection_hash` is a duplicate. Equal sequence
@@ -208,14 +237,16 @@ Hashes are taken over canonical JSON bytes, so two implementations in any
 language must produce the same bytes for the same value.
 
 1. Object keys are sorted by Unicode code point (not locale order), at every
-   depth. Keys are not de-duplicated or renamed.
+   depth. Keys are not renamed. A duplicate object name is invalid input, so
+   there is never a duplicate to resolve.
 2. There is no whitespace. Separators are `,` between members and `:` between a
    key and its value.
 3. Strings are encoded as UTF-8 with no ASCII escaping. Only the escapes JSON
    requires are used: `\"`, `\\`, `\b`, `\f`, `\n`, `\r`, `\t`, and `\u00xx`
    with lowercase hex for any other control character below U+0020. Every other
    character, including non-ASCII text, U+007F and U+2028, is written as its raw
-   UTF-8 bytes.
+   UTF-8 bytes. A string containing an unpaired surrogate has no UTF-8
+   encoding and is invalid input; it is rejected before canonicalisation.
 4. There are no floating-point numbers, `NaN` or infinities anywhere. Decimals
    are strings. Integers are written in plain decimal digits with a leading `-`
    only when negative, no leading zeros, no `+`, and no fraction or exponent.
@@ -275,7 +306,8 @@ Present on `upsert` and `link_projection`. The digest of one object:
 The links are sorted by `component_id`, then by `healthkit_sample_uuid`, both
 compared by code point, so the digest does not depend on the order in which the
 sender listed them. A `(component_id, healthkit_sample_uuid)` pair appears at
-most once. `installation_id` never enters it.
+most once, so the order is total; an array with a repeated pair is rejected
+before hashing. `installation_id` never enters it.
 
 Use: it identifies one complete link snapshot of one revision at one sequence.
 It decides duplicate versus projection conflict at an equal sequence.
@@ -353,7 +385,7 @@ projection rules above.
 | `valid_proprietary_blend.json` | A blend with undisclosed members and an unknown energy value. |
 | `scenario_same_operation_different_content.json` | Reusing an `operation_id` with different content is a `domain_conflict`. |
 | `scenario_stale_revision.json` | An older revision delivered after a newer one is `stale_revision`. |
-| `invalid_*.json` | Each fails the schema for one reason: unknown major version, a float amount, an unknown property, a delete carrying facts, an unknown value with an amount. |
+| `invalid_*.json` | Each is rejected for one reason. Schema failures: unknown major or unsupported minor version, a float amount, an unknown property, a delete carrying facts, an unknown value with an amount, an upsert with a sequence other than 1, a compound without a quantity basis or with another role, a nutrient with the compound role. Failures of the rules beyond the schema: a duplicate component ID, a duplicate link, a link to a component outside the upsert, an unknown time zone, an impossible timestamp. Failures at parse time: a duplicate object name, a float spelling of `revision`, `projection_sequence` or `sync_version`, an unpaired surrogate. |
 
 A scenario is `{ "description": ..., "steps": [ { "batch": ..., "expect": [ {
 "operation_id": ..., "result": ... } ] } ] }`, with one `expect` entry per

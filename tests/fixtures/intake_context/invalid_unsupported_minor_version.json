@@ -1,0 +1,64 @@
+{
+  "schema": "healthrelay.intake-context",
+  "schema_version": "1.1",
+  "batch_id": "0bda35fc-3eab-47ce-9e31-c684343dd8d7",
+  "producer_id": "nutrition-app",
+  "writer_bundle_id": "com.example.healthrelay.nutrition",
+  "installation_id": "507b8fbb-78d3-450c-a88f-487e90df92e6",
+  "operations": [
+    {
+      "operation_id": "8b8719ea-6bb3-4dd4-8508-a63ee33d1381",
+      "operation": "upsert",
+      "intake_id": "e6677963-418c-4027-b563-551d8a531eed",
+      "revision": 2,
+      "projection_sequence": 1,
+      "occurred_at": "2026-09-30T12:30:00-05:00",
+      "time_zone": "America/Chicago",
+      "recorded_at": "2026-09-30T17:31:02Z",
+      "category": "beverage",
+      "display_name": "Water with creatine",
+      "serving": {
+        "amount": "500",
+        "unit": "mL"
+      },
+      "facts": [
+        {
+          "component_id": "water",
+          "kind": "nutrient",
+          "code": "hydration",
+          "amount": "500",
+          "unit": "mL",
+          "value_state": "known",
+          "aggregation_role": "context_only",
+          "provenance": "user_confirmed"
+        },
+        {
+          "component_id": "creatine-monohydrate",
+          "kind": "compound",
+          "code": "creatine_monohydrate",
+          "label_name": "Creatine monohydrate",
+          "amount": "5",
+          "unit": "g",
+          "value_state": "known",
+          "quantity_basis": "compound_mass",
+          "aggregation_role": "compound_measurement",
+          "provenance": "label_confirmed"
+        }
+      ],
+      "healthkit_links": [
+        {
+          "component_id": "water",
+          "healthkit_sample_uuid": "2c932bd1-c46d-4e38-b481-e0d842fdd429",
+          "healthkit_type": "HKQuantityTypeIdentifierDietaryWater",
+          "sync_identifier": "intake:e6677963-418c-4027-b563-551d8a531eed:water",
+          "sync_version": 2,
+          "disposition": "active"
+        }
+      ],
+      "nutrition_completeness": "partial",
+      "domain_facts_hash": "sha256:93bb96b900c8d22d77630236eb60ec9c453e0627009d9fe01041ea3ef438c4f0",
+      "projection_hash": "sha256:8d5f54713418cd2f525dbf176e4d9e6c73241ded8ac5f9288db6e0179b8f71fd",
+      "client_payload_hash": "sha256:7f372efa898437ea41f35493aac0294c051a5f4c65f0f4b52193e6e39de7d048"
+    }
+  ]
+}

@@ -17,9 +17,8 @@
   "properties": {
     "schema": { "const": "healthrelay.intake-context" },
     "schema_version": {
-      "description": "Major version 1 only; the minor part is a non-negative integer.",
-      "type": "string",
-      "pattern": "^1\\.(0|[1-9][0-9]*)$"
+      "description": "Only the minors this schema describes. A later minor extends this list in the same change that adds its fields.",
+      "enum": ["1.0"]
     },
     "batch_id": { "$ref": "#/$defs/uuid" },
     "producer_id": { "$ref": "#/$defs/producerId" },
@@ -193,6 +192,29 @@
             }
           },
           "else": { "propertyNames": { "not": { "const": "members" } } }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "compound" } },
+            "required": ["kind"]
+          },
+          "then": {
+            "required": ["quantity_basis"],
+            "properties": {
+              "aggregation_role": { "const": "compound_measurement" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "nutrient" } },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": {
+              "aggregation_role": { "not": { "const": "compound_measurement" } }
+            }
+          }
         }
       ]
     },
@@ -284,7 +306,10 @@
         "operation": { "const": "upsert" },
         "intake_id": { "$ref": "#/$defs/uuid" },
         "revision": { "$ref": "#/$defs/positiveInteger" },
-        "projection_sequence": { "$ref": "#/$defs/positiveInteger" },
+        "projection_sequence": {
+          "description": "An upsert opens the projection lifecycle of its revision, so it is always 1.",
+          "const": 1
+        },
         "occurred_at": { "$ref": "#/$defs/timestamp" },
         "time_zone": {
           "description": "IANA time zone name.",

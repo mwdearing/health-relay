@@ -6,8 +6,13 @@ module is the executable form of docs/reference/intake-context-v1.md.
 
 import hashlib
 import json
+import re
+from collections.abc import Iterator
+from datetime import date
+from functools import lru_cache
 from pathlib import Path
-from typing import TypeAlias, cast
+from typing import NoReturn, TypeAlias, cast
+from zoneinfo import available_timezones
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = REPO_ROOT / "schemas" / "healthrelay.intake-context.v1.schema.json"
@@ -27,20 +32,81 @@ DOMAIN_EXCLUDED = frozenset(
 )
 
 
-def _reject_floats(value: object) -> None:
+class ContractError(ValueError):
+    """Raised for input the contract forbids before any schema check can run."""
+
+
+_SURROGATE = re.compile("[\ud800-\udfff]")
+_TIMESTAMP = re.compile(
+    r"""
+    (\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?
+    (?:Z|[+-](\d{2}):(\d{2}))
+    """,
+    re.VERBOSE,
+)
+_TIMESTAMP_FIELDS = ("occurred_at", "recorded_at", "deleted_at")
+
+
+def _reject_float_text(text: str) -> NoReturn:
+    message = f"float number {text} is not allowed; integers and decimals as strings"
+    raise ContractError(message)
+
+
+def _reject_constant(name: str) -> NoReturn:
+    message = f"{name} is not allowed in canonical JSON"
+    raise ContractError(message)
+
+
+def _reject_duplicate_names(pairs: list[tuple[str, object]]) -> JsonObject:
+    seen: JsonObject = {}
+    for name, value in pairs:
+        if name in seen:
+            message = f"duplicate object name {name!r}"
+            raise ContractError(message)
+        seen[name] = value
+    return seen
+
+
+def _contract_violations(value: object, path: str) -> Iterator[str]:
     if isinstance(value, float):
-        message = "float values are not allowed in canonical JSON"
-        raise ValueError(message)  # noqa: TRY004
-    if isinstance(value, dict):
-        for item in cast("JsonObject", value).values():
-            _reject_floats(item)
+        yield f"float at {path}: float values are not allowed"
+    elif isinstance(value, str):
+        if _SURROGATE.search(value):
+            yield f"lone_surrogate at {path}: unpaired surrogate in string"
+    elif isinstance(value, dict):
+        for key, item in cast("JsonObject", value).items():
+            if _SURROGATE.search(key):
+                yield f"lone_surrogate at {path}: unpaired surrogate in object name"
+            yield from _contract_violations(item, f"{path}/{key}")
     elif isinstance(value, list):
-        for item in cast("list[object]", value):
-            _reject_floats(item)
+        for index, item in enumerate(cast("list[object]", value)):
+            yield from _contract_violations(item, f"{path}/{index}")
+
+
+def load_json(text: str) -> object:
+    """Parse JSON text, refusing what the contract forbids.
+
+    Rejects duplicate object names, any number written as a float (so ``2.0``
+    and ``2e0`` fail even where an integer is expected), NaN and infinities,
+    and unpaired surrogates.
+    """
+    value = cast(
+        "object",
+        json.loads(
+            text,
+            parse_float=_reject_float_text,
+            parse_constant=_reject_constant,
+            object_pairs_hook=_reject_duplicate_names,
+        ),
+    )
+    for violation in _contract_violations(value, ""):
+        raise ContractError(violation)
+    return value
 
 
 def canonical_json(value: object) -> bytes:
-    _reject_floats(value)
+    for violation in _contract_violations(value, ""):
+        raise ContractError(violation)
     return json.dumps(
         value,
         sort_keys=True,
@@ -59,8 +125,25 @@ def domain_facts_hash(batch: JsonObject, operation: JsonObject) -> str:
     return digest({"producer_id": batch["producer_id"], **body})
 
 
+def _duplicate_links(links: list[JsonObject]) -> list[tuple[str, str]]:
+    seen: set[tuple[str, str]] = set()
+    duplicates: list[tuple[str, str]] = []
+    for link in links:
+        pair = (
+            cast("str", link["component_id"]),
+            cast("str", link["healthkit_sample_uuid"]),
+        )
+        if pair in seen:
+            duplicates.append(pair)
+        seen.add(pair)
+    return duplicates
+
+
 def projection_hash(batch: JsonObject, operation: JsonObject) -> str:
     links = cast("list[JsonObject]", operation.get("healthkit_links", []))
+    if _duplicate_links(links):
+        message = "duplicate (component_id, healthkit_sample_uuid) in healthkit_links"
+        raise ContractError(message)
     ordered = sorted(
         links,
         key=lambda link: (
@@ -111,3 +194,77 @@ def seal(batch: JsonObject) -> JsonObject:
                 operation[key] = hashes[key]
         operation["client_payload_hash"] = client_payload_hash(batch, operation)
     return batch
+
+
+@lru_cache(maxsize=1)
+def _time_zones() -> frozenset[str]:
+    return frozenset(available_timezones())
+
+
+def _timestamp_is_valid(text: str) -> bool:
+    """RFC 3339 ranges: a real calendar date, hour 0-23, minute and offset in range.
+
+    A second of 60 is allowed for a leap second.
+    """
+    match = _TIMESTAMP.fullmatch(text)
+    if match is None:
+        return False
+    year, month, day, hour, minute, second = (int(g) for g in match.groups()[:6])
+    offset_hour, offset_minute = (int(g or 0) for g in match.groups()[6:])
+    try:
+        _ = date(year, month, day)
+    except ValueError:
+        return False
+    return (
+        hour <= 23
+        and minute <= 59
+        and second <= 60
+        and offset_hour <= 23
+        and offset_minute <= 59
+    )
+
+
+def _operation_errors(operation: JsonObject, path: str) -> Iterator[str]:
+    kind = operation.get("operation")
+    links = cast("list[JsonObject]", operation.get("healthkit_links", []))
+    for component_id, sample_uuid in _duplicate_links(links):
+        yield (
+            f"duplicate_link at {path}/healthkit_links: "
+            f"({component_id}, {sample_uuid}) appears more than once"
+        )
+    for field in _TIMESTAMP_FIELDS:
+        value = operation.get(field)
+        if isinstance(value, str) and not _timestamp_is_valid(value):
+            yield f"invalid_timestamp at {path}/{field}: {value} is not a real instant"
+    if kind != "upsert":
+        return
+    zone = operation.get("time_zone")
+    if isinstance(zone, str) and zone not in _time_zones():
+        yield f"unknown_time_zone at {path}/time_zone: {zone} is not an IANA zone"
+    facts = cast("list[JsonObject]", operation.get("facts", []))
+    component_ids: set[str] = set()
+    for fact in facts:
+        component_id = cast("str", fact["component_id"])
+        if component_id in component_ids:
+            yield f"duplicate_component_id at {path}/facts: {component_id}"
+        component_ids.add(component_id)
+    for link in links:
+        if link["component_id"] not in component_ids:
+            yield (
+                f"unknown_link_component at {path}/healthkit_links: "
+                f"{link['component_id']} is not a fact of this upsert"
+            )
+
+
+def semantic_errors(batch: JsonObject) -> list[str]:
+    """Rules the JSON Schema cannot express, for a schema-valid batch.
+
+    A link_projection's component IDs resolve against the stored target
+    revision, which only the receiver can see, so only duplicate pairs are
+    checked there.
+    """
+    errors = list(_contract_violations(batch, ""))
+    operations = cast("list[JsonObject]", batch.get("operations", []))
+    for index, operation in enumerate(operations):
+        errors.extend(_operation_errors(operation, f"/operations/{index}"))
+    return errors
