@@ -1,0 +1,37 @@
+{
+  "schema": "healthrelay.intake-context",
+  "schema_version": "1.0",
+  "batch_id": "a3c9d1e7-4b25-4f8a-b6d0-18e5c7f2a940",
+  "producer_id": "nutrition-app",
+  "writer_bundle_id": "com.example.healthrelay.nutrition",
+  "installation_id": "507b8fbb-78d3-450c-a88f-487e90df92e6",
+  "operations": [
+    {
+      "operation_id": "d94b6e18-27c3-4a5f-8e91-b0f3a6c2d587",
+      "operation": "link_projection",
+      "intake_id": "e6677963-418c-4027-b563-551d8a531eed",
+      "revision": 2,
+      "projection_sequence": 2,
+      "healthkit_links": [
+        {
+          "component_id": "water",
+          "healthkit_sample_uuid": "9a1f3c57-8e2d-4b60-a7c4-d5e0b1f28396",
+          "healthkit_type": "HKQuantityTypeIdentifierDietaryWater",
+          "sync_identifier": "intake:e6677963-418c-4027-b563-551d8a531eed:water",
+          "sync_version": 3,
+          "disposition": "active"
+        },
+        {
+          "component_id": "water",
+          "healthkit_sample_uuid": "2c932bd1-c46d-4e38-b481-e0d842fdd429",
+          "healthkit_type": "HKQuantityTypeIdentifierDietaryWater",
+          "sync_identifier": "intake:e6677963-418c-4027-b563-551d8a531eed:water",
+          "sync_version": 2,
+          "disposition": "superseded"
+        }
+      ],
+      "projection_hash": "sha256:2f5f6f941989eb759421d0497b01b9a97c5b771eeab75e0fb79c2e5c5b07ce5f",
+      "client_payload_hash": "sha256:f834b8568b09abb753bd547d0de69399baec54e56e647efc7d61edd83b11aea4"
+    }
+  ]
+}
