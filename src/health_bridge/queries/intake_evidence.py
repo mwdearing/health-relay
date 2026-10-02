@@ -118,6 +118,50 @@ where client_record_id = :exact_id
    )
 order by sample_id
 """
+# The same sample actively claimed by another effective component is a conflict.
+OTHER_ACTIVE_CLAIMS_SQL: Final = """
+select count(*)
+from intake_sample_links as link
+join intake_revisions as revision
+  on revision.intake_revision_row_id = link.intake_revision_row_id
+where revision.owner_id = :owner_id
+  and link.sample_uuid = :sample_uuid
+  and link.disposition = 'active'
+  and not (
+      revision.producer_id = :producer_id
+      and revision.intake_id = :intake_id
+      and link.component_id = :component_id
+  )
+  and revision.revision = (
+      select max(newer.revision) from intake_revisions as newer
+      where newer.owner_id = revision.owner_id
+        and newer.producer_id = revision.producer_id
+        and newer.intake_id = revision.intake_id
+  )
+  and link.projection_sequence = (
+      select max(snapshot.projection_sequence)
+      from intake_projection_snapshots as snapshot
+      where snapshot.intake_revision_row_id = link.intake_revision_row_id
+  )
+  and not exists (
+      select 1 from intake_tombstones as tombstone
+      where tombstone.owner_id = revision.owner_id
+        and tombstone.producer_id = revision.producer_id
+        and tombstone.intake_id = revision.intake_id
+  )
+  and not exists (
+      select 1 from intake_state as state
+      where state.owner_id = revision.owner_id
+        and state.producer_id = revision.producer_id
+        and state.intake_id = revision.intake_id
+        and state.deleted = 1
+  )
+"""
+DELETED_SAMPLE_SQL: Final = """
+select 1 from deleted_records
+where record_family = 'sample' and client_record_id = :client_record_id
+limit 1
+"""
 
 
 @final
@@ -137,6 +181,7 @@ class InvalidIntakeEvidenceLimitError(ValueError):
 @dataclass(frozen=True, slots=True)
 class IntakeEvidenceItem:
     intake_id: str
+    producer_id: str
     revision: int
     component_id: str
     kind: str
@@ -164,7 +209,17 @@ class _Position:
     producer_id: str
     revision: int
     position: int
-    ordinal: int
+    link_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class _Claim:
+    owner_id: str
+    producer_id: str
+    intake_id: str
+    component_id: str
+    code: str
+    writer_bundle_id: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,7 +246,7 @@ def _encode_cursor(position: _Position) -> str:
             position.producer_id,
             position.revision,
             position.position,
-            position.ordinal,
+            position.link_key,
         ],
         separators=(",", ":"),
     )
@@ -210,12 +265,12 @@ def _decode_cursor(cursor: str) -> _Position:
             str() as producer_id,
             int() as revision,
             int() as position,
-            int() as ordinal,
+            str() as link_key,
         ] if (
             not any(isinstance(part, bool) for part in parts)
-            and min(revision, position, ordinal) >= 0
+            and min(revision, position) >= 0
         ):
-            return _Position(intake_id, producer_id, revision, position, ordinal)
+            return _Position(intake_id, producer_id, revision, position, link_key)
         case _:
             raise InvalidIntakeEvidenceCursorError
 
@@ -232,14 +287,35 @@ def _metadata(raw: str | None) -> dict[str, object]:
     return {str(key): value for key, value in parsed.items()}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
 
 
+def _other_active_claims(
+    connection: sqlite3.Connection,
+    claim: _Claim,
+    sample_uuid: str,
+) -> int:
+    row = cast(
+        "tuple[int]",
+        connection.execute(
+            OTHER_ACTIVE_CLAIMS_SQL,
+            {
+                "owner_id": claim.owner_id,
+                "sample_uuid": sample_uuid,
+                "producer_id": claim.producer_id,
+                "intake_id": claim.intake_id,
+                "component_id": claim.component_id,
+            },
+        ).fetchone(),
+    )
+    return row[0]
+
+
 def _resolve(
     connection: sqlite3.Connection,
     *,
-    code: str,
+    claim: _Claim,
     sample_uuid: str,
     healthkit_type: str,
-    writer_bundle_id: str | None,
 ) -> _Resolution:
+    code, writer_bundle_id = claim.code, claim.writer_bundle_id
     expected_id = exporter_client_record_id(code, sample_uuid)
     rows = SAMPLE_ROWS_ADAPTER.validate_python(
         connection.execute(
@@ -252,7 +328,16 @@ def _resolve(
         ).fetchall(),
     )
     if not rows:
-        return _Resolution(sample_uuid, expected_id, healthkit_type, "pending")
+        deleted = cast(
+            "object",
+            connection.execute(
+                DELETED_SAMPLE_SQL,
+                {"client_record_id": expected_id},
+            ).fetchone(),
+        )
+        # A sample deleted at the source never arrives: it is not pending.
+        status: LinkStatus = "pending" if deleted is None else "mismatch"
+        return _Resolution(sample_uuid, expected_id, healthkit_type, status)
     first_id = rows[0][0]
     exact: list[dict[str, object]] = []
     for client_record_id, type_code, metadata_json in rows:
@@ -268,7 +353,7 @@ def _resolve(
         metadata.get(SOURCE_BUNDLE_METADATA_KEY) == writer_bundle_id
         for metadata in exact
     )
-    if verified:
+    if verified and _other_active_claims(connection, claim, sample_uuid) == 0:
         return _Resolution(sample_uuid, expected_id, healthkit_type, "verified")
     stored_id = expected_id if exact else first_id
     return _Resolution(sample_uuid, stored_id, healthkit_type, "mismatch")
@@ -282,6 +367,7 @@ def _item(
 ) -> IntakeEvidenceItem:
     return IntakeEvidenceItem(
         intake_id=row[0],
+        producer_id=row[1],
         revision=row[2],
         component_id=row[5],
         kind=row[6],
@@ -358,10 +444,16 @@ def list_intake_evidence(
         resolutions = [
             _resolve(
                 connection,
-                code=code,
+                claim=_Claim(
+                    owner_id,
+                    producer_id,
+                    row_intake_id,
+                    component_id,
+                    code,
+                    writer_bundle_id,
+                ),
                 sample_uuid=sample_uuid,
                 healthkit_type=healthkit_type,
-                writer_bundle_id=writer_bundle_id,
             )
             for sample_uuid, healthkit_type in claims
         ]
@@ -370,20 +462,21 @@ def list_intake_evidence(
         candidates = [
             _item(row, resolution, complete=complete) for resolution in resolutions
         ] or [_item(row, None, complete=complete)]
-        for ordinal, item in enumerate(candidates):
-            where = _Position(row_intake_id, producer_id, revision, position, ordinal)
+        for item in candidates:
+            link_key = item.sample_uuid or ""
+            where = _Position(row_intake_id, producer_id, revision, position, link_key)
             if after is not None and (
                 row_intake_id,
                 producer_id,
                 revision,
                 position,
-                ordinal,
+                link_key,
             ) <= (
                 after.intake_id,
                 after.producer_id,
                 after.revision,
                 after.position,
-                after.ordinal,
+                after.link_key,
             ):
                 continue
             produced.append((where, item))

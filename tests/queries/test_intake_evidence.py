@@ -590,3 +590,98 @@ def test_exact_record_id_under_the_wrong_stored_type_is_a_mismatch(
     )
     water_intake(conn, sample=uid(1))
     assert one(evidence(conn)).link_status == "mismatch"
+
+
+def test_items_name_their_producer(conn: sqlite3.Connection) -> None:
+    register_producer_row(
+        conn, producer_id="other-app", writer_bundle_id="dev.example.other"
+    )
+    _ = put_sample(conn, sample_uuid=uid(1))
+    _ = put_sample(conn, sample_uuid=uid(2), bundle_id="dev.example.other")
+    _ = put_revision(
+        conn,
+        intake_id=INTAKE_A,
+        revision=1,
+        facts=[fact("water")],
+        links=[link("water", uid(1))],
+    )
+    _ = put_revision(
+        conn,
+        intake_id=INTAKE_A,
+        revision=1,
+        facts=[fact("water")],
+        links=[link("water", uid(2))],
+        producer_id="other-app",
+    )
+    assert [(i.producer_id, i.link_status) for i in evidence(conn)] == [
+        ("nutrition-app", "verified"),
+        ("other-app", "verified"),
+    ]
+
+
+def test_sample_claimed_by_two_components_is_not_verified_for_either(
+    conn: sqlite3.Connection,
+) -> None:
+    _ = put_sample(conn, sample_uuid=uid(1))
+    water_intake(conn, sample=uid(1), intake_id=INTAKE_A)
+    water_intake(conn, sample=uid(1), intake_id=INTAKE_B)
+    items = evidence(conn)
+    assert [(i.link_status, i.complete) for i in items] == [
+        ("mismatch", False),
+        ("mismatch", False),
+    ]
+
+
+def test_conflict_ends_when_the_other_claim_is_retired(
+    conn: sqlite3.Connection,
+) -> None:
+    _ = put_sample(conn, sample_uuid=uid(1))
+    water_intake(conn, sample=uid(1), intake_id=INTAKE_A)
+    water_intake(conn, sample=uid(1), intake_id=INTAKE_B)
+    put_projection(conn, intake_id=INTAKE_B, revision=1, sequence=2, links=[])
+    assert [(i.intake_id, i.link_status) for i in evidence(conn)] == [
+        (INTAKE_A, "verified"),
+        (INTAKE_B, "unlinked"),
+    ]
+
+
+def test_sample_deleted_at_the_source_is_not_pending(
+    conn: sqlite3.Connection,
+) -> None:
+    _ = put_sample(conn, sample_uuid=uid(5))
+    _ = conn.execute(
+        """insert into deleted_records
+        (source_id, record_family, client_record_id, deleted_at)
+        values ((select min(source_id) from sources), 'sample', ?, ?)""",
+        (exporter_client_record_id("hydration", uid(1)), "2026-10-01T13:00:00Z"),
+    )
+    conn.commit()
+    water_intake(conn, sample=uid(1))
+    item = one(evidence(conn))
+    assert (item.link_status, item.complete) == ("mismatch", False)
+
+
+def test_cursor_inside_a_component_survives_a_link_inserted_before_it(
+    conn: sqlite3.Connection,
+) -> None:
+    put_revision_links = [link("water", uid(n)) for n in (1, 3)]
+    _ = put_revision(
+        conn,
+        intake_id=INTAKE_A,
+        revision=1,
+        facts=[fact("water")],
+        links=put_revision_links,
+    )
+    first = list_intake_evidence(conn, owner_id=OWNER, limit=1)
+    assert [i.sample_uuid for i in first.items] == [uid(1)]
+    put_projection(
+        conn,
+        intake_id=INTAKE_A,
+        revision=1,
+        sequence=2,
+        links=[link("water", uid(n)) for n in (0, 1, 3)],
+    )
+    second = list_intake_evidence(
+        conn, owner_id=OWNER, cursor=first.next_cursor, limit=5
+    )
+    assert [i.sample_uuid for i in second.items] == [uid(3)]

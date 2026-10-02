@@ -38,11 +38,12 @@ was not issued by this query raise `ValueError` subclasses
 Each fact (component) of the effective revision yields one item per active
 link. A component with no active link yields one `unlinked` item. Items are
 ordered by `(intake_id, producer, revision, component position)`, then by
-sample UUID when a component has several active links.
+sample UUID when a component has several active links. Two producers may use
+the same `intake_id`, so `producer_id` is part of every item.
 
 ## Item fields
 
-`intake_id`, `revision`, `component_id`, `kind`, `code`, `amount`, `unit` and
+`intake_id`, `producer_id`, `revision`, `component_id`, `kind`, `code`, `amount`, `unit` and
 `value_state` come from the stored fact; `amount` stays the decimal string the
 producer sent. `sample_uuid` and `healthkit_type` are the link's claim.
 `writer_bundle_id` is the bundle registered for the producer.
@@ -80,7 +81,7 @@ A link is `verified` only by exact joins, never by time, name or amount:
 | `verified` | All three joins hold. |
 | `pending` | No stored sample has that id yet. The export may not have arrived. |
 | `unlinked` | The component has no active link in its current snapshot. |
-| `mismatch` | A sample for that UUID is stored, but under another quantity type, or its source bundle is not the registered writer (or is missing). |
+| `mismatch` | The claim conflicts with the stored data: a sample for that UUID is stored under another quantity type, its source bundle is not the registered writer (or is missing), another current component also actively claims the same sample, or the sample was deleted at the source and will never arrive. |
 
 ## Completeness
 
@@ -92,6 +93,7 @@ link is `complete` because nothing is awaited.
 
 ## Pagination
 
-`next_cursor` is opaque; pass it back unchanged. Ordering is stable, so a page
-boundary never repeats or skips an item, including inside a component with
-several links. The last page has `next_cursor = null`.
+`next_cursor` is opaque; pass it back unchanged. Items are ordered by `(intake_id, producer_id, revision, component position,
+sample UUID)` and the cursor names the last item by that key, so a page
+boundary never repeats or skips an item, including inside a component whose
+links change between requests. The last page has `next_cursor = null`.
