@@ -165,6 +165,7 @@ EXPECTED_TOOL_NAMES = (
     "get_sleep_summary",
     "get_daily_summary",
     "explain_sources",
+    "get_intake_evidence_v1",
 )
 
 

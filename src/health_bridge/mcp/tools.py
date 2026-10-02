@@ -5,7 +5,14 @@ from datetime import date
 from pathlib import Path
 from typing import ClassVar, Final, Self, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 
 from health_bridge.contract.batch_v1 import (
     UTC_TIMESTAMP_PATTERN,
@@ -21,7 +28,14 @@ from health_bridge.queries import (
     get_workouts,
     list_synced_metrics,
 )
+from health_bridge.queries.intake_evidence import (
+    IntakeEvidencePage,
+    InvalidIntakeEvidenceCursorError,
+    InvalidIntakeEvidenceLimitError,
+    list_intake_evidence,
+)
 from health_bridge.status import read_status_markdown, read_status_snapshot
+from health_bridge.storage.database import connect_readonly_database
 from health_bridge.timeseries_catalog import list_supported_timeseries_types
 
 ToolResult: TypeAlias = BaseModel | str
@@ -76,6 +90,17 @@ class DateRangeArgs(McpModel):
             message = "start_date must not be after end_date"
             raise ValueError(message)
         return self
+
+
+class IntakeEvidenceArgs(McpModel):
+    owner_id: str | None = None
+    intake_id: str | None = None
+    cursor: str | None = None
+    limit: int = Field(default=100, ge=1, le=500)
+
+
+class ToolInputError(ValueError):
+    """Arguments that pass the schema but cannot be served."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +161,16 @@ TIMESERIES_INPUT_SCHEMA: Final[JsonObject] = {
 SUPPORTED_TIMESERIES_INPUT_SCHEMA: Final[JsonObject] = {
     "type": "object",
     "properties": {"category": {"type": "string"}},
+    "additionalProperties": False,
+}
+INTAKE_EVIDENCE_INPUT_SCHEMA: Final[JsonObject] = {
+    "type": "object",
+    "properties": {
+        "owner_id": {"type": "string"},
+        "intake_id": {"type": "string"},
+        "cursor": {"type": "string"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100},
+    },
     "additionalProperties": False,
 }
 _READ_ONLY: Final = "Read-only, no clinical interpretation."
@@ -253,6 +288,22 @@ MCP_TOOL_DEFINITIONS: Final[tuple[ToolDefinition, ...]] = (
         ),
         input_schema=EMPTY_INPUT_SCHEMA,
     ),
+    ToolDefinition(
+        name="get_intake_evidence_v1",
+        description=_describe(
+            "Answers which HealthKit sample each intake component claims and",
+            "whether that sample is stored here from the registered writer.",
+            "Each item carries producer_id, link_status (verified, pending,",
+            "unlinked or mismatch) and complete (false while any claimed sample",
+            "of the component is not verified).",
+            "Pages hold limit items (1 to 500, default 100); pass the returned",
+            "next_cursor as cursor for the next page, null means the last page.",
+            "owner_id is optional when exactly one intake owner is registered;",
+            "intake_id limits the listing to one intake.",
+            "Metadata and identifiers only, no sample values.",
+        ),
+        input_schema=INTAKE_EVIDENCE_INPUT_SCHEMA,
+    ),
 )
 TOOL_ARGUMENT_MODELS: Final[dict[str, type[McpModel]]] = {
     "get_bridge_status": EmptyArgs,
@@ -264,6 +315,7 @@ TOOL_ARGUMENT_MODELS: Final[dict[str, type[McpModel]]] = {
     "get_sleep_summary": DateRangeArgs,
     "get_daily_summary": DateRangeArgs,
     "explain_sources": EmptyArgs,
+    "get_intake_evidence_v1": IntakeEvidenceArgs,
 }
 
 
@@ -324,6 +376,43 @@ def _call_explain_sources(db_path: Path, _args: JsonMapping) -> BaseModel:
     return explain_sources(db_path)
 
 
+OWNERS_SQL: Final = (
+    "select distinct owner_id from intake_producers order by owner_id limit 2"
+)
+INTAKE_EVIDENCE_PAGE_ADAPTER: Final[TypeAdapter[IntakeEvidencePage]] = TypeAdapter(
+    IntakeEvidencePage,
+)
+
+
+def _call_intake_evidence(db_path: Path, args: JsonMapping) -> str:
+    parsed = IntakeEvidenceArgs.model_validate(args)
+    with connect_readonly_database(db_path) as connection:
+        owner_id = parsed.owner_id
+        if owner_id is None:
+            owners = [str(row[0]) for row in connection.execute(OWNERS_SQL)]  # pyright: ignore[reportAny]
+            if not owners:
+                message = "no intake owner registered"
+                raise ToolInputError(message)
+            if len(owners) > 1:
+                message = "more than one intake owner is registered; pass owner_id"
+                raise ToolInputError(message)
+            owner_id = owners[0]
+        try:
+            page = list_intake_evidence(
+                connection,
+                owner_id=owner_id,
+                cursor=parsed.cursor,
+                limit=parsed.limit,
+                intake_id=parsed.intake_id,
+            )
+        except (
+            InvalidIntakeEvidenceCursorError,
+            InvalidIntakeEvidenceLimitError,
+        ) as error:
+            raise ToolInputError(str(error)) from error
+    return INTAKE_EVIDENCE_PAGE_ADAPTER.dump_json(page).decode()
+
+
 TOOL_CALLERS: Final[dict[str, ToolCaller]] = {
     "get_bridge_status": _call_bridge_status,
     "get_bridge_context_markdown": _call_bridge_context_markdown,
@@ -334,4 +423,5 @@ TOOL_CALLERS: Final[dict[str, ToolCaller]] = {
     "get_sleep_summary": _call_sleep_summary,
     "get_daily_summary": _call_daily_summary,
     "explain_sources": _call_explain_sources,
+    "get_intake_evidence_v1": _call_intake_evidence,
 }

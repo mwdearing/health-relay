@@ -14,7 +14,7 @@ from pydantic_core import PydanticCustomError
 
 BASELINE_FILENAME: Final = "delivery_compatibility_v1.synthetic.json"
 BASELINE_SHA256: Final = (
-    "6211a8a4302ebb20995467d552961d8c4f1e8a718c33a8ed8a4e02709a35ad1c"
+    "7909ef96d6ed969e268b61686fc9106e4cfd976030f6cbea32220da18b23cb01"
 )
 SHA256_PATTERN: Final = re.compile(r"^[0-9a-f]{64}$")
 RAW_BATCH_SHA256: Final = (
@@ -29,7 +29,7 @@ V3_PAYLOAD_SHA256: Final = (
 STATUS_SHA256: Final = (
     "8fc30a841ca71533df4154b11c7f99415b7e413c7e0efd4f9f31ea36bace5058"
 )
-MCP_SHA256: Final = "6d6e5b295be8bced6abbeef4e847d0470ec6e4c9d18178750f35ac1fb4378ac7"
+MCP_SHA256: Final = "02562397282c0b0c245d6ecb84af5cba26b38202939dc5af4f6a9988ceaf0d93"
 EXPECTED_ROWS: Final = {
     "python_http_v1_raw_batch": ("python_http", "v1", "unchanged"),
     "python_http_v1_unauthorized": ("python_http", "v1", "unchanged"),
