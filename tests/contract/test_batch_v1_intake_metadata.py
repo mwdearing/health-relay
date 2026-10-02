@@ -203,3 +203,65 @@ def test_schema_rejects_invalid_intake_metadata(meta: dict[str, str]) -> None:
 )
 def test_schema_rejects_trailing_newline(meta: dict[str, str]) -> None:
     assert not schema_valid(meta)
+
+
+# ---------------------------------------------------------------------------
+# Parity: schema verdict == receiver verdict
+# ---------------------------------------------------------------------------
+from health_bridge.contract.batch_v1 import validate_intake_metadata  # noqa: E402
+
+
+def _mismatch_msg(s: bool, r: bool, meta: dict[str, str]) -> str:
+    return (
+        f"mismatch for {meta!r}: "
+        f"schema={'accepts' if s else 'rejects'}, "
+        f"receiver={'accepts' if r else 'rejects'}"
+    )
+
+
+def _check(meta: dict[str, str], expected: bool) -> None:
+    s = schema_valid(meta)
+    try:
+        validate_intake_metadata(meta)
+        r = True
+    except Exception:  # noqa: BLE001
+        r = False
+    assert s == r is expected, _mismatch_msg(s, r, meta)
+
+
+def test_newline_key_intake_id_rejected() -> None:
+    """Key 'intake_id\\n' must be rejected by both schema and receiver."""
+    _check({"intake_id\n": UUID}, expected=False)
+
+
+def test_newline_key_intake_component_id_rejected() -> None:
+    """Key 'intake_component_id\\n' must be rejected by both."""
+    _check({"intake_component_id\n": "water"}, expected=False)
+
+
+def test_newline_key_next_to_valid_pair_rejected() -> None:
+    """A valid pair plus 'intake_id\\n' must be rejected."""
+    _check(
+        {"intake_id": UUID, "intake_component_id": "c1", "intake_id\n": UUID},
+        expected=False,
+    )
+
+
+def test_non_reserved_intake_key_rejected() -> None:
+    """Unknown 'intake_idx' must be rejected by both."""
+    _check({"intake_idx": "3"}, expected=False)
+
+
+def test_bare_intake_prefix_rejected() -> None:
+    """Bare 'intake_' key must be rejected by both."""
+    _check({"intake_": "x"}, expected=False)
+
+
+def test_valid_pair_accepted_by_both() -> None:
+    """A valid full pair must be accepted by both."""
+    _check({**GOOD}, expected=True)
+
+
+def test_uppercase_prefix_not_reserved() -> None:
+    """'Intake_id' (uppercase) is not a reserved intake_ key."""
+    _check({"Intake_id": "x"}, expected=True)

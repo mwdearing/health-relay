@@ -156,7 +156,7 @@
             }
           },
           "patternProperties": {
-            "^intake_(?!id$|component_id$)": false
+            "^intake_(?!id(?!\\n)$|component_id(?!\\n)$)": false
           },
           "dependentRequired": {
             "intake_id": ["intake_component_id"],
