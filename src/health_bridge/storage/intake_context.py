@@ -400,6 +400,14 @@ from intake_sample_links
 where intake_revision_row_id = ?
 order by projection_sequence, intake_link_row_id
 """
+SELECT_LINKS_UP_TO_SQL: Final = """
+select projection_sequence, component_id, healthkit_type, sample_uuid,
+       sync_identifier, sync_version, disposition, source_bundle_id,
+       source_checked_at
+from intake_sample_links
+where intake_revision_row_id = ? and projection_sequence <= ?
+order by projection_sequence, intake_link_row_id
+"""
 LOCATED_LINK_COLUMNS: Final = """
 select revision.owner_id, revision.producer_id, revision.intake_id,
        revision.revision, link.projection_sequence, link.component_id,
@@ -618,25 +626,47 @@ def _read_facts(
     )
 
 
+def _read_projections(
+    connection: sqlite3.Connection,
+    revision_row_id: int,
+) -> tuple[ProjectionRecord, ...]:
+    """Snapshots first, then only the links of the snapshots already read.
+
+    Outside an explicit transaction a commit can land between the two reads;
+    reading links second and bounding them by the last snapshot sequence read
+    means a snapshot is never returned without its links, and links of a newer
+    snapshot are never returned at all. Links are grouped in one pass.
+    """
+    snapshots = SNAPSHOT_ROWS_ADAPTER.validate_python(
+        connection.execute(SELECT_SNAPSHOTS_SQL, (revision_row_id,)).fetchall()
+    )
+    if not snapshots:
+        return ()
+    last_sequence = max(snapshot[0] for snapshot in snapshots)
+    grouped: dict[int, list[SampleLink]] = {}
+    for row in LINK_ROWS_ADAPTER.validate_python(
+        connection.execute(
+            SELECT_LINKS_UP_TO_SQL, (revision_row_id, last_sequence)
+        ).fetchall()
+    ):
+        grouped.setdefault(row[0], []).extend(_links_from_rows((row,), row[0]))
+    return tuple(
+        ProjectionRecord(
+            projection_sequence=snapshot[0],
+            projection_hash=snapshot[1],
+            received_at=snapshot[2],
+            links=tuple(grouped.get(snapshot[0], ())),
+        )
+        for snapshot in snapshots
+    )
+
+
 def _stored_revision(
     connection: sqlite3.Connection,
     row: RevisionRow,
 ) -> StoredRevision:
     revision_row_id = row[0]
-    link_rows = LINK_ROWS_ADAPTER.validate_python(
-        connection.execute(SELECT_LINKS_SQL, (revision_row_id,)).fetchall()
-    )
-    projections = tuple(
-        ProjectionRecord(
-            projection_sequence=snapshot[0],
-            projection_hash=snapshot[1],
-            received_at=snapshot[2],
-            links=_links_from_rows(link_rows, snapshot[0]),
-        )
-        for snapshot in SNAPSHOT_ROWS_ADAPTER.validate_python(
-            connection.execute(SELECT_SNAPSHOTS_SQL, (revision_row_id,)).fetchall()
-        )
-    )
+    projections = _read_projections(connection, revision_row_id)
     first_links = projections[0].links if projections else ()
     record = RevisionRecord(
         owner_id=row[1],

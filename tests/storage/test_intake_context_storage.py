@@ -7,7 +7,7 @@ from collections.abc import Callable, Generator, Iterator
 from contextlib import closing, contextmanager
 from dataclasses import replace
 from pathlib import Path
-from typing import Final, cast
+from typing import Final, cast, final
 
 import pytest
 
@@ -422,6 +422,26 @@ CASES: Final = (
     ("intake_revisions", _revision_values, "nutrition_completeness", "bogus"),
     ("intake_revisions", _revision_values, "revision", 0),
     ("intake_revisions", _revision_values, "domain_facts_hash", "sha256:short"),
+    ("intake_revisions", _revision_values, "domain_facts_hash", "sha256:" + "A" * 64),
+    ("intake_revisions", _revision_values, "domain_facts_hash", "sha256:" + "g" * 64),
+    ("intake_revisions", _revision_values, "projection_hash", "sha256:" + "A" * 64),
+    ("intake_revisions", _revision_values, "projection_hash", "sha256:" + "z" * 64),
+    ("intake_revisions", _revision_values, "client_payload_hash", "sha256:" + "F" * 64),
+    ("intake_revisions", _revision_values, "client_payload_hash", "sha256:" + "-" * 64),
+    (
+        "intake_operation_receipts",
+        _receipt_values,
+        "client_payload_hash",
+        "sha256:" + "A" * 64,
+    ),
+    (
+        "intake_operation_receipts",
+        _receipt_values,
+        "client_payload_hash",
+        "sha256:" + "x" * 64,
+    ),
+    ("intake_tombstones", _tombstone_values, "domain_facts_hash", "sha256:" + "A" * 64),
+    ("intake_tombstones", _tombstone_values, "domain_facts_hash", "sha256:" + "x" * 64),
     ("intake_revisions", _revision_values, "serving_amount", "5e0"),
     ("intake_revisions", _revision_values, "serving_amount", "05"),
     ("intake_compound_facts", _fact_values, "kind", "bogus"),
@@ -1231,3 +1251,181 @@ def test_revision_replay_with_a_different_first_projection_conflicts(
         same = insert_revision(connection, record)
     assert same.record.projection_hash == record.projection_hash
     assert _count_rows(connection, "intake_revisions") == 1
+
+
+@pytest.mark.parametrize("bad", ["sha256:" + "A" * 64, "sha256:" + "g" * 64])
+def test_snapshot_hash_must_be_lowercase_hex(
+    connection: sqlite3.Connection, bad: str
+) -> None:
+    ids = _seed(connection)
+    with pytest.raises(sqlite3.IntegrityError), transaction(connection):
+        _ = connection.execute(
+            """
+            insert into intake_projection_snapshots
+                (intake_revision_row_id, projection_sequence,
+                 projection_hash, received_at)
+            values (?, 9, ?, ?)
+            """,
+            (ids["revision"], bad, NOW),
+        )
+
+
+def test_link_created_at_is_immutable_but_source_columns_stay_updatable(
+    connection: sqlite3.Connection,
+) -> None:
+    ids = _seed(connection)
+    with transaction(connection):
+        _raw_insert(connection, "intake_sample_links", _link_values(ids))
+
+    with pytest.raises(sqlite3.IntegrityError), transaction(connection):
+        _ = connection.execute(
+            "update intake_sample_links set created_at = '2000-01-01T00:00:00Z'"
+        )
+    with transaction(connection):
+        _ = connection.execute(
+            """
+            update intake_sample_links
+            set source_bundle_id = 'com.example.app', source_checked_at = ?
+            where sample_uuid = ?
+            """,
+            (NOW, "00000000-0000-4000-8000-000000000001"),
+        )
+    row = cast(
+        "tuple[str, str]",
+        connection.execute(
+            """
+            select source_bundle_id, source_checked_at from intake_sample_links
+            where sample_uuid = ?
+            """,
+            ("00000000-0000-4000-8000-000000000001",),
+        ).fetchone(),
+    )
+    assert row == ("com.example.app", NOW)
+
+
+@final
+class _SnapshotThenWrite:
+    """Connection proxy: right after the first read of this revision's
+    snapshots or links, another writer commits a new snapshot with a link."""
+
+    def __init__(self, conn: sqlite3.Connection, row_id: int, link: SampleLink) -> None:
+        self._conn = conn
+        self._row_id = row_id
+        self._link = link
+        self.fired = False
+
+    def execute(self, sql: str, params: tuple[object, ...] = ()) -> "_Rows":
+        rows = self._conn.execute(sql, params).fetchall()
+        if not self.fired and (
+            "from intake_projection_snapshots" in sql
+            or "from intake_sample_links" in sql
+        ):
+            self.fired = True
+            late = ProjectionRecord(
+                projection_sequence=3,
+                projection_hash=HASH_C,
+                received_at="2026-10-01T03:00:00Z",
+                links=(self._link,),
+            )
+            with transaction(self._conn):
+                _ = insert_projection_snapshot(
+                    self._conn, revision_row_id=self._row_id, snapshot=late
+                )
+        return _Rows(rows)
+
+
+@final
+class _Rows:
+    def __init__(self, rows: list[tuple[object, ...]]) -> None:
+        self._rows = rows
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        return self._rows
+
+    def fetchone(self) -> tuple[object, ...] | None:
+        return self._rows[0] if self._rows else None
+
+
+def test_links_are_only_read_for_snapshots_that_were_read(
+    connection: sqlite3.Connection,
+) -> None:
+    record = revision_from_fixture("valid_worked_example.json")
+    row_id = _store(connection, record)
+    original = record.links[0]
+    with transaction(connection):
+        _ = insert_projection_snapshot(
+            connection, revision_row_id=row_id, snapshot=_later_snapshot(2, ())
+        )
+    late_link = replace(
+        original, sample_uuid="22222222-2222-4222-8222-222222222222", sync_version=9
+    )
+    proxy = _SnapshotThenWrite(connection, row_id, late_link)
+
+    stored = read_revision(
+        cast("sqlite3.Connection", cast("object", proxy)),
+        owner_id=record.owner_id,
+        producer_id=record.producer_id,
+        intake_id=record.intake_id,
+        revision=record.revision,
+    )
+
+    assert proxy.fired
+    assert stored is not None
+    # A snapshot is never returned without its links: snapshot 3 landed after
+    # the snapshot read, so it must be absent and its link must not leak in.
+    assert [p.projection_sequence for p in stored.projections] == [1, 2]
+    assert stored.projections[0].links == (original,)
+    assert stored.projections[1].links == ()
+    again = read_revision(
+        connection,
+        owner_id=record.owner_id,
+        producer_id=record.producer_id,
+        intake_id=record.intake_id,
+        revision=record.revision,
+    )
+    assert again is not None
+    assert [p.projection_sequence for p in again.projections] == [1, 2, 3]
+    assert again.projections[2].links == (late_link,)
+
+
+def test_each_snapshot_gets_exactly_its_own_links_in_order(
+    connection: sqlite3.Connection,
+) -> None:
+    record = revision_from_fixture("valid_worked_example.json")
+    row_id = _store(connection, record)
+    original = record.links[0]
+
+    def variant(tag: int) -> SampleLink:
+        return replace(
+            original,
+            sample_uuid=f"{tag:08d}-0000-4000-8000-000000000000",
+            sync_version=tag,
+        )
+
+    expected: dict[int, tuple[SampleLink, ...]] = {
+        2: (variant(9), variant(3), variant(5)),
+        3: (),
+        4: (variant(1),),
+        5: (variant(7), variant(2)),
+    }
+    for sequence, links in expected.items():
+        with transaction(connection):
+            _ = insert_projection_snapshot(
+                connection,
+                revision_row_id=row_id,
+                snapshot=_later_snapshot(sequence, links),
+            )
+
+    stored = read_revision(
+        connection,
+        owner_id=record.owner_id,
+        producer_id=record.producer_id,
+        intake_id=record.intake_id,
+        revision=record.revision,
+    )
+
+    assert stored is not None
+    assert {p.projection_sequence: p.links for p in stored.projections} == {
+        1: (original,),
+        **expected,
+    }

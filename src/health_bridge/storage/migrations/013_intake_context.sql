@@ -41,11 +41,23 @@ create table if not exists intake_revisions (
             and revision between 1 and 9223372036854775807
         ),
     domain_facts_hash text not null
-        check (length(domain_facts_hash) = 71 and substr(domain_facts_hash, 1, 7) = 'sha256:'),
+        check (
+            length(domain_facts_hash) = 71
+            and substr(domain_facts_hash, 1, 7) = 'sha256:'
+            and substr(domain_facts_hash, 8) not glob '*[^0-9a-f]*'
+        ),
     projection_hash text not null
-        check (length(projection_hash) = 71 and substr(projection_hash, 1, 7) = 'sha256:'),
+        check (
+            length(projection_hash) = 71
+            and substr(projection_hash, 1, 7) = 'sha256:'
+            and substr(projection_hash, 8) not glob '*[^0-9a-f]*'
+        ),
     client_payload_hash text not null
-        check (length(client_payload_hash) = 71 and substr(client_payload_hash, 1, 7) = 'sha256:'),
+        check (
+            length(client_payload_hash) = 71
+            and substr(client_payload_hash, 1, 7) = 'sha256:'
+            and substr(client_payload_hash, 8) not glob '*[^0-9a-f]*'
+        ),
     installation_id text not null,
     operation_id text not null check (length(operation_id) > 0),
     occurred_at text not null,
@@ -176,7 +188,11 @@ create table if not exists intake_projection_snapshots (
             and projection_sequence between 1 and 9223372036854775807
         ),
     projection_hash text not null
-        check (length(projection_hash) = 71 and substr(projection_hash, 1, 7) = 'sha256:'),
+        check (
+            length(projection_hash) = 71
+            and substr(projection_hash, 1, 7) = 'sha256:'
+            and substr(projection_hash, 8) not glob '*[^0-9a-f]*'
+        ),
     received_at text not null,
     created_at text not null default (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     unique (intake_revision_row_id, projection_sequence)
@@ -223,7 +239,11 @@ create table if not exists intake_operation_receipts (
     producer_id text not null check (length(producer_id) > 0),
     operation_id text not null check (length(operation_id) > 0),
     client_payload_hash text not null
-        check (length(client_payload_hash) = 71 and substr(client_payload_hash, 1, 7) = 'sha256:'),
+        check (
+            length(client_payload_hash) = 71
+            and substr(client_payload_hash, 1, 7) = 'sha256:'
+            and substr(client_payload_hash, 8) not glob '*[^0-9a-f]*'
+        ),
     outcome text not null
         check (
             outcome in (
@@ -262,7 +282,11 @@ create table if not exists intake_tombstones (
         ),
     operation_id text not null check (length(operation_id) > 0),
     domain_facts_hash text not null
-        check (length(domain_facts_hash) = 71 and substr(domain_facts_hash, 1, 7) = 'sha256:'),
+        check (
+            length(domain_facts_hash) = 71
+            and substr(domain_facts_hash, 1, 7) = 'sha256:'
+            and substr(domain_facts_hash, 8) not glob '*[^0-9a-f]*'
+        ),
     created_at text not null default (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     unique (owner_id, producer_id, intake_id)
 );
@@ -324,7 +348,8 @@ before update of
     sample_uuid,
     sync_identifier,
     sync_version,
-    disposition
+    disposition,
+    created_at
 on intake_sample_links
 begin
     select raise(abort, 'intake sample links keep the claim they were stored with');
