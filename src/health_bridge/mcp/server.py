@@ -12,6 +12,7 @@ from health_bridge.mcp.tools import (
     MCP_TOOL_DEFINITIONS,
     TOOL_ARGUMENT_MODELS,
     TOOL_CALLERS,
+    ToolInputError,
 )
 from health_bridge.mcp.types import (
     JsonMapping,
@@ -197,7 +198,10 @@ def _list_tools(_db_path: Path, request: JsonRpcRequest) -> JsonObject:
     }
 
 
-def _call_tool(db_path: Path, request: JsonRpcRequest) -> JsonObject:
+def _call_tool(  # noqa: PLR0911
+    db_path: Path,
+    request: JsonRpcRequest,
+) -> JsonObject:
     try:
         name = required_string(request.params["name"])
     except (KeyError, JsonShapeError):
@@ -228,6 +232,12 @@ def _call_tool(db_path: Path, request: JsonRpcRequest) -> JsonObject:
     try:
         payload = caller(db_path, validated_arguments)
         text = payload if isinstance(payload, str) else payload.model_dump_json()
+    except ToolInputError as error:
+        return _error(
+            request.request_id,
+            -32602,
+            f"Invalid arguments for {name}: {error}",
+        )
     except (ValidationError, OSError, RuntimeError, ValueError, sqlite3.Error) as error:
         reason = _database_failure_reason(db_path, error)
         message = f"HealthRelay database could not be read ({reason}). {DATABASE_HINT}"
