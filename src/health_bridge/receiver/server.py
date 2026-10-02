@@ -4,8 +4,9 @@ import json
 import sqlite3
 import time
 from collections import OrderedDict, deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -34,6 +35,14 @@ from health_bridge.receiver.direct_http_acceptance import (
     DirectBatchStorageUnavailable,
     DirectHTTPAcceptance,
 )
+from health_bridge.receiver.intake_context_acceptance import (
+    OperationResult,
+    accept_batch,
+)
+from health_bridge.receiver.intake_tokens import (
+    IntakeTokenPrincipal,
+    authenticate_intake_token,
+)
 from health_bridge.receiver.invitations import (
     PairingInvitationError,
     PairingRedemptionCompletion,
@@ -51,6 +60,7 @@ from health_bridge.receiver.tokens import (
 )
 from health_bridge.receiver.transports import ReceiverTransport
 from health_bridge.storage.database import (
+    connect_database,
     database_lifecycle_lock,
     initialize_database,
 )
@@ -60,10 +70,18 @@ _MAILBOX_SHUTDOWN_ERROR = "mailbox_runtime_shutdown_incomplete"
 
 MAX_BATCH_BYTES: Final = 5_000_000
 MAX_PAIRING_REDEEM_BYTES: Final = 4_096
+INTAKE_CONTEXT_CAPABILITIES_PATH: Final = "/v1/intake-context/capabilities"
+INTAKE_CONTEXT_BATCHES_PATH: Final = "/v1/intake-context/batches"
+MAX_INTAKE_OPERATIONS: Final = 100
+INTAKE_CONTEXT_SCHEMA: Final = "healthrelay.intake-context"
+INTAKE_CONTEXT_VERSIONS: Final = ["1.0"]
+INTAKE_CONTEXT_FEATURES: Final = ["upsert", "delete", "link_projection"]
 PAIRING_REDEEM_LIMIT: Final = 5
 PAIRING_REDEEM_WINDOW_SECONDS: Final = 60
 PAIRING_REDEEM_MAX_CLIENTS: Final = 1_024
-JsonPayloadValue: TypeAlias = bool | int | str
+JsonPayloadValue: TypeAlias = (
+    bool | int | str | list[str] | list[dict[str, str | int | None]] | dict[str, str]
+)
 JsonPayload: TypeAlias = dict[str, JsonPayloadValue]
 
 
@@ -138,8 +156,10 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
         mailbox_key_store: MailboxKeyStore | None = None,
         mailbox_connection_store: MailboxConnectionStore | None = None,
         mailbox_worker: MailboxRuntimeWorker | None = None,
+        intake_context_enabled: bool = False,
     ) -> None:
         self.db_path: Path = db_path
+        self.intake_context_enabled: bool = intake_context_enabled
         self.mailbox_key_store: MailboxKeyStore | None = mailbox_key_store
         self.mailbox_connection_store: MailboxConnectionStore | None = (
             mailbox_connection_store
@@ -212,6 +232,9 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        if path == INTAKE_CONTEXT_CAPABILITIES_PATH and self._intake_enabled():
+            self._handle_intake_capabilities()
+            return
         if path != "/health":
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             return
@@ -247,10 +270,13 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
             },
         )
 
-    def do_POST(self) -> None:  # noqa: PLR0911
+    def do_POST(self) -> None:  # noqa: PLR0911, C901
         path = urlparse(self.path).path
         if path == "/v1/pairing/redeem":
             self._handle_pairing_redeem()
+            return
+        if path == INTAKE_CONTEXT_BATCHES_PATH and self._intake_enabled():
+            self._handle_intake_batches()
             return
         if path != "/v1/batches":
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
@@ -390,9 +416,39 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
             )
         self._send_json(HTTPStatus.OK, response)
 
-    def _authorize_batch_request(self) -> ReceiverTokenPrincipal | None:
+    def _intake_enabled(self) -> bool:
+        server = getattr(self, "server", None)
+        return bool(getattr(server, "intake_context_enabled", False))
+
+    def _bearer_token(self) -> str | None:
+        authorization = self.headers.get("Authorization", "")
+        scheme, separator, token = authorization.partition(" ")
+        # This is an empty parsed header field, not a credential literal.
+        empty_token = token == ""  # nosec B105
+        if separator == "" or scheme.lower() != "bearer" or empty_token:
+            return None
+        return token
+
+    def _send_unauthorized(self) -> None:
+        self._send_json(
+            HTTPStatus.UNAUTHORIZED,
+            {"error": "unauthorized"},
+            extra_headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    def _authorize_intake_request(self) -> IntakeTokenPrincipal | None:
+        """Return the intake principal, or send 401 (unknown) or 403 (batch token)."""
+        token = self._bearer_token()
+        if token is None:
+            self._send_unauthorized()
+            return None
+        db_path = self.receiver_server.db_path
         try:
-            principal = self._authenticated_principal()
+            principal = authenticate_intake_token(db_path, token)
+            is_batch_token = (
+                principal is None
+                and authenticate_receiver_token_principal(db_path, token) is not None
+            )
         except (sqlite3.Error, OSError):
             self._send_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
@@ -401,12 +457,118 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
             return None
         if principal is not None:
             return principal
+        if is_batch_token:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "wrong_token_type"})
+        else:
+            self._send_unauthorized()
+        return None
+
+    def _handle_intake_capabilities(self) -> None:
+        if self._authorize_intake_request() is None:
+            return
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "schema": INTAKE_CONTEXT_SCHEMA,
+                "supported_versions": INTAKE_CONTEXT_VERSIONS,
+                "max_body_bytes": MAX_BATCH_BYTES,
+                "max_operations": MAX_INTAKE_OPERATIONS,
+                "authentication": {
+                    "scheme": "bearer",
+                    "header": "Authorization",
+                    # The token type names the credential class; it is not a secret.
+                    "token_type": "intake",  # nosec B105
+                },
+                "features": INTAKE_CONTEXT_FEATURES,
+            },
+        )
+
+    def _handle_intake_batches(self) -> None:  # noqa: PLR0911
+        principal = self._authorize_intake_request()
+        if principal is None:
+            return
+        body = self._read_body(close_on_reject=True)
+        if body is None:
+            return
+        try:
+            document = cast("object", json.loads(body))
+        except (ValueError, RecursionError):
+            document = None
+        if not isinstance(document, dict):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        producer = cast("dict[str, object]", document).get("producer_id")
+        if producer != principal.producer_id:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "producer_mismatch"})
+            return
+        operations = cast("dict[str, object]", document).get("operations")
+        if (
+            isinstance(operations, list)
+            and len(cast("list[object]", operations)) > MAX_INTAKE_OPERATIONS
+        ):
+            self._send_json(
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                {"error": "too_many_operations"},
+            )
+            return
+        try:
+            with connect_database(self.receiver_server.db_path) as connection:
+                results = accept_batch(
+                    connection,
+                    owner_id=principal.owner_id,
+                    payload=body,
+                    received_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                )
+        except (sqlite3.Error, OSError):
+            self._send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"error": "records could not be stored"},
+            )
+            return
+        expected = (
+            len(cast("list[object]", operations)) if isinstance(operations, list) else 0
+        )
+        # One result per operation or the batch is invalid. A batch that fails
+        # validation as a whole stores nothing; should any operation have been
+        # committed before a mismatch shows, the 400 tells the producer to retry
+        # the whole batch, and committed operations then return as duplicate.
+        if not results or len(results) != expected:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_batch"})
+            return
+        self._send_json(
+            HTTPStatus.OK,
+            {"results": [_result_json(result) for result in results]},
+        )
+
+    def _authorize_batch_request(self) -> ReceiverTokenPrincipal | None:
+        try:
+            principal = self._authenticated_principal()
+            is_intake_token = principal is None and self._is_intake_token()
+        except (sqlite3.Error, OSError):
+            self._send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"error": "authentication_temporarily_unavailable"},
+            )
+            return None
+        if principal is not None:
+            return principal
+        if is_intake_token:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "wrong_token_type"})
+            return None
         self._send_json(
             HTTPStatus.UNAUTHORIZED,
             {"error": "unauthorized"},
             extra_headers={"WWW-Authenticate": "Bearer"},
         )
         return None
+
+    def _is_intake_token(self) -> bool:
+        token = self._bearer_token()
+        return (
+            token is not None
+            and authenticate_intake_token(self.receiver_server.db_path, token)
+            is not None
+        )
 
     def _authenticated_principal(self) -> ReceiverTokenPrincipal | None:
         authorization = self.headers.get("Authorization", "")
@@ -425,40 +587,58 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
         *,
         max_bytes: int = MAX_BATCH_BYTES,
         too_large_error: str = "batch_too_large",
+        close_on_reject: bool = False,
     ) -> bytes | None:
         content_length_header = self.headers.get("Content-Length")
         if content_length_header is None:
-            self._send_json(
+            self._reject_body(
                 HTTPStatus.LENGTH_REQUIRED,
-                {"error": "content_length_required"},
+                "content_length_required",
+                close_connection=close_on_reject,
             )
             return None
         try:
             content_length = int(content_length_header)
         except ValueError:
-            self._send_json(
-                HTTPStatus.BAD_REQUEST,
-                {"error": "invalid_content_length"},
-            )
-            return None
+            content_length = -1
         if content_length < 0:
-            self._send_json(
+            self._reject_body(
                 HTTPStatus.BAD_REQUEST,
-                {"error": "invalid_content_length"},
+                "invalid_content_length",
+                close_connection=close_on_reject,
             )
             return None
         if content_length > max_bytes:
-            self._send_json(
+            self._reject_body(
                 HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
-                {"error": too_large_error},
+                too_large_error,
+                close_connection=close_on_reject,
             )
             return None
         return self.rfile.read(content_length)
 
+    def _reject_body(
+        self,
+        status: HTTPStatus,
+        error: str,
+        *,
+        close_connection: bool,
+    ) -> None:
+        """Reject on headers alone; never read the body, optionally close."""
+        if close_connection:
+            self.close_connection = True  # pyright: ignore[reportUnannotatedClassAttribute]
+            self._send_json(
+                status,
+                {"error": error},
+                extra_headers={"Connection": "close"},
+            )
+            return
+        self._send_json(status, {"error": error})
+
     def _send_json(
         self,
         status: HTTPStatus,
-        payload: JsonPayload,
+        payload: Mapping[str, JsonPayloadValue],
         extra_headers: dict[str, str] | None = None,
     ) -> None:
         response_body = json.dumps(
@@ -479,22 +659,25 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
             return
 
 
-def build_receiver_server(
+def build_receiver_server(  # noqa: PLR0913 - explicit transport dependencies.
     db_path: Path,
     host: str,
     port: int,
     *,
     mailbox_key_store: MailboxKeyStore | None = None,
     mailbox_connection_store: MailboxConnectionStore | None = None,
+    intake_context_enabled: bool = False,
 ) -> ReceiverHTTPServer:
     initialize_database(db_path)
-    return ReceiverHTTPServer(
+    server = ReceiverHTTPServer(
         host=host,
         port=port,
         db_path=db_path,
         mailbox_key_store=mailbox_key_store,
         mailbox_connection_store=mailbox_connection_store,
     )
+    server.intake_context_enabled = intake_context_enabled
+    return server
 
 
 def _validate_mailbox_public_keys(
@@ -586,6 +769,28 @@ def _response_for_ingest_result(result: IngestResult) -> dict[str, str | int]:
         "sleep_session_count": result.sleep_session_count,
         "deleted_record_count": result.deleted_record_count,
         "sync_cursor_count": result.sync_cursor_count,
+    }
+
+
+_FIXED_DETAILS: Final = {
+    "stale_revision": "stale revision",
+    "domain_conflict": "domain conflict",
+    "projection_conflict": "projection conflict",
+    "permanent_failure": "validation failed",
+    "retryable_failure": "retry later",
+}
+
+
+def _result_json(result: OperationResult) -> dict[str, str | int | None]:
+    """Serialise a result; ``detail`` is a fixed message, never request data."""
+    return {
+        "operation_id": result.operation_id,
+        "result": result.result,
+        "accepted_revision": result.accepted_revision,
+        "projection_sequence": result.projection_sequence,
+        "server_cursor": result.server_cursor,
+        "current_revision": result.current_revision,
+        "detail": _FIXED_DETAILS.get(result.result),
     }
 
 
