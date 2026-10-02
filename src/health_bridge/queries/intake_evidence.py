@@ -23,7 +23,6 @@ MAX_LIMIT: Final = 500
 EXPORTER_RECORD_PREFIX: Final = "hk-quantity-"
 SOURCE_BUNDLE_METADATA_KEY: Final = "healthkit_source_bundle_id"
 HEALTHKIT_IDENTIFIER_METADATA_KEY: Final = "healthkit_identifier"
-UUID_TEXT_LENGTH: Final = 36
 
 ComponentRow: TypeAlias = tuple[
     str,  # intake_id
@@ -106,17 +105,29 @@ where link.intake_revision_row_id = :revision_row_id
   )
 order by link.component_id, link.sample_uuid
 """
-# Exact id, or the same sample UUID stored under another quantity type (an
-# exporter id ends in the lowercase sample UUID). Nothing else is a candidate.
+# Candidate (type, id) pairs only, probed through the unique index on
+# (source_id, type_code, client_record_id), so cost does not grow with history.
+# `cross join` pins the join order so the planner cannot scan samples.
+# Pairs cover the exporter id under every dietary type and the expected id under
+# every dietary type (a sample stored under another type).
 SAMPLES_SQL: Final = """
-select client_record_id, type_code, metadata_json
-from samples
-where client_record_id = :exact_id
-   or (
-       client_record_id like 'hk-quantity-%'
-       and substr(client_record_id, :uuid_start) = :sample_uuid
-   )
-order by sample_id
+with candidate(type_code, client_record_id) as (
+    select json_extract(value, '$[0]'), json_extract(value, '$[1]')
+    from json_each(:pairs)
+)
+select samples.client_record_id, samples.type_code, samples.metadata_json
+from candidate
+cross join sources
+cross join samples
+  on samples.source_id = sources.source_id
+ and samples.type_code = candidate.type_code
+ and samples.client_record_id = candidate.client_record_id
+order by samples.sample_id
+"""
+DISTINCT_TYPE_CODES_SQL: Final = """
+select type_code from health_types
+where type_code = 'hydration' or type_code like 'dietary\\_%' escape '\\'
+order by type_code
 """
 # The same sample actively claimed by another effective component is a conflict.
 OTHER_ACTIVE_CLAIMS_SQL: Final = """
@@ -158,8 +169,12 @@ where revision.owner_id = :owner_id
   )
 """
 DELETED_SAMPLE_SQL: Final = """
-select 1 from deleted_records
-where record_family = 'sample' and client_record_id = :client_record_id
+select 1
+from sources
+join deleted_records
+  on deleted_records.source_id = sources.source_id
+ and deleted_records.record_family = 'sample'
+ and deleted_records.client_record_id = :client_record_id
 limit 1
 """
 
@@ -220,6 +235,7 @@ class _Claim:
     component_id: str
     code: str
     writer_bundle_id: str | None
+    type_codes: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,26 +333,32 @@ def _resolve(
 ) -> _Resolution:
     code, writer_bundle_id = claim.code, claim.writer_bundle_id
     expected_id = exporter_client_record_id(code, sample_uuid)
+    contested = _other_active_claims(connection, claim, sample_uuid) > 0
+    deleted = cast(
+        "object",
+        connection.execute(
+            DELETED_SAMPLE_SQL,
+            {"client_record_id": expected_id},
+        ).fetchone(),
+    )
+    types = {code, *claim.type_codes}
+    pairs = {
+        (type_code, exporter_client_record_id(type_code, sample_uuid))
+        for type_code in types
+    } | {(type_code, expected_id) for type_code in types}
     rows = SAMPLE_ROWS_ADAPTER.validate_python(
         connection.execute(
             SAMPLES_SQL,
-            {
-                "exact_id": expected_id,
-                "uuid_start": -UUID_TEXT_LENGTH,
-                "sample_uuid": sample_uuid.lower(),
-            },
+            {"pairs": json.dumps(sorted(pairs))},
         ).fetchall(),
     )
+    # A claim another component also holds, or a sample deleted at its source
+    # (even if another source still has a copy), is a conflict, never pending
+    # or verified.
     if not rows:
-        deleted = cast(
-            "object",
-            connection.execute(
-                DELETED_SAMPLE_SQL,
-                {"client_record_id": expected_id},
-            ).fetchone(),
+        status: LinkStatus = (
+            "pending" if deleted is None and not contested else "mismatch"
         )
-        # A sample deleted at the source never arrives: it is not pending.
-        status: LinkStatus = "pending" if deleted is None else "mismatch"
         return _Resolution(sample_uuid, expected_id, healthkit_type, status)
     first_id = rows[0][0]
     exact: list[dict[str, object]] = []
@@ -353,7 +375,7 @@ def _resolve(
         metadata.get(SOURCE_BUNDLE_METADATA_KEY) == writer_bundle_id
         for metadata in exact
     )
-    if verified and _other_active_claims(connection, claim, sample_uuid) == 0:
+    if verified and not contested and deleted is None:
         return _Resolution(sample_uuid, expected_id, healthkit_type, "verified")
     stored_id = expected_id if exact else first_id
     return _Resolution(sample_uuid, stored_id, healthkit_type, "mismatch")
@@ -419,6 +441,10 @@ def list_intake_evidence(
             },
         ).fetchall(),
     )
+    type_codes = tuple(
+        row[0]
+        for row in connection.execute(DISTINCT_TYPE_CODES_SQL).fetchall()  # pyright: ignore[reportAny]
+    )
     links_by_revision: dict[int, dict[str, list[tuple[str, str]]]] = {}
     produced: list[tuple[_Position, IntakeEvidenceItem]] = []
     for row in rows:
@@ -451,6 +477,7 @@ def list_intake_evidence(
                     component_id,
                     code,
                     writer_bundle_id,
+                    type_codes,
                 ),
                 sample_uuid=sample_uuid,
                 healthkit_type=healthkit_type,

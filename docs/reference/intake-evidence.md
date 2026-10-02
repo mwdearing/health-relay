@@ -81,7 +81,7 @@ A link is `verified` only by exact joins, never by time, name or amount:
 | `verified` | All three joins hold. |
 | `pending` | No stored sample has that id yet. The export may not have arrived. |
 | `unlinked` | The component has no active link in its current snapshot. |
-| `mismatch` | The claim conflicts with the stored data: a sample for that UUID is stored under another quantity type, its source bundle is not the registered writer (or is missing), another current component also actively claims the same sample, or the sample was deleted at the source and will never arrive. |
+| `mismatch` | The claim conflicts with the stored data: a sample for that UUID is stored under another dietary quantity type, its source bundle is not the registered writer (or is missing), another current component also actively claims the same sample, or the sample was deleted at a source (even if another source still holds a copy) and will never arrive. A conflict is reported even before the sample is stored. |
 
 ## Completeness
 
@@ -93,7 +93,7 @@ link is `complete` because nothing is awaited.
 
 ## Pagination
 
-`next_cursor` is opaque; pass it back unchanged. Items are ordered by `(intake_id, producer_id, revision, component position,
+`next_cursor` is opaque; pass it back unchanged. It is a position, not a capability: every query is still scoped to `owner_id`, so a cursor from another query can only change where the listing starts. Items are ordered by `(intake_id, producer_id, revision, component position,
 sample UUID)` and the cursor names the last item by that key, so a page
 boundary never repeats or skips an item, including inside a component whose
 links change between requests. The last page has `next_cursor = null`.

@@ -1,8 +1,10 @@
 """Tests for the effective intake evidence query."""
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -685,3 +687,42 @@ def test_cursor_inside_a_component_survives_a_link_inserted_before_it(
         conn, owner_id=OWNER, cursor=first.next_cursor, limit=5
     )
     assert [i.sample_uuid for i in second.items] == [uid(3)]
+
+
+def test_conflict_is_visible_before_the_sample_is_stored(
+    conn: sqlite3.Connection,
+) -> None:
+    water_intake(conn, sample=uid(1), intake_id=INTAKE_A)
+    water_intake(conn, sample=uid(1), intake_id=INTAKE_B)
+    assert [i.link_status for i in evidence(conn)] == ["mismatch", "mismatch"]
+
+
+def test_deletion_overrides_a_surviving_copy_from_another_source(
+    conn: sqlite3.Connection,
+) -> None:
+    _ = put_sample(conn, sample_uuid=uid(1))
+    _ = put_sample(conn, sample_uuid=uid(1), source_key="apple_health.watch")
+    _ = conn.execute(
+        """insert into deleted_records
+        (source_id, record_family, client_record_id, deleted_at)
+        values ((select min(source_id) from sources), 'sample', ?, ?)""",
+        (exporter_client_record_id("hydration", uid(1)), "2026-10-01T13:00:00Z"),
+    )
+    conn.commit()
+    water_intake(conn, sample=uid(1))
+    assert one(evidence(conn)).link_status == "mismatch"
+
+
+def test_sample_lookup_uses_the_unique_index_not_a_table_scan(
+    conn: sqlite3.Connection,
+) -> None:
+    pairs = json.dumps([["hydration", exporter_client_record_id("hydration", uid(1))]])
+    rows = cast(
+        "list[tuple[int, int, int, str]]",
+        conn.execute(
+            "explain query plan " + intake_evidence.SAMPLES_SQL, {"pairs": pairs}
+        ).fetchall(),
+    )
+    plan = " ".join(row[3] for row in rows)
+    assert "SCAN samples" not in plan
+    assert "SEARCH samples" in plan
