@@ -85,6 +85,7 @@ _LOGGER = logging.getLogger(__name__)
 
 MAX_BATCH_BYTES: Final = 5_000_000
 _MAX_REQUEST_LINE_BYTES: Final = 65_536
+DEFAULT_REQUEST_TIMEOUT_SECONDS: Final = 30.0
 MAX_PAIRING_REDEEM_BYTES: Final = 4_096
 INTAKE_CONTEXT_CAPABILITIES_PATH: Final = "/v1/intake-context/capabilities"
 INTAKE_CONTEXT_BATCHES_PATH: Final = "/v1/intake-context/batches"
@@ -173,7 +174,7 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
         mailbox_connection_store: MailboxConnectionStore | None = None,
         mailbox_worker: MailboxRuntimeWorker | None = None,
         intake_context_enabled: bool = False,
-        request_timeout_seconds: float = 30.0,
+        request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
     ) -> None:
         self.db_path: Path = db_path
         self.intake_context_enabled: bool = intake_context_enabled
@@ -766,7 +767,7 @@ def build_receiver_server(  # noqa: PLR0913 - explicit transport dependencies.
     mailbox_key_store: MailboxKeyStore | None = None,
     mailbox_connection_store: MailboxConnectionStore | None = None,
     intake_context_enabled: bool = False,
-    request_timeout_seconds: float = 30.0,
+    request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
     mailbox_worker: MailboxRuntimeWorker | None = None,
 ) -> ReceiverHTTPServer:
     initialize_database(db_path)
@@ -824,7 +825,7 @@ def serve_receiver(  # noqa: PLR0913 - transport dependencies are explicit.
     mailbox_connection_store: MailboxConnectionStore | None = None,
     mailbox_root: Path | None = None,
     intake_context_enabled: bool = False,
-    request_timeout_seconds: float = 30.0,
+    request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
 ) -> None:
     worker = (
         MailboxRuntimeWorker(db_path=db_path, mailbox_root=mailbox_root)
