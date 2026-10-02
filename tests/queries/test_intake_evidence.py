@@ -502,6 +502,12 @@ def test_limit_bounds_are_accepted(conn: sqlite3.Connection, limit: int) -> None
         "WyJhIiwiYiIsMSw1LCJ4Il0",
         # A boolean position with a component id.
         "WyJhIiwiYiIsdHJ1ZSwiYyIsIngiXQ",
+        # The previous five-element shape: [str, str, int, str, str].
+        "WyJhIiwiYiIsMSwiYyIsIngiXQ",
+        # A non-int, a negative and a boolean revision.
+        "WyJhIiwiYiIsMSwiciIsImMiLCJ4Il0",
+        "WyJhIiwiYiIsMSwtMSwiYyIsIngiXQ",
+        "WyJhIiwiYiIsMSx0cnVlLCJjIiwieCJd",
     ],
 )
 def test_malformed_cursor_is_rejected(conn: sqlite3.Connection, cursor: str) -> None:
@@ -797,12 +803,12 @@ def test_cursor_survives_a_revision_that_drops_a_component(
     assert component_ids(second.items) == ["c3"]
 
 
-def test_cursor_has_five_elements(conn: sqlite3.Connection) -> None:
+def test_cursor_has_six_elements(conn: sqlite3.Connection) -> None:
     _ = many_components(conn, intakes=1, per_intake=3)
     cursor = list_intake_evidence(conn, owner_id=OWNER, limit=1).next_cursor
     assert cursor is not None
     raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
-    assert len(cast("list[object]", json.loads(raw))) == 5
+    assert len(cast("list[object]", json.loads(raw))) == 6
 
 
 def test_sample_stored_under_a_non_dietary_type_is_a_mismatch(
@@ -996,6 +1002,32 @@ def test_completeness_aggregate_uses_the_unique_indexes(
         "SCAN deleted_records",
     ):
         assert scan not in plan
+
+
+@pytest.mark.parametrize("replacement_uuid", [uid(9), uid(1)])
+def test_cursor_skips_a_reused_component_id_in_a_new_revision(
+    conn: sqlite3.Connection, replacement_uuid: str
+) -> None:
+    _ = put_revision(
+        conn,
+        intake_id=INTAKE_A,
+        revision=1,
+        facts=[fact("c0"), fact("c1"), fact("c2")],
+        links=[link("c1", uid(5))],
+    )
+    first = list_intake_evidence(conn, owner_id=OWNER, limit=2)
+    assert component_ids(first.items) == ["c0", "c1"]
+    _ = put_revision(
+        conn,
+        intake_id=INTAKE_A,
+        revision=2,
+        facts=[fact("c0"), fact("c1", "dietary_caffeine"), fact("c2")],
+        links=[link("c1", replacement_uuid, "dietary_caffeine")],
+    )
+    second = list_intake_evidence(
+        conn, owner_id=OWNER, cursor=first.next_cursor, limit=5
+    )
+    assert [(i.component_id, i.revision) for i in second.items] == [("c2", 2)]
 
 
 @pytest.mark.parametrize("replacement_uuid", [uid(9), uid(1)])

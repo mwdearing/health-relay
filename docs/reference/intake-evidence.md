@@ -101,13 +101,13 @@ not grow with the number of links a component holds.
 capability: every query is still scoped to `owner_id`, so a cursor from another
 query can only change where the listing starts. Items are ordered by
 `(intake_id, producer_id, component position, sample UUID)` and the cursor names
-the last item by that key plus its component id, so a page boundary never repeats or skips an item,
+the last item by that key plus its revision and component id, so a page boundary never repeats or skips an item,
 including inside a component whose links change between requests. The last page
 has `next_cursor = null`.
 
-The cursor carries the component id but not a revision. If an intake's effective revision changes
+The cursor carries the revision and component id as identity only, not as ordering. If an intake's effective revision changes
 between pages, the next page continues from the position after the cursor in the
-new revision; components at or before that position are not emitted again. At the cursor's own position, the cursor's sample UUID applies only if the component there is the same one; if the revision put a different component at that position, the whole position is skipped. A
+new revision; components at or before that position are not emitted again. At the cursor's own position, the cursor's sample UUID applies only when both the revision and the component id match the cursor's (component ids are unique only within one revision); otherwise the whole position is skipped. A
 caller that needs one consistent revision lists that intake again with
 `intake_id`. Cursors issued by earlier builds are rejected.
 
