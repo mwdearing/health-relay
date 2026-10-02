@@ -6,12 +6,14 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import closing
 from pathlib import Path
-from typing import Any, Final
+from typing import Final, cast
 
 import pytest
 
+from health_bridge.contract.intake_context_v1 import IntakeContextBatchV1
 from health_bridge.receiver import intake_context_acceptance as module
 from health_bridge.receiver.intake_context_acceptance import (
+    Operation,
     OperationResult,
     accept_batch,
 )
@@ -24,6 +26,7 @@ from health_bridge.storage.intake_context import (
     read_tombstone,
 )
 from tests.intake_context import reference as ref
+from tests.intake_context.reference import JsonObject
 
 FIXTURES: Final = Path(__file__).parents[1] / "fixtures" / "intake_context"
 OWNER: Final = "owner-a"
@@ -38,8 +41,29 @@ NEW_IDS: Final = [
 OTHER_SAMPLE: Final = "44444444-4444-4444-8444-444444444444"
 
 
-def load(name: str) -> dict[str, Any]:
-    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+def load(name: str) -> JsonObject:
+    text = (FIXTURES / name).read_text(encoding="utf-8")
+    return cast("JsonObject", json.loads(text))
+
+
+def ops(batch: JsonObject) -> list[JsonObject]:
+    return cast("list[JsonObject]", batch["operations"])
+
+
+def op0(batch: JsonObject) -> JsonObject:
+    return ops(batch)[0]
+
+
+def op_id_of(batch: JsonObject) -> str:
+    return cast("str", op0(batch)["operation_id"])
+
+
+def links_of(batch: JsonObject) -> list[JsonObject]:
+    return cast("list[JsonObject]", op0(batch)["healthkit_links"])
+
+
+def clone(batch: JsonObject) -> JsonObject:
+    return copy.deepcopy(batch)
 
 
 WORKED: Final = load("valid_worked_example.json")
@@ -58,11 +82,9 @@ def connection(tmp_path: Path) -> Iterator[sqlite3.Connection]:
 
 
 def run(
-    conn: sqlite3.Connection, batch: dict[str, Any], owner: str = OWNER
+    conn: sqlite3.Connection, batch: JsonObject, owner: str = OWNER
 ) -> list[OperationResult]:
-    return accept_batch(
-        conn, owner_id=owner, payload=copy.deepcopy(batch), received_at=NOW
-    )
+    return accept_batch(conn, owner_id=owner, payload=clone(batch), received_at=NOW)
 
 
 def names(results: list[OperationResult]) -> list[str]:
@@ -70,10 +92,10 @@ def names(results: list[OperationResult]) -> list[str]:
 
 
 def variant(
-    batch: dict[str, Any], op_id: str | None = None, **changes: object
-) -> dict[str, Any]:
-    result = copy.deepcopy(batch)
-    op = result["operations"][0]
+    batch: JsonObject, op_id: str | None = None, **changes: object
+) -> JsonObject:
+    result = clone(batch)
+    op = op0(result)
     if op_id:
         op["operation_id"] = op_id
     op.update(changes)
@@ -91,7 +113,7 @@ def test_upsert_is_accepted_with_revision_sequence_and_cursor(
 ) -> None:
     (result,) = run(connection, WORKED)
     assert result.result == "accepted"
-    assert result.operation_id == WORKED["operations"][0]["operation_id"]
+    assert result.operation_id == op_id_of(WORKED)
     assert (result.accepted_revision, result.projection_sequence) == (2, 1)
     assert isinstance(result.server_cursor, int)
     current = state(connection)
@@ -135,7 +157,7 @@ def test_owners_are_independent(connection: sqlite3.Connection) -> None:
         connection,
         owner_id=OTHER,
         producer_id=PRODUCER,
-        operation_id=WORKED["operations"][0]["operation_id"],
+        operation_id=op_id_of(WORKED),
     )
     assert receipt is not None
 
@@ -147,9 +169,12 @@ def test_owners_are_independent(connection: sqlite3.Connection) -> None:
 def test_scenario_fixtures_replay_as_expected(
     connection: sqlite3.Connection, name: str
 ) -> None:
-    for step in load(name)["steps"]:
-        got = [(r.operation_id, r.result) for r in run(connection, step["batch"])]
-        assert got == [(e["operation_id"], e["result"]) for e in step["expect"]]
+    steps = cast("list[JsonObject]", load(name)["steps"])
+    for step in steps:
+        batch = cast("JsonObject", step["batch"])
+        got = [(r.operation_id, r.result) for r in run(connection, batch)]
+        expect = cast("list[dict[str, str]]", step["expect"])
+        assert got == [(e["operation_id"], e["result"]) for e in expect]
 
 
 def test_older_revision_is_stale_and_reports_the_current_one(
@@ -176,8 +201,8 @@ def test_link_projection_is_accepted_then_duplicate(
     assert current.current_projection_sequence == 2
 
 
-def _other_links() -> list[dict[str, Any]]:
-    links = copy.deepcopy(SEQ2["operations"][0]["healthkit_links"])
+def _other_links() -> list[JsonObject]:
+    links = [dict(link) for link in links_of(SEQ2)]
     links[0]["healthkit_sample_uuid"] = OTHER_SAMPLE
     return links
 
@@ -225,7 +250,7 @@ def test_link_projection_before_its_revision_is_retryable_and_not_stored(
             connection,
             owner_id=OWNER,
             producer_id=PRODUCER,
-            operation_id=SEQ2["operations"][0]["operation_id"],
+            operation_id=op_id_of(SEQ2),
         )
         is None
     )
@@ -245,7 +270,7 @@ def test_link_projection_to_a_foreign_component_is_permanent_failure(
     connection: sqlite3.Connection,
 ) -> None:
     _ = run(connection, WORKED)
-    links = copy.deepcopy(SEQ2["operations"][0]["healthkit_links"])
+    links = [dict(link) for link in links_of(SEQ2)]
     links[0]["component_id"] = "ghost"
     assert names(run(connection, variant(SEQ2, NEW_IDS[0], healthkit_links=links))) == [
         "permanent_failure"
@@ -299,8 +324,8 @@ def test_delete_needs_a_higher_revision_than_any_accepted(
 
 
 def test_digest_mismatch_is_permanent_failure(connection: sqlite3.Connection) -> None:
-    bad = copy.deepcopy(WORKED)
-    bad["operations"][0]["domain_facts_hash"] = "sha256:" + "0" * 64
+    bad = clone(WORKED)
+    op0(bad)["domain_facts_hash"] = "sha256:" + "0" * 64
     assert names(run(connection, bad)) == ["permanent_failure"]
     assert state(connection) is None
 
@@ -316,13 +341,13 @@ def test_unknown_major_version_is_permanent_failure(
 def test_invalid_batch_gives_one_failure_per_operation_id_found(
     connection: sqlite3.Connection,
 ) -> None:
-    batch = copy.deepcopy(WORKED)
-    batch["operations"].append(copy.deepcopy(SEQ2["operations"][0]))
+    batch = clone(WORKED)
+    ops(batch).append(clone(op0(SEQ2)))
     batch["schema_version"] = "2.0"
     results = run(connection, batch)
     assert [r.operation_id for r in results] == [
-        WORKED["operations"][0]["operation_id"],
-        SEQ2["operations"][0]["operation_id"],
+        op_id_of(WORKED),
+        op_id_of(SEQ2),
     ]
     assert set(names(results)) == {"permanent_failure"}
 
@@ -346,18 +371,18 @@ def test_sync_version_order_violation_is_permanent_failure(
     connection: sqlite3.Connection,
 ) -> None:
     _ = run(connection, WORKED)
-    bad = copy.deepcopy(SEQ2)
-    bad["operations"][0]["healthkit_links"][0]["sync_version"] = 1
+    bad = clone(SEQ2)
+    links_of(bad)[0]["sync_version"] = 1
     assert names(run(connection, ref.seal(bad))) == ["permanent_failure"]
 
 
 def test_a_failed_operation_does_not_undo_an_earlier_one(
     connection: sqlite3.Connection,
 ) -> None:
-    mixed = copy.deepcopy(BLEND)
-    bad = copy.deepcopy(WORKED["operations"][0])
+    mixed = clone(BLEND)
+    bad = clone(op0(WORKED))
     bad["domain_facts_hash"] = "sha256:" + "0" * 64
-    mixed["operations"].append(bad)
+    ops(mixed).append(bad)
     assert names(run(connection, mixed)) == ["accepted", "permanent_failure"]
     assert names(run(connection, BLEND)) == ["duplicate"]
 
@@ -365,11 +390,11 @@ def test_a_failed_operation_does_not_undo_an_earlier_one(
 def test_operations_run_in_array_order_and_see_each_other(
     connection: sqlite3.Connection,
 ) -> None:
-    both = copy.deepcopy(WORKED)
-    both["operations"].append(copy.deepcopy(SEQ2["operations"][0]))
+    both = clone(WORKED)
+    ops(both).append(clone(op0(SEQ2)))
     assert names(run(connection, both)) == ["accepted", "accepted"]
-    reverse = copy.deepcopy(both)
-    reverse["operations"].reverse()
+    reverse = clone(both)
+    ops(reverse).reverse()
     assert names(run(connection, reverse, OTHER)) == ["retryable_failure", "accepted"]
 
 
@@ -395,7 +420,7 @@ def test_a_second_writer_bundle_for_a_producer_is_permanent_failure(
     connection: sqlite3.Connection,
 ) -> None:
     _ = run(connection, WORKED)
-    other = copy.deepcopy(BLEND)
+    other = clone(BLEND)
     other["writer_bundle_id"] = "com.example.someone.else"
     assert names(run(connection, ref.seal(other))) == ["permanent_failure"]
 
@@ -411,8 +436,14 @@ def _receipt(
 def _fail_after_apply(monkeypatch: pytest.MonkeyPatch, error: BaseException) -> None:
     real = module._apply  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
 
-    def failing(*args: object, **kwargs: object) -> OperationResult:
-        _ = real(*args, **kwargs)
+    def failing(
+        connection: sqlite3.Connection,
+        batch: IntakeContextBatchV1,
+        operation: Operation,
+        owner_id: str,
+        received_at: str,
+    ) -> OperationResult:
+        _ = real(connection, batch, operation, owner_id, received_at)
         raise error
 
     monkeypatch.setattr(module, "_apply", failing)
@@ -430,7 +461,7 @@ def test_lock_error_is_retryable_and_leaves_nothing_behind(
     _fail_after_apply(monkeypatch, sqlite3.OperationalError(message))
     assert names(run(connection, WORKED)) == ["retryable_failure"]
     assert not connection.in_transaction
-    assert _receipt(connection, WORKED["operations"][0]["operation_id"]) is None
+    assert _receipt(connection, op_id_of(WORKED)) is None
     assert state(connection) is None
 
 
@@ -447,10 +478,10 @@ def test_other_operational_errors_propagate(
 def test_commit_failure_rolls_back(connection: sqlite3.Connection) -> None:
     class Wrapper:
         def __init__(self, inner: sqlite3.Connection) -> None:
-            self.inner = inner
+            self.inner: sqlite3.Connection = inner
 
         def __getattr__(self, name: str) -> object:
-            return getattr(self.inner, name)
+            return cast("object", getattr(self.inner, name))
 
         def commit(self) -> None:
             message = "database is locked"
@@ -460,7 +491,7 @@ def test_commit_failure_rolls_back(connection: sqlite3.Connection) -> None:
     results = accept_batch(
         wrapped,  # pyright: ignore[reportArgumentType]
         owner_id=OWNER,
-        payload=copy.deepcopy(WORKED),
+        payload=clone(WORKED),
         received_at=NOW,
     )
     assert names(results) == ["retryable_failure"]
@@ -518,22 +549,28 @@ def test_state_regression_is_permanent_failure_and_later_operations_run(
     real = module._apply  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
     calls: list[str] = []
 
-    def flaky(*args: object, **kwargs: object) -> OperationResult:
-        calls.append(str(args[2]))
+    def flaky(
+        connection: sqlite3.Connection,
+        batch: IntakeContextBatchV1,
+        operation: Operation,
+        owner_id: str,
+        received_at: str,
+    ) -> OperationResult:
+        calls.append(str(operation))
         if len(calls) == 1:
-            _ = real(*args, **kwargs)
+            _ = real(connection, batch, operation, owner_id, received_at)
             raise IntakeStateRegressionError(INTAKE)
-        return real(*args, **kwargs)
+        return real(connection, batch, operation, owner_id, received_at)
 
     monkeypatch.setattr(module, "_apply", flaky)
-    both = copy.deepcopy(BLEND)
-    both["operations"].append(copy.deepcopy(WORKED["operations"][0]))
+    both = clone(BLEND)
+    ops(both).append(clone(op0(WORKED)))
     results = run(connection, both)
     assert names(results) == ["permanent_failure", "accepted"]
     assert results[0].detail == "IntakeStateRegressionError"
     assert not connection.in_transaction
-    assert _receipt(connection, both["operations"][0]["operation_id"]) is None
-    assert _receipt(connection, both["operations"][1]["operation_id"]) is not None
+    assert _receipt(connection, op_id_of(both)) is None
+    assert _receipt(connection, cast("str", ops(both)[1]["operation_id"])) is not None
 
 
 def test_integrity_error_is_permanent_failure_for_that_operation(
@@ -559,7 +596,7 @@ def test_stale_replay_reports_the_current_revision(
 def test_same_operation_and_intake_from_another_owner_is_independent(
     connection: sqlite3.Connection,
 ) -> None:
-    op_id = WORKED["operations"][0]["operation_id"]
+    op_id = op_id_of(WORKED)
     _ = run(connection, WORKED)
     _ = run(connection, DELETE)
     assert names(run(connection, WORKED, OTHER)) == ["accepted"]
