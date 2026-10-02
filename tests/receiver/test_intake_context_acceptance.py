@@ -10,12 +10,15 @@ from typing import Any, Final
 
 import pytest
 
+from health_bridge.receiver import intake_context_acceptance as module
 from health_bridge.receiver.intake_context_acceptance import (
     OperationResult,
     accept_batch,
 )
 from health_bridge.storage import initialize_database
 from health_bridge.storage.intake_context import (
+    IntakeStateRegressionError,
+    OperationReceiptRecord,
     read_intake_state,
     read_operation_receipt,
     read_tombstone,
@@ -395,3 +398,179 @@ def test_a_second_writer_bundle_for_a_producer_is_permanent_failure(
     other = copy.deepcopy(BLEND)
     other["writer_bundle_id"] = "com.example.someone.else"
     assert names(run(connection, ref.seal(other))) == ["permanent_failure"]
+
+
+def _receipt(
+    conn: sqlite3.Connection, op_id: str, owner: str = OWNER
+) -> OperationReceiptRecord | None:
+    return read_operation_receipt(
+        conn, owner_id=owner, producer_id=PRODUCER, operation_id=op_id
+    )
+
+
+def _fail_after_apply(monkeypatch: pytest.MonkeyPatch, error: BaseException) -> None:
+    real = module._apply  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+
+    def failing(*args: object, **kwargs: object) -> OperationResult:
+        _ = real(*args, **kwargs)
+        raise error
+
+    monkeypatch.setattr(module, "_apply", failing)
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["database is locked", "database table is locked", "database is busy"],
+)
+def test_lock_error_is_retryable_and_leaves_nothing_behind(
+    connection: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    message: str,
+) -> None:
+    _fail_after_apply(monkeypatch, sqlite3.OperationalError(message))
+    assert names(run(connection, WORKED)) == ["retryable_failure"]
+    assert not connection.in_transaction
+    assert _receipt(connection, WORKED["operations"][0]["operation_id"]) is None
+    assert state(connection) is None
+
+
+def test_other_operational_errors_propagate(
+    connection: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fail_after_apply(monkeypatch, sqlite3.OperationalError("no such table: x"))
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        _ = run(connection, WORKED)
+    assert not connection.in_transaction
+    assert state(connection) is None
+
+
+def test_commit_failure_rolls_back(connection: sqlite3.Connection) -> None:
+    class Wrapper:
+        def __init__(self, inner: sqlite3.Connection) -> None:
+            self.inner = inner
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.inner, name)
+
+        def commit(self) -> None:
+            message = "database is locked"
+            raise sqlite3.OperationalError(message)
+
+    wrapped = Wrapper(connection)
+    results = accept_batch(
+        wrapped,  # pyright: ignore[reportArgumentType]
+        owner_id=OWNER,
+        payload=copy.deepcopy(WORKED),
+        received_at=NOW,
+    )
+    assert names(results) == ["retryable_failure"]
+    assert not connection.in_transaction
+    assert state(connection) is None
+
+
+def test_open_transaction_is_refused_not_retryable(
+    connection: sqlite3.Connection,
+) -> None:
+    _ = connection.execute("begin immediate")
+    with pytest.raises(sqlite3.Error):
+        _ = run(connection, WORKED)
+    assert connection.in_transaction
+    connection.rollback()
+
+
+def test_revoked_producer_is_permanent_failure(
+    connection: sqlite3.Connection,
+) -> None:
+    _ = run(connection, WORKED)
+    _ = connection.execute(
+        "update intake_producers set revoked_at = ? where producer_id = ?",
+        (NOW, PRODUCER),
+    )
+    connection.commit()
+    assert names(run(connection, variant(WORKED, NEW_IDS[0], revision=3))) == [
+        "permanent_failure"
+    ]
+
+
+def test_replayed_delete_under_a_new_operation_id_is_duplicate(
+    connection: sqlite3.Connection,
+) -> None:
+    _ = run(connection, WORKED)
+    _ = run(connection, DELETE)
+    again = variant(DELETE, NEW_IDS[0])
+    assert names(run(connection, again)) == ["duplicate"]
+
+
+def test_delete_at_or_below_current_revision_is_stale(
+    connection: sqlite3.Connection,
+) -> None:
+    _ = run(connection, variant(WORKED, NEW_IDS[0], revision=5))
+    for index, revision in enumerate((5, 4)):
+        (result,) = run(
+            connection, variant(DELETE, NEW_IDS[index + 1], revision=revision)
+        )
+        assert (result.result, result.current_revision) == ("stale_revision", 5)
+
+
+def test_state_regression_is_permanent_failure_and_later_operations_run(
+    connection: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = module._apply  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    calls: list[str] = []
+
+    def flaky(*args: object, **kwargs: object) -> OperationResult:
+        calls.append(str(args[2]))
+        if len(calls) == 1:
+            _ = real(*args, **kwargs)
+            raise IntakeStateRegressionError(INTAKE)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_apply", flaky)
+    both = copy.deepcopy(BLEND)
+    both["operations"].append(copy.deepcopy(WORKED["operations"][0]))
+    results = run(connection, both)
+    assert names(results) == ["permanent_failure", "accepted"]
+    assert results[0].detail == "IntakeStateRegressionError"
+    assert not connection.in_transaction
+    assert _receipt(connection, both["operations"][0]["operation_id"]) is None
+    assert _receipt(connection, both["operations"][1]["operation_id"]) is not None
+
+
+def test_integrity_error_is_permanent_failure_for_that_operation(
+    connection: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fail_after_apply(monkeypatch, sqlite3.IntegrityError("UNIQUE constraint x"))
+    (result,) = run(connection, WORKED)
+    assert (result.result, result.detail) == ("permanent_failure", "IntegrityError")
+    assert state(connection) is None
+
+
+def test_stale_replay_reports_the_current_revision(
+    connection: sqlite3.Connection,
+) -> None:
+    _ = run(connection, variant(WORKED, NEW_IDS[0], revision=3))
+    (first,) = run(connection, WORKED)
+    assert (first.result, first.current_revision) == ("stale_revision", 3)
+    _ = run(connection, variant(WORKED, NEW_IDS[1], revision=7))
+    (replay,) = run(connection, WORKED)
+    assert (replay.result, replay.current_revision) == ("stale_revision", 7)
+
+
+def test_same_operation_and_intake_from_another_owner_is_independent(
+    connection: sqlite3.Connection,
+) -> None:
+    op_id = WORKED["operations"][0]["operation_id"]
+    _ = run(connection, WORKED)
+    _ = run(connection, DELETE)
+    assert names(run(connection, WORKED, OTHER)) == ["accepted"]
+    assert _receipt(connection, op_id, OTHER) is not None
+    assert (
+        read_tombstone(
+            connection, owner_id=OTHER, producer_id=PRODUCER, intake_id=INTAKE
+        )
+        is None
+    )
+    other = state(connection, OTHER)
+    assert other is not None
+    assert not other.deleted
+    assert names(run(connection, WORKED, OTHER)) == ["duplicate"]

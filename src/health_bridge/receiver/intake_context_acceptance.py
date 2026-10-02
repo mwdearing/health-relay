@@ -29,6 +29,7 @@ from health_bridge.storage.intake_context import (
     TERMINAL_OUTCOMES,
     BlendMemberRecord,
     FactRecord,
+    IntakeContextStorageError,
     IntakeStateRecord,
     OperationReceiptRecord,
     ProducerRecord,
@@ -164,18 +165,28 @@ def _receipt_json(outcome: _Outcome) -> str:
     )
 
 
-def _replay(receipt: OperationReceiptRecord, operation_id: str) -> OperationResult:
+def _replay(
+    connection: sqlite3.Connection,
+    receipt: OperationReceiptRecord,
+    operation_id: str,
+    key: _Key,
+) -> OperationResult:
     stored = cast("dict[str, int | None]", json.loads(receipt.result_json or "{}"))
     name: ResultName = (
         "duplicate" if receipt.outcome in {"accepted", "duplicate"} else receipt.outcome
     )
+    current_revision = stored.get("current_revision")
+    if name == "stale_revision":
+        current = read_intake_state(connection, **key)
+        if current is not None:
+            current_revision = current.current_revision
     return OperationResult(
         operation_id=operation_id,
         result=name,
         accepted_revision=receipt.accepted_revision,
         projection_sequence=stored.get("projection_sequence"),
         server_cursor=receipt.server_cursor,
-        current_revision=stored.get("current_revision"),
+        current_revision=current_revision,
     )
 
 
@@ -382,7 +393,7 @@ def _apply(
     )
     if receipt is not None:
         if receipt.client_payload_hash == operation.client_payload_hash:
-            return _replay(receipt, operation.operation_id)
+            return _replay(connection, receipt, operation.operation_id, key)
         return OperationResult(
             operation.operation_id,
             "projection_conflict" if is_link else "domain_conflict",
@@ -450,6 +461,16 @@ def _apply(
     )
 
 
+def _is_lock_error(error: sqlite3.OperationalError) -> bool:
+    text = str(error).lower()
+    return "locked" in text or "busy" in text
+
+
+def _rollback(connection: sqlite3.Connection) -> None:
+    if connection.in_transaction:
+        connection.rollback()
+
+
 def _in_own_transaction(
     connection: sqlite3.Connection,
     batch: IntakeContextBatchV1,
@@ -460,17 +481,24 @@ def _in_own_transaction(
     try:
         _ = connection.execute("begin immediate")
         result = _apply(connection, batch, operation, owner_id, received_at)
+        connection.commit()
     except sqlite3.OperationalError as error:
-        if connection.in_transaction:
-            connection.rollback()
+        _rollback(connection)
+        if not _is_lock_error(error):
+            raise
         return OperationResult(
             operation.operation_id, "retryable_failure", detail=str(error)
         )
+    except (sqlite3.IntegrityError, IntakeContextStorageError) as error:
+        _rollback(connection)
+        return OperationResult(
+            operation.operation_id,
+            "permanent_failure",
+            detail=type(error).__name__,
+        )
     except BaseException:
-        if connection.in_transaction:
-            connection.rollback()
+        _rollback(connection)
         raise
-    connection.commit()
     return result
 
 
@@ -487,6 +515,9 @@ def accept_batch(
     digest mismatches are not stored: nothing about them is trustworthy enough
     to key a receipt on. A ``retryable_failure`` is never stored either.
     """
+    if connection.in_transaction:
+        message = "accept_batch needs a connection without an open transaction"
+        raise sqlite3.ProgrammingError(message)
     try:
         batch = validate_batch(payload)
     except IntakeContextContractError as error:
