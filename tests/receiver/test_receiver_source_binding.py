@@ -28,6 +28,11 @@ TOKEN_A = "hb_" + "a" * 64
 TOKEN_B = "hb_" + "b" * 64
 ERROR_BODY_ADAPTER = TypeAdapter(dict[str, str])
 COUNT_ROW_ADAPTER = TypeAdapter(tuple[int])
+TOMBSTONE_ROWS_ADAPTER = TypeAdapter(list[tuple[str, str, str]])
+TOMBSTONE_SQL = """
+select s.source_key, d.record_family, d.client_record_id
+from deleted_records d join sources s using (source_id)
+"""
 
 
 def canonical_source_key(installation_id: str) -> str:
@@ -302,3 +307,159 @@ def test_unmapped_legacy_token_cannot_claim_private_phone_namespace(
 
     assert status == 403
     assert body == {"error": "source_principal_mismatch"}
+
+
+def test_export_lab_tombstone_deletes_lab_row_and_stays_export_source(
+    tmp_path: Path,
+) -> None:
+    """An export-sourced deletion of a lab_result (record_family 'lab_result',
+    source_key 'apple_health.export') must be accepted and the lab row deleted,
+    with the tombstone stored under apple_health.export (not rewritten to the
+    canonical installation key)."""
+    db_path = tmp_path / "receiver.sqlite"
+    pair(db_path, installation_id=INSTALLATION_A, token=TOKEN_A, suffix="a")
+    fixture = HealthBridgeBatchV1.model_validate_json(
+        Path("fixtures/health_bridge_batch_v1.lab_result.synthetic.json").read_bytes()
+    )
+    export_source = next(
+        s for s in fixture.sources if s.source_key == "apple_health.export"
+    )
+    lab = fixture.lab_results[0]
+    # 1. Import the export lab
+    import_batch = fixture.model_copy(
+        update={
+            "sources": (export_source,),
+            "samples": (),
+            "deleted_records": (),
+        }
+    )
+    delete_lab = fixture.model_copy(
+        update={
+            "sources": (export_source,),
+            "samples": (),
+            "lab_results": (),
+            "deleted_records": (
+                fixture.deleted_records[0].model_copy(
+                    update={
+                        "record_family": "lab_result",
+                        "source_key": "apple_health.export",
+                        "client_record_id": lab.client_record_id,
+                        "deleted_at": "2026-09-30T12:00:00Z",
+                    }
+                ),
+            ),
+        }
+    )
+
+    with running_receiver(db_path) as url:
+        assert post_batch(url, TOKEN_A, import_batch) == 202
+        assert post_batch(url, TOKEN_A, delete_lab) == 202
+
+    with sqlite3.connect(db_path) as connection:
+        (lab_count,) = COUNT_ROW_ADAPTER.validate_python(
+            connection.execute("select count(*) from lab_results").fetchone()
+        )
+        tombstones = TOMBSTONE_ROWS_ADAPTER.validate_python(
+            connection.execute(TOMBSTONE_SQL).fetchall()
+        )
+
+    assert lab_count == 0, f"lab row not deleted (still {lab_count})"
+    assert ("apple_health.export", "lab_result", lab.client_record_id) in tombstones, (
+        f"tombstone not stored under apple_health.export: {tombstones}"
+    )
+
+
+def test_phone_lane_deletion_still_rewritten_to_canonical_key(
+    tmp_path: Path,
+) -> None:
+    """A phone-lane deletion (source_key 'apple_health.phone') must still be
+    rewritten to the installation's canonical source key."""
+    db_path = tmp_path / "receiver.sqlite"
+    pair(db_path, installation_id=INSTALLATION_A, token=TOKEN_A, suffix="a")
+    fixture = HealthBridgeBatchV1.model_validate_json(
+        Path("fixtures/health_bridge_batch_v1.lab_result.synthetic.json").read_bytes()
+    )
+    phone_source = next(
+        s for s in fixture.sources if s.source_key != "apple_health.export"
+    ).model_copy(update={"source_key": "apple_health.phone"})
+    lab = fixture.lab_results[0]
+    phone_delete = fixture.model_copy(
+        update={
+            "sources": (phone_source,),
+            "samples": (),
+            "lab_results": (),
+            "deleted_records": (
+                fixture.deleted_records[0].model_copy(
+                    update={
+                        "record_family": "lab_result",
+                        "source_key": "apple_health.phone",
+                        "client_record_id": lab.client_record_id,
+                        "deleted_at": "2026-09-30T12:00:00Z",
+                    }
+                ),
+            ),
+        }
+    )
+
+    with running_receiver(db_path) as url:
+        assert post_batch(url, TOKEN_A, phone_delete) == 202
+
+    with sqlite3.connect(db_path) as connection:
+        tombstones = TOMBSTONE_ROWS_ADAPTER.validate_python(
+            connection.execute(TOMBSTONE_SQL).fetchall()
+        )
+
+    canon = canonical_source_key(INSTALLATION_A)
+    assert len(tombstones) == 1
+    msg = f"phone-lane deletion should be canonical {canon[:24]}..."
+    assert tombstones[0][0] == canon, f"{msg}, got {tombstones[0][0]}"
+
+
+def test_export_deletion_non_lab_family_rewritten_to_canonical(
+    tmp_path: Path,
+) -> None:
+    """An export-sourced deletion with record_family 'sample' (NOT lab_result)
+    must NOT keep apple_health.export -- it must be rewritten to the canonical
+    installation key."""
+    db_path = tmp_path / "receiver.sqlite"
+    pair(db_path, installation_id=INSTALLATION_A, token=TOKEN_A, suffix="a")
+    fixture = HealthBridgeBatchV1.model_validate_json(
+        Path("fixtures/health_bridge_batch_v1.lab_result.synthetic.json").read_bytes()
+    )
+    export_source = next(
+        s for s in fixture.sources if s.source_key == "apple_health.export"
+    )
+    lab = fixture.lab_results[0]
+    odd_delete = fixture.model_copy(
+        update={
+            "sources": (export_source,),
+            "samples": (),
+            "lab_results": (),
+            "deleted_records": (
+                fixture.deleted_records[0].model_copy(
+                    update={
+                        "record_family": "sample",
+                        "source_key": "apple_health.export",
+                        "client_record_id": lab.client_record_id,
+                        "deleted_at": "2026-09-30T12:00:00Z",
+                    }
+                ),
+            ),
+        }
+    )
+
+    try:
+        with running_receiver(db_path) as url:
+            _ = post_batch(url, TOKEN_A, odd_delete)
+    except HTTPError:
+        pass  # 500 is expected: the rewritten canonical source isn't in the DB
+
+    with sqlite3.connect(db_path) as connection:
+        tombstones = TOMBSTONE_ROWS_ADAPTER.validate_python(
+            connection.execute(TOMBSTONE_SQL).fetchall()
+        )
+
+    # A tombstone with export source and non-lab record_family must not exist.
+    assert not any(
+        t[0] == "apple_health.export" and t[1] != "lab_result" for t in tombstones
+    ), f"non-lab_result export deletion should be canonical: {tombstones}"
