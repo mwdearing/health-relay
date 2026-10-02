@@ -71,19 +71,26 @@ public struct HealthKitQuantitySampleSummary: Equatable, Sendable {
 }
 
 public enum IntakeMetadataAllowlist {
+    public static let intakeIDKey = "HealthRelayIntakeID"
+    public static let intakeComponentIDKey = "HealthRelayIntakeComponentID"
+    /// Value of HKMetadataKeySyncIdentifier (the constant's name is not its value).
+    public static let syncIdentifierKey = "HKSyncIdentifier"
+    /// Value of HKMetadataKeySyncVersion.
+    public static let syncVersionKey = "HKSyncVersion"
+
     public static func batchMetadata(from healthKitMetadata: [String: Any]) -> [String: String] {
         var result: [String: String] = [:]
 
-        if let rawIntakeID = healthKitMetadata["HealthRelayIntakeID"] as? String,
-           let component = healthKitMetadata["HealthRelayIntakeComponentID"] as? String,
+        if let rawIntakeID = healthKitMetadata[intakeIDKey] as? String,
+           let component = healthKitMetadata[intakeComponentIDKey] as? String,
            let pair = validIntakePair(intakeID: rawIntakeID, component: component) {
             result["intake_id"] = pair.intakeID
             result["intake_component_id"] = pair.component
         }
 
-        if let identifier = healthKitMetadata["HKMetadataKeySyncIdentifier"] as? String,
+        if let identifier = healthKitMetadata[syncIdentifierKey] as? String,
            isValidSyncIdentifier(identifier),
-           let version = syncVersion(from: healthKitMetadata["HKMetadataKeySyncVersion"]) {
+           let version = syncVersion(from: healthKitMetadata[syncVersionKey]) {
             result["sync_identifier"] = identifier
             result["sync_version"] = String(version)
         }
@@ -120,7 +127,7 @@ public enum IntakeMetadataAllowlist {
     }
 
     private static func isValidSyncIdentifier(_ identifier: String) -> Bool {
-        !identifier.isEmpty && identifier.count <= 256
+        !identifier.isEmpty && identifier.unicodeScalars.count <= 256
     }
 
     private static func isValidSyncVersionText(_ text: String) -> Bool {
