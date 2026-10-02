@@ -103,7 +103,8 @@ public enum HealthKitQuantitySampleMapper {
             start: sample.startDate,
             end: sample.endDate,
             value: canonicalValue(rawValue, for: entry),
-            provenance: HealthKitSampleProvenance(sample: sample)
+            provenance: HealthKitSampleProvenance(sample: sample),
+            intakeMetadata: IntakeMetadataAllowlist.batchMetadata(from: sample.metadata ?? [:])
         )
     }
 
