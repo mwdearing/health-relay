@@ -53,6 +53,7 @@ MIGRATION_IDS: Final = (
     "011_medication_dose_events",
     "012_lab_results",
     "013_intake_context",
+    "014_intake_context_tokens",
 )
 
 
