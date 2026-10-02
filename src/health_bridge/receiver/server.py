@@ -1,4 +1,5 @@
 import json
+import re
 
 # noqa: RUF100 -- no-excuse marker "# noqa: SIZE_OK": cohesive HTTP framing and mappings.
 import sqlite3
@@ -589,25 +590,30 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
         too_large_error: str = "batch_too_large",
         close_on_reject: bool = False,
     ) -> bytes | None:
-        content_length_header = self.headers.get("Content-Length")
-        if content_length_header is None:
+        values = self.headers.get_all("Content-Length")
+        if values is None or len(values) == 0:
             self._reject_body(
                 HTTPStatus.LENGTH_REQUIRED,
                 "content_length_required",
                 close_connection=close_on_reject,
             )
             return None
-        try:
-            content_length = int(content_length_header)
-        except ValueError:
-            content_length = -1
-        if content_length < 0:
+        if len(values) != 1:
             self._reject_body(
                 HTTPStatus.BAD_REQUEST,
                 "invalid_content_length",
                 close_connection=close_on_reject,
             )
             return None
+        value = values[0]
+        if re.fullmatch(r"[0-9]+", value) is None:
+            self._reject_body(
+                HTTPStatus.BAD_REQUEST,
+                "invalid_content_length",
+                close_connection=close_on_reject,
+            )
+            return None
+        content_length = int(value)
         if content_length > max_bytes:
             self._reject_body(
                 HTTPStatus.REQUEST_ENTITY_TOO_LARGE,

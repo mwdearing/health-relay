@@ -395,3 +395,49 @@ def test_retry_after_a_rejected_mixed_batch_converges(tmp_path: Path) -> None:
             r["result"] for r in cast("list[dict[str, object]]", replay["results"])
         ]
         assert names == ["duplicate", "duplicate"]
+
+
+def test_invalid_content_length_formats_are_400(tmp_path: Path) -> None:
+    """Non-numeric Content-Length values rejected with 400."""
+    db = tmp_path / "r.sqlite"
+    issued = create_intake_token(
+        db, owner_id="o", producer_id="nutrition-app", label="l"
+    )
+    with served(db, enabled=True) as base:
+        for value in ("+100", "1_00", "0x64", "-0"):
+            head = post_head(issued.token, f"\r\nContent-Length: {value}")
+            status, header, payload = raw_post(base, head)
+            assert status == 400, (
+                f"Content-Length={value!r} should be 400, got {status}"
+            )
+            assert "connection: close" in header
+            assert json.loads(payload) == {"error": "invalid_content_length"}
+
+
+def test_multiple_content_length_headers_is_400(tmp_path: Path) -> None:
+    """Multiple Content-Length headers with different values must be rejected."""
+    db = tmp_path / "r.sqlite"
+    issued = create_intake_token(
+        db, owner_id="o", producer_id="nutrition-app", label="l"
+    )
+    with served(db, enabled=True) as base:
+        head = post_head(
+            issued.token,
+            f"\r\nContent-Length: {len(WORKED)}\r\nContent-Length: {len(WORKED) + 1}",
+        )
+        status, header, payload = raw_post(base, head)
+        assert status == 400
+        assert "connection: close" in header
+        assert json.loads(payload) == {"error": "invalid_content_length"}
+
+
+def test_leading_zeros_in_content_length_are_accepted(tmp_path: Path) -> None:
+    """Leading zeros are valid digits per RFC 9110 and must be accepted."""
+    db = tmp_path / "r.sqlite"
+    issued = create_intake_token(
+        db, owner_id="o", producer_id="nutrition-app", label="l"
+    )
+    with served(db, enabled=True) as base:
+        head = post_head(issued.token, f"\r\nContent-Length: 0{len(WORKED)}")
+        status, _, _ = raw_post(base, head, WORKED)
+        assert status == 200, f"Leading zeros should be accepted (got {status})"
