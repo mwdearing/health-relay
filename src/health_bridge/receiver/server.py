@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 
 # noqa: RUF100 -- no-excuse marker "# noqa: SIZE_OK": cohesive HTTP framing and mappings.
@@ -12,7 +13,16 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock
-from typing import ClassVar, Final, Self, TypeAlias, assert_never, cast, final
+from typing import (
+    TYPE_CHECKING,
+    ClassVar,
+    Final,
+    Self,
+    TypeAlias,
+    assert_never,
+    cast,
+    final,
+)
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
@@ -67,9 +77,14 @@ from health_bridge.storage.database import (
 )
 from health_bridge.storage.models import IngestResult
 
+if TYPE_CHECKING:
+    import socket
+
 _MAILBOX_SHUTDOWN_ERROR = "mailbox_runtime_shutdown_incomplete"
+_LOGGER = logging.getLogger(__name__)
 
 MAX_BATCH_BYTES: Final = 5_000_000
+_MAX_REQUEST_LINE_BYTES: Final = 65_536
 MAX_PAIRING_REDEEM_BYTES: Final = 4_096
 INTAKE_CONTEXT_CAPABILITIES_PATH: Final = "/v1/intake-context/capabilities"
 INTAKE_CONTEXT_BATCHES_PATH: Final = "/v1/intake-context/batches"
@@ -158,9 +173,11 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
         mailbox_connection_store: MailboxConnectionStore | None = None,
         mailbox_worker: MailboxRuntimeWorker | None = None,
         intake_context_enabled: bool = False,
+        request_timeout_seconds: float = 30.0,
     ) -> None:
         self.db_path: Path = db_path
         self.intake_context_enabled: bool = intake_context_enabled
+        self.request_timeout_seconds: float = request_timeout_seconds
         self.mailbox_key_store: MailboxKeyStore | None = mailbox_key_store
         self.mailbox_connection_store: MailboxConnectionStore | None = (
             mailbox_connection_store
@@ -219,6 +236,78 @@ class MailboxTransportUnavailableError(Exception):
 
 
 class ReceiverRequestHandler(BaseHTTPRequestHandler):
+    _response_started: bool = False
+    raw_requestline: bytes = b""
+
+    @override
+    def setup(self) -> None:
+        super().setup()
+        connection = cast("socket.socket", self.connection)
+        connection.settimeout(self.receiver_server.request_timeout_seconds)
+
+    @override
+    def end_headers(self) -> None:
+        self._response_started = True
+        super().end_headers()
+
+    @override
+    def handle_one_request(self) -> None:
+        self._response_started = False
+        # A timeout may occur before the request line has been parsed.
+        self.requestline: str = ""
+        self.request_version: str = self.default_request_version
+        self.command: str = ""
+        self.raw_requestline = b""
+        self.close_connection: bool = True
+        try:
+            self._read_and_dispatch_request()
+        except TimeoutError:
+            self._finish_failed_request(HTTPStatus.REQUEST_TIMEOUT, "request_timeout")
+        except Exception as exc:  # noqa: BLE001 -- privacy-safe request boundary.
+            _LOGGER.error("%s", type(exc).__name__)  # noqa: TRY400 -- no traceback.
+            self._finish_failed_request(
+                HTTPStatus.INTERNAL_SERVER_ERROR, "internal_error"
+            )
+
+    def _read_and_dispatch_request(self) -> None:
+        """Keep stdlib HTTP parsing and dispatch, with our error boundary outside."""
+        self.raw_requestline = self.rfile.readline(_MAX_REQUEST_LINE_BYTES + 1)
+        if len(self.raw_requestline) > _MAX_REQUEST_LINE_BYTES:
+            self.request_version = ""
+            self.send_error(HTTPStatus.REQUEST_URI_TOO_LONG)
+            return
+        if not self.raw_requestline:
+            self.close_connection = True
+            return
+        if not self.parse_request():
+            return
+        method_name = "do_" + self.command
+        if not hasattr(self, method_name):
+            self.send_error(
+                HTTPStatus.NOT_IMPLEMENTED,
+                f"Unsupported method ({self.command!r})",
+            )
+            return
+        method = cast("Callable[[], None]", getattr(self, method_name))
+        method()
+        self.wfile.flush()
+
+    def _finish_failed_request(self, status: HTTPStatus, error: str) -> None:
+        self.close_connection = True
+        if self._response_started or not self.raw_requestline:
+            return
+        # Discard an unfinished response before replacing it with the fixed error.
+        pending_headers = cast(
+            "list[bytes] | None", getattr(self, "_headers_buffer", None)
+        )
+        if pending_headers is not None:
+            pending_headers.clear()
+        try:
+            self._reject_body(status, error, close_connection=True)
+        except OSError:
+            # A disconnected or timed-out peer may no longer accept a response.
+            return
+
     @property
     def receiver_server(self) -> ReceiverHTTPServer:
         return cast("ReceiverHTTPServer", self.server)
@@ -636,7 +725,7 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
     ) -> None:
         """Reject on headers alone; never read the body, optionally close."""
         if close_connection:
-            self.close_connection = True  # pyright: ignore[reportUnannotatedClassAttribute]
+            self.close_connection = True
             self._send_json(
                 status,
                 {"error": error},
@@ -677,17 +766,20 @@ def build_receiver_server(  # noqa: PLR0913 - explicit transport dependencies.
     mailbox_key_store: MailboxKeyStore | None = None,
     mailbox_connection_store: MailboxConnectionStore | None = None,
     intake_context_enabled: bool = False,
+    request_timeout_seconds: float = 30.0,
+    mailbox_worker: MailboxRuntimeWorker | None = None,
 ) -> ReceiverHTTPServer:
     initialize_database(db_path)
-    server = ReceiverHTTPServer(
+    return ReceiverHTTPServer(
         host=host,
         port=port,
         db_path=db_path,
         mailbox_key_store=mailbox_key_store,
         mailbox_connection_store=mailbox_connection_store,
+        intake_context_enabled=intake_context_enabled,
+        request_timeout_seconds=request_timeout_seconds,
+        mailbox_worker=mailbox_worker,
     )
-    server.intake_context_enabled = intake_context_enabled
-    return server
 
 
 def _validate_mailbox_public_keys(
@@ -731,33 +823,26 @@ def serve_receiver(  # noqa: PLR0913 - transport dependencies are explicit.
     mailbox_key_store: MailboxKeyStore | None = None,
     mailbox_connection_store: MailboxConnectionStore | None = None,
     mailbox_root: Path | None = None,
+    intake_context_enabled: bool = False,
+    request_timeout_seconds: float = 30.0,
 ) -> None:
-    initialize_database(db_path)
     worker = (
         MailboxRuntimeWorker(db_path=db_path, mailbox_root=mailbox_root)
         if mailbox_root is not None
         else None
     )
     with (
-        database_lifecycle_lock(db_path, exclusive=False, create=False),
-        (
-            ReceiverHTTPServer(
-                host=host,
-                port=port,
-                db_path=db_path,
-                mailbox_key_store=mailbox_key_store,
-                mailbox_connection_store=mailbox_connection_store,
-                mailbox_worker=worker,
-            )
-            if worker is not None
-            else ReceiverHTTPServer(
-                host=host,
-                port=port,
-                db_path=db_path,
-                mailbox_key_store=mailbox_key_store,
-                mailbox_connection_store=mailbox_connection_store,
-            )
+        build_receiver_server(
+            db_path=db_path,
+            host=host,
+            port=port,
+            mailbox_key_store=mailbox_key_store,
+            mailbox_connection_store=mailbox_connection_store,
+            mailbox_worker=worker,
+            intake_context_enabled=intake_context_enabled,
+            request_timeout_seconds=request_timeout_seconds,
         ) as server,
+        database_lifecycle_lock(db_path, exclusive=False, create=False),
     ):
         if worker is not None:
             worker.start()

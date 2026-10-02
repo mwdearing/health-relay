@@ -148,6 +148,14 @@ executable and private service-config paths, and bounded launch policy. Database
 paths, mailbox paths, container identifiers, bearer tokens, pairing links, and
 health values are not written to the plist or status output.
 
+The generated `receiver start --service-config` command leaves intake-context
+HTTP routes disabled. For a manually supervised receiver process,
+`--enable-intake-context` can accompany `--service-config` to enable those routes;
+the switch does not alter mailbox delivery or the saved service configuration.
+Generated LaunchAgent commands retain the default off. HTTP reads use a
+30-second timeout, and unexpected HTTP handler errors return a redacted 500;
+see [architecture](architecture.md#delivery-and-recovery).
+
 `install` is create-only and idempotent for an identical owned generation. It
 does not rewrite an existing service when executable paths or generated service
 artifacts change. If first-install publication or bootstrap fails, files created

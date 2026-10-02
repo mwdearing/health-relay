@@ -878,7 +878,7 @@ def revoke_token(
 
 
 @receiver_app.command("start")
-def start(  # noqa: PLR0913 -- Typer exposes six independent receiver options.
+def start(  # noqa: PLR0913 -- Typer exposes independent receiver options.
     db: Annotated[
         Path | None,
         typer.Option("--db", help="User-owned SQLite database path."),
@@ -912,6 +912,13 @@ def start(  # noqa: PLR0913 -- Typer exposes six independent receiver options.
             help="Owner-only mailbox LaunchAgent receiver configuration.",
         ),
     ] = None,
+    enable_intake_context: Annotated[
+        bool,
+        typer.Option(
+            "--enable-intake-context",
+            help="Enable intake-context HTTP routes for this receiver process.",
+        ),
+    ] = False,
 ) -> None:
     run_receiver_start(
         ReceiverStartOptions(
@@ -921,6 +928,7 @@ def start(  # noqa: PLR0913 -- Typer exposes six independent receiver options.
             mailbox_root=mailbox_root,
             icloud_container_identifier=icloud_container_identifier,
             service_config=service_config,
+            intake_context_enabled=enable_intake_context,
         ),
         ReceiverStartDependencies(
             load_service_config=load_runnable_launch_agent_request,

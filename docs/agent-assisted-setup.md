@@ -43,6 +43,20 @@ uv run health-bridge init --db .tmp/device.sqlite
 uv run health-bridge receiver start --db .tmp/device.sqlite --host 127.0.0.1 --port 8765
 ```
 
+`receiver start` accepts `--db`, `--host`, and `--port` for Direct mode;
+`--mailbox-root` and `--icloud-container-identifier` select the validated mailbox
+transport. `--service-config` loads an owned mailbox service configuration and
+cannot be combined with those database, bind, or mailbox overrides.
+
+Add `--enable-intake-context` to enable the intake-context capabilities and batch
+HTTP routes for this process. It is off by default and can also accompany
+`--service-config`; it does not change mailbox delivery. Startup reports whether
+the routes are enabled. HTTP socket reads time out after 30 seconds; stalled
+requests close with 408 `request_timeout` when possible. Unexpected errors close
+with 500 `internal_error` and log only the exception type. See
+[architecture](architecture.md#delivery-and-recovery) for details and the Python
+timeout option.
+
 Then verify from another terminal:
 
 ```bash

@@ -326,9 +326,11 @@ def test_uninstall_json_rejects_dangling_service_state_symlink(
     assert request.paths.state_dir.is_symlink()
 
 
+@pytest.mark.parametrize("enable_intake", [False, True])
 def test_receiver_start_loads_owned_service_config_into_supported_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    enable_intake: bool,
 ) -> None:
     request = service_request(tmp_path)
     _ = write_launch_agent_artifacts(request, activate=False)
@@ -343,6 +345,7 @@ def test_receiver_start_loads_owned_service_config_into_supported_runtime(
         mailbox_key_store: MailboxKeyStore | None,
         mailbox_connection_store: MailboxConnectionStore | None,
         mailbox_root: Path | None,
+        intake_context_enabled: bool,
     ) -> None:
         del mailbox_key_store, mailbox_connection_store
         captured.update(
@@ -350,6 +353,7 @@ def test_receiver_start_loads_owned_service_config_into_supported_runtime(
             host=host,
             port=port,
             mailbox_root=mailbox_root,
+            intake_context_enabled=intake_context_enabled,
         )
 
     def select_mailbox(
@@ -385,6 +389,7 @@ def test_receiver_start_loads_owned_service_config_into_supported_runtime(
             "start",
             "--service-config",
             str(request.paths.config),
+            *(["--enable-intake-context"] if enable_intake else []),
         ],
         env={"HOME": str(request.home)},
     )
@@ -395,6 +400,7 @@ def test_receiver_start_loads_owned_service_config_into_supported_runtime(
         "host": "127.0.0.1",
         "port": 8765,
         "mailbox_root": request.mailbox_root,
+        "intake_context_enabled": enable_intake,
     }
 
 

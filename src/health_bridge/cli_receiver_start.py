@@ -41,6 +41,7 @@ class ReceiverServer(Protocol):
         mailbox_key_store: MailboxKeyStore | None,
         mailbox_connection_store: MailboxConnectionStore | None,
         mailbox_root: Path | None,
+        intake_context_enabled: bool,
     ) -> None: ...
 
 
@@ -52,6 +53,7 @@ class ReceiverStartOptions:
     mailbox_root: Path | None
     icloud_container_identifier: str | None
     service_config: Path | None
+    intake_context_enabled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +119,11 @@ def run_receiver_start(
         f"health-bridge receiver listening on http://{host}:{port}",
         err=True,
     )
+    typer.echo(
+        "Intake-context routes: "
+        + ("enabled" if options.intake_context_enabled else "disabled"),
+        err=True,
+    )
     try:
         dependencies.serve(
             db_path=db,
@@ -125,6 +132,7 @@ def run_receiver_start(
             mailbox_key_store=mailbox_key_store,
             mailbox_connection_store=mailbox_connection_store,
             mailbox_root=mailbox_root,
+            intake_context_enabled=options.intake_context_enabled,
         )
     except KeyboardInterrupt:
         raise typer.Exit(code=0) from None
