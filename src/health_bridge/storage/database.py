@@ -52,6 +52,7 @@ MIGRATION_IDS: Final = (
     "010_electrocardiograms",
     "011_medication_dose_events",
     "012_lab_results",
+    "013_intake_context",
 )
 
 
