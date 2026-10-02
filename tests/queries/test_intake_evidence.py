@@ -1,5 +1,6 @@
 """Tests for the effective intake evidence query."""
 
+import base64
 import json
 import sqlite3
 from collections.abc import Iterator
@@ -483,7 +484,19 @@ def test_limit_bounds_are_accepted(conn: sqlite3.Connection, limit: int) -> None
 
 @pytest.mark.parametrize(
     "cursor",
-    ["", "not-a-cursor", "e30", "W10", "WyJhIiwiYiIsMSwyXQ", "WyJhIiwiYiIsLTEsMCwwXQ"],
+    [
+        "",
+        "not-a-cursor",
+        "e30",
+        "W10",
+        "WyJhIiwiYiIsMSwyXQ",
+        "WyJhIiwiYiIsLTEsMCwwXQ",
+        # The earlier five-element shape: [str, str, int, int, str].
+        "WyJhIiwiYiIsMSwwLCJ4Il0",
+        # Four elements with a boolean position.
+        "WyJhIiwiYiIsdHJ1ZSwieCJd",
+        "WyJhIiwiYiIsLTEsIngiXQ",
+    ],
 )
 def test_malformed_cursor_is_rejected(conn: sqlite3.Connection, cursor: str) -> None:
     with pytest.raises(InvalidIntakeEvidenceCursorError):
@@ -726,3 +739,254 @@ def test_sample_lookup_uses_the_unique_index_not_a_table_scan(
     plan = " ".join(row[3] for row in rows)
     assert "SCAN samples" not in plan
     assert "SEARCH samples" in plan
+
+
+def component_ids(items: list[IntakeEvidenceItem]) -> list[str]:
+    return [i.component_id for i in items]
+
+
+def test_cursor_does_not_advance_with_the_revision(
+    conn: sqlite3.Connection,
+) -> None:
+    _ = put_revision(
+        conn,
+        intake_id=INTAKE_A,
+        revision=1,
+        facts=[fact(f"c{n}") for n in range(3)],
+    )
+    first = list_intake_evidence(conn, owner_id=OWNER, limit=2)
+    assert component_ids(first.items) == ["c0", "c1"]
+    _ = put_revision(
+        conn,
+        intake_id=INTAKE_A,
+        revision=2,
+        facts=[fact(f"c{n}") for n in range(4)],
+    )
+    second = list_intake_evidence(
+        conn, owner_id=OWNER, cursor=first.next_cursor, limit=5
+    )
+    assert component_ids(second.items) == ["c2", "c3"]
+    assert {i.revision for i in second.items} == {2}
+
+
+def test_cursor_survives_a_revision_that_drops_a_component(
+    conn: sqlite3.Connection,
+) -> None:
+    _ = put_revision(
+        conn,
+        intake_id=INTAKE_A,
+        revision=1,
+        facts=[fact(f"c{n}") for n in range(3)],
+    )
+    first = list_intake_evidence(conn, owner_id=OWNER, limit=2)
+    _ = put_revision(
+        conn,
+        intake_id=INTAKE_A,
+        revision=2,
+        facts=[fact("c0"), fact("c1"), fact("c3")],
+    )
+    second = list_intake_evidence(
+        conn, owner_id=OWNER, cursor=first.next_cursor, limit=5
+    )
+    assert component_ids(second.items) == ["c3"]
+
+
+def test_cursor_has_four_elements(conn: sqlite3.Connection) -> None:
+    _ = many_components(conn, intakes=1, per_intake=3)
+    cursor = list_intake_evidence(conn, owner_id=OWNER, limit=1).next_cursor
+    assert cursor is not None
+    raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+    assert len(cast("list[object]", json.loads(raw))) == 4
+
+
+def test_sample_stored_under_a_non_dietary_type_is_a_mismatch(
+    conn: sqlite3.Connection,
+) -> None:
+    _ = put_sample(conn, sample_uuid=uid(1), type_code="heart_rate", unit="count/min")
+    water_intake(conn, sample=uid(1))
+    item = one(evidence(conn))
+    assert item.link_status == "mismatch"
+    assert item.client_record_id == f"hk-quantity-heart-rate-{uid(1)}"
+
+
+def test_tombstone_under_another_type_id_is_a_mismatch(
+    conn: sqlite3.Connection,
+) -> None:
+    _ = put_sample(conn, sample_uuid=uid(5), type_code="dietary_caffeine", unit="mg")
+    add_tombstone(conn, exporter_client_record_id("dietary_caffeine", uid(1)))
+    water_intake(conn, sample=uid(1))
+    assert one(evidence(conn)).link_status == "mismatch"
+
+
+def test_exact_row_plus_copy_under_another_type_is_a_mismatch(
+    conn: sqlite3.Connection,
+) -> None:
+    _ = put_sample(conn, sample_uuid=uid(1))
+    _ = put_sample(
+        conn,
+        sample_uuid=uid(1),
+        type_code="dietary_caffeine",
+        unit="mg",
+        source_key="apple_health.watch",
+    )
+    water_intake(conn, sample=uid(1))
+    assert one(evidence(conn)).link_status == "mismatch"
+
+
+def add_tombstone(conn: sqlite3.Connection, client_record_id: str) -> None:
+    _ = conn.execute(
+        """insert into deleted_records
+        (source_id, record_family, client_record_id, deleted_at)
+        values ((select min(source_id) from sources), 'sample', ?, ?)""",
+        (client_record_id, "2026-10-01T13:00:00Z"),
+    )
+    conn.commit()
+
+
+def traced(
+    conn: sqlite3.Connection, intake_links: int, tmp_intake: str, offset: int = 0
+) -> tuple[list[str], list[IntakeEvidenceItem]]:
+    _ = put_revision(
+        conn,
+        intake_id=tmp_intake,
+        revision=1,
+        facts=[fact("water")],
+        links=[link("water", uid(n + 1 + offset)) for n in range(intake_links)],
+    )
+    statements: list[str] = []
+    conn.set_trace_callback(statements.append)
+    try:
+        page = list_intake_evidence(conn, owner_id=OWNER, limit=1, intake_id=tmp_intake)
+    finally:
+        conn.set_trace_callback(None)
+    return statements, page.items
+
+
+def test_page_limit_bounds_the_work_regardless_of_link_count(
+    conn: sqlite3.Connection,
+) -> None:
+    small, small_items = traced(conn, 6, INTAKE_A)
+    large, large_items = traced(conn, 60, INTAKE_B, offset=100)
+    for items, first in ((small_items, uid(1)), (large_items, uid(101))):
+        assert [i.sample_uuid for i in items] == [first]
+        assert items[0].link_status == "pending"
+        assert items[0].complete is False
+    marker = "from candidate"
+    assert sum(marker in s for s in small) <= 2
+    assert sum(marker in s for s in large) <= 2
+    assert len(large) == len(small)
+
+
+def test_completeness_matches_per_link_statuses(conn: sqlite3.Connection) -> None:
+    other = "dev.example.other"
+    _ = put_sample(conn, sample_uuid=uid(1))  # verified
+    # uid(2) pending: no sample.
+    _ = put_sample(conn, sample_uuid=uid(3), type_code="dietary_caffeine", unit="mg")
+    _ = put_sample(conn, sample_uuid=uid(4), bundle_id=other)
+    _ = put_sample(conn, sample_uuid=uid(5))
+    _ = conn.execute(
+        """update samples set metadata_json = json_set(metadata_json, ?, ?)
+        where client_record_id = ?""",
+        (
+            "$.healthkit_identifier",
+            "HKQuantityTypeIdentifierDietaryCaffeine",
+            exporter_client_record_id("hydration", uid(5)),
+        ),
+    )
+    _ = put_sample(conn, sample_uuid=uid(6))  # contested
+    _ = put_sample(conn, sample_uuid=uid(7))  # deleted
+    add_tombstone(conn, exporter_client_record_id("hydration", uid(7)))
+    _ = put_sample(conn, sample_uuid=uid(8), type_code="heart_rate", unit="count/min")
+    add_tombstone(conn, exporter_client_record_id("dietary_sodium", uid(9)))
+    _ = put_sample(conn, sample_uuid=uid(10))
+    _ = put_sample(
+        conn,
+        sample_uuid=uid(10),
+        type_code="dietary_caffeine",
+        unit="mg",
+        source_key="apple_health.watch",
+    )
+    _ = put_sample(conn, sample_uuid=uid(11), bundle_id=other)
+    _ = put_sample(
+        conn,
+        sample_uuid=uid(11),
+        source_key="apple_health.watch",
+        bundle_id=WRITER_BUNDLE,
+    )
+    _ = put_sample(conn, sample_uuid=uid(12))
+    _ = put_sample(conn, sample_uuid=uid(14), bundle_id=other)
+    _ = put_sample(conn, sample_uuid=uid(15))
+    _ = put_sample(conn, sample_uuid=uid(16))
+    scenarios = {
+        "00000001-0000-4000-8000-000000000000": [uid(1)],
+        "00000002-0000-4000-8000-000000000000": [uid(2)],
+        "00000003-0000-4000-8000-000000000000": [uid(3)],
+        "00000004-0000-4000-8000-000000000000": [uid(4)],
+        "00000005-0000-4000-8000-000000000000": [uid(5)],
+        "00000006-0000-4000-8000-000000000000": [uid(6)],
+        "00000007-0000-4000-8000-000000000000": [uid(7)],
+        "00000008-0000-4000-8000-000000000000": [uid(8)],
+        "00000009-0000-4000-8000-000000000000": [uid(9)],
+        "0000000a-0000-4000-8000-000000000000": [uid(10)],
+        "0000000b-0000-4000-8000-000000000000": [uid(11)],
+        "0000000c-0000-4000-8000-000000000000": [uid(12), uid(13), uid(14)],
+        "0000000d-0000-4000-8000-000000000000": [uid(15), uid(16)],
+        "0000000e-0000-4000-8000-000000000000": [],
+    }
+    for intake_id, samples in scenarios.items():
+        _ = put_revision(
+            conn,
+            intake_id=intake_id,
+            revision=1,
+            facts=[fact("water")],
+            links=[link("water", sample) for sample in samples],
+        )
+    water_intake(conn, sample=uid(6), intake_id=INTAKE_B)
+    items = evidence(conn)
+    by_component: dict[tuple[str, str], list[IntakeEvidenceItem]] = {}
+    for item in items:
+        by_component.setdefault((item.intake_id, item.component_id), []).append(item)
+    assert len(by_component) == len(scenarios) + 1
+    for group in by_component.values():
+        expected = all(i.link_status in {"verified", "unlinked"} for i in group)
+        assert {i.complete for i in group} == {expected}
+    statuses = {
+        i.intake_id: i.link_status
+        for i in items
+        if len(scenarios.get(i.intake_id, [])) == 1
+    }
+    assert statuses["00000001-0000-4000-8000-000000000000"] == "verified"
+    assert statuses["0000000b-0000-4000-8000-000000000000"] == "verified"
+    assert statuses["00000002-0000-4000-8000-000000000000"] == "pending"
+    assert statuses["0000000a-0000-4000-8000-000000000000"] == "mismatch"
+
+
+def test_completeness_aggregate_uses_the_unique_indexes(
+    conn: sqlite3.Connection,
+) -> None:
+    params = {
+        "revision_row_id": 1,
+        "component_id": "water",
+        "code": "hydration",
+        "id_prefix": "hk-quantity-hydration-",
+        "writer_bundle_id": WRITER_BUNDLE,
+        "owner_id": OWNER,
+        "producer_id": PRODUCER,
+        "intake_id": INTAKE_A,
+    }
+    rows = cast(
+        "list[tuple[int, int, int, str]]",
+        conn.execute(
+            "explain query plan " + intake_evidence.UNVERIFIED_LINK_COUNT_SQL,
+            params,
+        ).fetchall(),
+    )
+    plan = " ".join(row[3] for row in rows)
+    for scan in (
+        "SCAN exact",
+        "SCAN other",
+        "SCAN deleted",
+        "SCAN samples",
+        "SCAN deleted_records",
+    ):
+        assert scan not in plan

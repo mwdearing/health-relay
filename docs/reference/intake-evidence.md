@@ -37,7 +37,7 @@ was not issued by this query raise `ValueError` subclasses
 
 Each fact (component) of the effective revision yields one item per active
 link. A component with no active link yields one `unlinked` item. Items are
-ordered by `(intake_id, producer, revision, component position)`, then by
+ordered by `(intake_id, producer, component position)`, then by
 sample UUID when a component has several active links. Two producers may use
 the same `intake_id`, so `producer_id` is part of every item.
 
@@ -81,7 +81,7 @@ A link is `verified` only by exact joins, never by time, name or amount:
 | `verified` | All three joins hold. |
 | `pending` | No stored sample has that id yet. The export may not have arrived. |
 | `unlinked` | The component has no active link in its current snapshot. |
-| `mismatch` | The claim conflicts with the stored data: a sample for that UUID is stored under another dietary quantity type, its source bundle is not the registered writer (or is missing), another current component also actively claims the same sample, or the sample was deleted at a source (even if another source still holds a copy) and will never arrive. A conflict is reported even before the sample is stored. |
+| `mismatch` | The claim conflicts with the stored data: a sample for that UUID is stored under any other quantity type (a copy under another type at another source counts too), its source bundle is not the registered writer (or is missing), another current component also actively claims the same sample, or the sample was deleted at a source under any candidate id (even if another source still holds a copy) and will never arrive. A conflict is reported even before the sample is stored. |
 
 ## Completeness
 
@@ -91,9 +91,43 @@ with a UUID that has not been exported yet shows as incomplete: the older
 verified sample is superseded and is not reported. A component with no active
 link is `complete` because nothing is awaited.
 
+Resolution is bounded by the page: only the items on the page are resolved, and
+`complete` comes from one aggregate query per component on the page, so cost does
+not grow with the number of links a component holds.
+
 ## Pagination
 
-`next_cursor` is opaque; pass it back unchanged. It is a position, not a capability: every query is still scoped to `owner_id`, so a cursor from another query can only change where the listing starts. Items are ordered by `(intake_id, producer_id, revision, component position,
-sample UUID)` and the cursor names the last item by that key, so a page
-boundary never repeats or skips an item, including inside a component whose
-links change between requests. The last page has `next_cursor = null`.
+`next_cursor` is opaque; pass it back unchanged. It is a position, not a
+capability: every query is still scoped to `owner_id`, so a cursor from another
+query can only change where the listing starts. Items are ordered by
+`(intake_id, producer_id, component position, sample UUID)` and the cursor names
+the last item by that key, so a page boundary never repeats or skips an item,
+including inside a component whose links change between requests. The last page
+has `next_cursor = null`.
+
+The cursor does not carry a revision. If an intake's effective revision changes
+between pages, the next page continues from the position after the cursor in the
+new revision; components at or before that position are not emitted again. A
+caller that needs one consistent revision lists that intake again with
+`intake_id`. Cursors issued by earlier builds are rejected.
+
+## MCP tool `get_intake_evidence_v1`
+
+The same view is available to MCP clients as a read-only tool.
+
+| Argument | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `owner_id` | string | the single registered owner | Intake owner to read. |
+| `intake_id` | string | none | Limit the listing to one intake. |
+| `cursor` | string | none | `next_cursor` from the previous page. |
+| `limit` | integer | 100 | Items per page, 1 to 500. |
+
+When `owner_id` is omitted, the tool uses the only owner with a registered
+intake producer. With no registered owner it returns the error "no intake owner
+registered"; with several it returns an error asking for `owner_id`.
+
+A malformed cursor, a `limit` outside 1 to 500 (or not an integer), or an
+unknown argument returns a JSON-RPC `-32602` error naming the tool and the
+problem; the server keeps running. The result is the page as JSON: `items[]`
+(each with `producer_id`, `link_status`, `complete` and the fields above) and
+`next_cursor`. It carries metadata and identifiers only, no sample values.
