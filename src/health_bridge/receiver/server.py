@@ -614,17 +614,18 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
                 close_connection=close_on_reject,
             )
             return None
-        # More digits than the limit has cannot fit; this also keeps int() below
-        # the interpreter's integer-string conversion limit.
-        too_many_digits = len(value.lstrip("0")) > len(str(max_bytes))
-        if too_many_digits or int(value) > max_bytes:
+        # Leading zeros carry no value. More significant digits than the limit has
+        # cannot fit; checking that first keeps int() below the interpreter's
+        # integer-string conversion limit.
+        significant = value.lstrip("0") or "0"
+        if len(significant) > len(str(max_bytes)) or int(significant) > max_bytes:
             self._reject_body(
                 HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
                 too_large_error,
                 close_connection=close_on_reject,
             )
             return None
-        return self.rfile.read(int(value))
+        return self.rfile.read(int(significant))
 
     def _reject_body(
         self,

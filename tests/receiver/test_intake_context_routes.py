@@ -468,3 +468,15 @@ def test_huge_digit_content_length_is_413(tmp_path: Path) -> None:
     assert status == 413
     assert "connection: close" in header
     assert json.loads(payload) == {"error": "batch_too_large"}
+
+
+def test_zero_padded_overlong_content_length_is_handled(tmp_path: Path) -> None:
+    db = tmp_path / "r.sqlite"
+    issued = create_intake_token(
+        db, owner_id="o", producer_id="nutrition-app", label="l"
+    )
+    with served(db, enabled=True) as base:
+        value = "0" * 5000 + str(len(WORKED))
+        head = post_head(issued.token, f"\r\nContent-Length: {value}")
+        status, _, _ = raw_post(base, head, WORKED)
+    assert status == 200
