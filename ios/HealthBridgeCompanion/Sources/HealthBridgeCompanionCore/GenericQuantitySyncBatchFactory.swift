@@ -49,6 +49,7 @@ public struct HealthKitQuantitySampleSummary: Equatable, Sendable {
     public let end: Date
     public let value: Double
     public let provenance: HealthKitSampleProvenance?
+    public let intakeMetadata: [String: String]
 
     public init(
         uuid: UUID,
@@ -56,7 +57,8 @@ public struct HealthKitQuantitySampleSummary: Equatable, Sendable {
         start: Date,
         end: Date,
         value: Double,
-        provenance: HealthKitSampleProvenance? = nil
+        provenance: HealthKitSampleProvenance? = nil,
+        intakeMetadata: [String: String] = [:]
     ) {
         self.uuid = uuid
         self.typeCode = typeCode
@@ -64,6 +66,53 @@ public struct HealthKitQuantitySampleSummary: Equatable, Sendable {
         self.end = end
         self.value = value
         self.provenance = provenance
+        self.intakeMetadata = intakeMetadata
+    }
+}
+
+public enum IntakeMetadataAllowlist {
+    public static func batchMetadata(from healthKitMetadata: [String: Any]) -> [String: String] {
+        var result: [String: String] = [:]
+
+        if let rawIntakeID = healthKitMetadata["HealthRelayIntakeID"] as? String,
+           let uuid = UUID(uuidString: rawIntakeID),
+           let component = healthKitMetadata["HealthRelayIntakeComponentID"] as? String,
+           isSlug(component) {
+            result["intake_id"] = uuid.uuidString.lowercased()
+            result["intake_component_id"] = component
+        }
+
+        if let identifier = healthKitMetadata["HKMetadataKeySyncIdentifier"] as? String,
+           !identifier.isEmpty,
+           identifier.count <= 256,
+           let version = syncVersion(from: healthKitMetadata["HKMetadataKeySyncVersion"]) {
+            result["sync_identifier"] = identifier
+            result["sync_version"] = String(version)
+        }
+
+        return result
+    }
+
+    private static func isSlug(_ value: String) -> Bool {
+        guard !value.isEmpty, value.count <= 64 else { return false }
+        let allowedFirst = Set("abcdefghijklmnopqrstuvwxyz0123456789")
+        let allowedRest = allowedFirst.union(Set("._-"))
+        guard let first = value.first, allowedFirst.contains(first) else { return false }
+        return value.dropFirst().allSatisfy { allowedRest.contains($0) }
+    }
+
+    private static func syncVersion(from raw: Any?) -> Int64? {
+        guard let raw else { return nil }
+        if let integer = raw as? Int {
+            return integer >= 1 ? Int64(integer) : nil
+        }
+        guard let number = raw as? NSNumber else { return nil }
+        let double = number.doubleValue
+        guard double.isFinite, double == double.rounded(), double >= 1 else { return nil }
+        if double >= 9_223_372_036_854_775_807.0 {
+            return double == 9_223_372_036_854_775_807.0 ? Int64.max : nil
+        }
+        return Int64(double)
     }
 }
 
@@ -698,6 +747,7 @@ public enum GenericQuantitySyncBatchFactory {
                 if let provenance = sample.provenance {
                     metadata.merge(provenance.metadata) { current, _ in current }
                 }
+                metadata.merge(sample.intakeMetadata) { current, _ in current }
                 return HealthBridgeSample(
                     clientRecordID: clientRecordID(for: sample, typeCode: entry.typeCode),
                     sourceKey: source.sourceKey,
