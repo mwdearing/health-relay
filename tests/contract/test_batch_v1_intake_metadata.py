@@ -191,3 +191,15 @@ def test_schema_accepts_good_and_unrelated_metadata() -> None:
 )
 def test_schema_rejects_invalid_intake_metadata(meta: dict[str, str]) -> None:
     assert not schema_valid(meta)
+
+
+@pytest.mark.parametrize(
+    "meta",
+    [
+        {**GOOD, "intake_id": UUID + "\n"},
+        {**GOOD, "intake_component_id": "water\n"},
+        {**GOOD, "sync_version": "2\n"},
+    ],
+)
+def test_schema_rejects_trailing_newline(meta: dict[str, str]) -> None:
+    assert not schema_valid(meta)
