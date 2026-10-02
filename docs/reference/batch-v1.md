@@ -33,6 +33,7 @@ Optional fields (HealthRelay fork; additive under major version `1`):
 
 - `electrocardiograms`
 - `medication_dose_events`
+- `lab_results`
 
 All timestamps are UTC ISO 8601 strings ending in `Z`. Values are observations
 with source context, not interpretations.
@@ -81,8 +82,8 @@ to `1.1.0` when the iOS companion first sends it). Each record is one Apple Watc
 `voltage_count`, and optional `average_heart_rate_bpm`, `sampling_frequency_hz`
 and `voltages_microvolts`. When `voltages_microvolts` is present its length must
 equal `voltage_count`; a summary-only record omits it. A tombstone uses
-`record_family` `electrocardiogram`. Receivers that predate the field ignore
-the array.
+`record_family` `electrocardiogram`. A receiver that predates the field
+rejects the whole batch (see Compatibility).
 
 ## Medication dose events
 
@@ -92,9 +93,19 @@ dose event: `client_record_id`, `source_key`, `medication_name`, optional
 `status` (`taken`, `skipped`, `not_interacted`, `snoozed`, `not_logged`,
 `notification_not_sent`, `unknown`), `status_raw` (HealthKit's raw log status),
 `start_time`, and optional `scheduled_time`, `dose` and `unit`. A tombstone uses
-`record_family` `medication_dose_event`. Receivers that predate the field ignore the
-array. These records identify medications by name; the receiver stores them locally
+`record_family` `medication_dose_event`. A receiver that predates the field rejects the whole batch (see Compatibility). These records identify medications by name; the receiver stores them locally
 and never forwards them.
+
+## Lab results
+
+Optional array (HealthRelay fork addition) written by the manual Health export
+importer. Each record is one clinical lab observation: `client_record_id`,
+`source_key`, `name`, `effective_date`, and optional `loinc`, `category`,
+`value_num`, `unit`, `value_text`, `ref_low`, `ref_high` and `ref_text`. The
+receiver stores them as given, in `lab_results`. A tombstone removes a record
+by `client_record_id`. See
+`fixtures/health_bridge_batch_v1.lab_result.synthetic.json`. A receiver that
+predates the field rejects the whole batch (see Compatibility).
 
 ## Sleep
 
@@ -167,3 +178,31 @@ The public JSON Schema mirrors these rules, except the numeric int64 upper
 bound of `sync_version`, which the receiver still enforces.
 
 See `fixtures/health_bridge_batch_v1.intake_metadata.synthetic.json`.
+
+## Compatibility
+
+Intake context also has its own batch contract, served on separate routes; see
+[intake-context-v1.md](intake-context-v1.md). Those routes are off by default.
+There is currently no CLI option or environment variable that turns them on:
+`health-bridge receiver start` never enables them, so under the stock entry
+point both routes return 404. Only the `intake_context_enabled` argument of the
+lower-level `build_receiver_server` enables them.
+
+The top-level batch model rejects unknown fields, and so does the JSON Schema.
+A receiver that predates `electrocardiograms`, `medication_dose_events` or
+`lab_results` therefore rejects a batch carrying that array as a whole. The same applies to tombstones: older receivers accept only `sample`,
+`workout` and `sleep_session` in `DeletedRecord.record_family`, while the
+current receiver also accepts `electrocardiogram`, `medication_dose_event` and
+`lab_result`. A batch using a newer tombstone family needs a receiver upgrade
+too. Check the receiver version before an app sends a new array or tombstone
+family.
+
+| Receiver feature | Route | Accepts | Ignores or rejects |
+| --- | --- | --- | --- |
+| Base batch (`1.x`) | `/v1/batches` | `health_bridge.batch.v1` with a receiver (batch) token | Unknown major versions are rejected; an intake-only token gets 403 |
+| Optional arrays (`electrocardiograms`, `medication_dose_events`, `lab_results`) | `/v1/batches` | Arrays present in the batch | A receiver that predates an array rejects the whole batch |
+| Intake metadata keys | `/v1/batches` | Valid `intake_id`, `intake_component_id`, `sync_identifier`, `sync_version` on samples | Malformed values and other `intake_*` keys are rejected |
+| Intake-context batch (`1.0`) | `/v1/intake-context/batches`, `/v1/intake-context/capabilities` | `healthrelay.intake-context` with an intake-only token, when the flag is on (not reachable from the stock entry point) | With the flag off the routes return 404; a batch token gets 403 |
+
+An app that sends only the base batch works against every receiver; one that
+uses intake context should read the capabilities route first.
