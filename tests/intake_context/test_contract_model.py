@@ -70,6 +70,9 @@ NEGATIVE = {
 }
 
 INT64_MAX = 9223372036854775807
+# Rejected by the reference validator only (see test_fixtures_schema.py).
+REFERENCE_ONLY_NEGATIVE = {"invalid_sync_version_order.json"}
+
 UUID_A = "2c932bd1-c46d-4e38-b481-e0d842fdd429"
 UUID_B = "9a1f3c57-8e2d-4b60-a7c4-d5e0b1f28396"
 WORKED_DOMAIN_HASH = (
@@ -197,7 +200,7 @@ def test_digest_keys_per_operation_type() -> None:
 
 def test_fixture_set_is_covered() -> None:
     on_disk = {path.name for path in FIXTURE_DIR.glob("invalid_*.json")}
-    assert on_disk == set(NEGATIVE)
+    assert on_disk - REFERENCE_ONLY_NEGATIVE == set(NEGATIVE)
 
 
 @pytest.mark.parametrize(("name", "token"), sorted(NEGATIVE.items()))

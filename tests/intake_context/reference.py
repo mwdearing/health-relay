@@ -194,6 +194,30 @@ def _sync_identities_on_several_samples(links: list[JsonObject]) -> list[str]:
     return sorted(key[2] for key, uuids in samples.items() if len(uuids) > 1)
 
 
+def _sync_versions_out_of_order(links: list[JsonObject]) -> list[str]:
+    """Sync identities whose versions repeat or whose active link is not the newest."""
+    versions: dict[tuple[str, str, str], list[tuple[int, bool]]] = {}
+    for link in links:
+        key = (
+            cast("str", link["component_id"]),
+            cast("str", link["healthkit_type"]),
+            cast("str", link["sync_identifier"]),
+        )
+        versions.setdefault(key, []).append(
+            (cast("int", link["sync_version"]), link.get("disposition") == "active")
+        )
+    bad: list[str] = []
+    for key, entries in versions.items():
+        numbers = [number for number, _ in entries]
+        newest = max(numbers)
+        active_older = any(
+            is_active and number < newest for number, is_active in entries
+        )
+        if len(set(numbers)) != len(numbers) or active_older:
+            bad.append(key[2])
+    return sorted(bad)
+
+
 def projection_hash(batch: JsonObject, operation: JsonObject) -> str:
     links = cast("list[JsonObject]", operation.get("healthkit_links", []))
     if _duplicate_links(links):
@@ -305,6 +329,11 @@ def _operation_errors(operation: JsonObject, path: str) -> Iterator[str]:
         yield (
             f"sync_identity_on_multiple_samples at {path}/healthkit_links: "
             f"{sync_identifier} is active on more than one sample"
+        )
+    for sync_identifier in _sync_versions_out_of_order(links):
+        yield (
+            f"sync_version_order at {path}/healthkit_links: "
+            f"{sync_identifier} repeats a sync_version or has a newer inactive link"
         )
     for sample_uuid in _samples_on_several_components(links):
         yield (
