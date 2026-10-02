@@ -11,7 +11,7 @@ import sqlite3
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Final, Literal, TypeAlias
+from typing import Final, Literal, TypeAlias, get_args
 
 from pydantic import TypeAdapter
 
@@ -28,12 +28,12 @@ from health_bridge.contract.intake_context_v1 import (
 OperationOutcome: TypeAlias = Literal[
     "accepted",
     "duplicate",
-    "stale",
+    "stale_revision",
     "domain_conflict",
     "projection_conflict",
-    "retryable",
-    "permanent",
+    "permanent_failure",
 ]
+TERMINAL_OUTCOMES: Final = frozenset(get_args(OperationOutcome))
 SAVEPOINT_NAME: Final = "intake_context_write"
 
 
@@ -84,6 +84,12 @@ class IntakeOperationConflictError(IntakeContextStorageError):
             "intake operation id already recorded with a different payload"
         )
         self.operation_id: str = operation_id
+
+
+class IntakeNonTerminalOutcomeError(IntakeContextStorageError, ValueError):
+    def __init__(self, outcome: str) -> None:
+        super().__init__("only terminal outcomes are stored as operation receipts")
+        self.outcome: str = outcome
 
 
 class IntakeTombstoneConflictError(IntakeContextStorageError):
@@ -217,6 +223,7 @@ class TombstoneRecord:
     deleted_at: str
     revision: int
     operation_id: str
+    domain_facts_hash: str
 
 
 ProducerRow: TypeAlias = tuple[str, str, str, str, str, str | None]
@@ -278,7 +285,7 @@ StateRow: TypeAlias = tuple[str, str, str, int, int, int, str]
 ReceiptRow: TypeAlias = tuple[
     str, str, str, str, OperationOutcome, int | None, str, str | None, int
 ]
-TombstoneRow: TypeAlias = tuple[str, str, str, str, int, str]
+TombstoneRow: TypeAlias = tuple[str, str, str, str, int, str, str]
 
 PRODUCER_ROW_ADAPTER: Final[TypeAdapter[ProducerRow | None]] = TypeAdapter(
     ProducerRow | None
@@ -452,14 +459,16 @@ insert into intake_operation_receipts (
 ) values (?, ?, ?, ?, ?, ?, ?, ?)
 """
 SELECT_TOMBSTONE_SQL: Final = """
-select owner_id, producer_id, intake_id, deleted_at, revision, operation_id
+select owner_id, producer_id, intake_id, deleted_at, revision, operation_id,
+       domain_facts_hash
 from intake_tombstones
 where owner_id = ? and producer_id = ? and intake_id = ?
 """
 INSERT_TOMBSTONE_SQL: Final = """
 insert into intake_tombstones (
-    owner_id, producer_id, intake_id, deleted_at, revision, operation_id
-) values (?, ?, ?, ?, ?, ?)
+    owner_id, producer_id, intake_id, deleted_at, revision, operation_id,
+    domain_facts_hash
+) values (?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -750,9 +759,10 @@ def insert_revision(
     """Store one revision with its facts and first link snapshot atomically.
 
     The identity is (owner, producer, intake, revision). If it already holds
-    the same domain facts hash, the stored revision is returned and nothing is
-    written. If it holds a different one, ``IntakeRevisionConflictError`` is
-    raised and nothing is written.
+    the same domain facts hash and the same first projection, the stored
+    revision is returned and nothing is written. A different first projection
+    raises ``IntakeProjectionConflictError``. If it holds a different facts
+    hash, ``IntakeRevisionConflictError`` is raised and nothing is written.
     """
     existing = _select_revision_row(
         connection,
@@ -769,6 +779,16 @@ def insert_revision(
                 intake_id=record.intake_id,
                 revision=record.revision,
             )
+        _ = insert_projection_snapshot(
+            connection,
+            revision_row_id=existing[0],
+            snapshot=ProjectionRecord(
+                projection_sequence=1,
+                projection_hash=record.projection_hash,
+                received_at=record.received_at,
+                links=record.links,
+            ),
+        )
         return _stored_revision(connection, existing)
     with _write_scope(connection, "insert_revision"):
         revision_row_id = _inserted_row_id(
@@ -960,6 +980,8 @@ def append_operation_receipt(
     returns the stored receipt unchanged. With a different hash it raises
     ``IntakeOperationConflictError``. Receipts are never rewritten.
     """
+    if record.outcome not in TERMINAL_OUTCOMES:
+        raise IntakeNonTerminalOutcomeError(record.outcome)
     existing = read_operation_receipt(
         connection,
         owner_id=record.owner_id,
@@ -1021,6 +1043,7 @@ def read_tombstone(
         deleted_at=row[3],
         revision=row[4],
         operation_id=row[5],
+        domain_facts_hash=row[6],
     )
 
 
@@ -1030,8 +1053,9 @@ def write_tombstone(
 ) -> TombstoneRecord:
     """Write the permanent tombstone of an intake.
 
-    A tombstone is never updated. Writing the same revision and operation again
-    returns the stored one; anything else raises ``IntakeTombstoneConflictError``.
+    A tombstone is never updated. The delete is identified by its domain facts
+    hash: the same hash again, under any operation id, returns the stored
+    tombstone; a different hash raises ``IntakeTombstoneConflictError``.
     """
     existing = read_tombstone(
         connection,
@@ -1040,10 +1064,7 @@ def write_tombstone(
         intake_id=record.intake_id,
     )
     if existing is not None:
-        if (existing.revision, existing.operation_id) != (
-            record.revision,
-            record.operation_id,
-        ):
+        if existing.domain_facts_hash != record.domain_facts_hash:
             raise IntakeTombstoneConflictError(record.intake_id)
         return existing
     with _write_scope(connection, "write_tombstone"):
@@ -1056,6 +1077,7 @@ def write_tombstone(
                 record.deleted_at,
                 record.revision,
                 record.operation_id,
+                record.domain_facts_hash,
             ),
         )
     return record
@@ -1131,6 +1153,7 @@ __all__ = [
     "BlendMemberRecord",
     "FactRecord",
     "IntakeContextStorageError",
+    "IntakeNonTerminalOutcomeError",
     "IntakeOperationConflictError",
     "IntakeProducerConflictError",
     "IntakeProjectionConflictError",

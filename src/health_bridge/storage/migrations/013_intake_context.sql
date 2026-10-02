@@ -229,11 +229,10 @@ create table if not exists intake_operation_receipts (
             outcome in (
                 'accepted',
                 'duplicate',
-                'stale',
+                'stale_revision',
                 'domain_conflict',
                 'projection_conflict',
-                'retryable',
-                'permanent'
+                'permanent_failure'
             )
         ),
     accepted_revision integer
@@ -262,6 +261,8 @@ create table if not exists intake_tombstones (
             and revision between 1 and 9223372036854775807
         ),
     operation_id text not null check (length(operation_id) > 0),
+    domain_facts_hash text not null
+        check (length(domain_facts_hash) = 71 and substr(domain_facts_hash, 1, 7) = 'sha256:'),
     created_at text not null default (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     unique (owner_id, producer_id, intake_id)
 );

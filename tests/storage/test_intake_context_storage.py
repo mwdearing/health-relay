@@ -22,6 +22,7 @@ from health_bridge.storage import initialize_database, intake_context
 from health_bridge.storage.intake_context import (
     BlendMemberRecord,
     FactRecord,
+    IntakeNonTerminalOutcomeError,
     IntakeOperationConflictError,
     IntakeProducerConflictError,
     IntakeProjectionConflictError,
@@ -390,6 +391,7 @@ def _tombstone_values(_: dict[str, int]) -> dict[str, object]:
         "deleted_at": NOW,
         "revision": 1,
         "operation_id": "op-raw",
+        "domain_facts_hash": HASH_A,
     }
 
 
@@ -433,7 +435,11 @@ CASES: Final = (
     ("intake_sample_links", _link_values, "sync_version", 0),
     ("intake_sample_links", _link_values, "projection_sequence", 0),
     ("intake_operation_receipts", _receipt_values, "outcome", "bogus"),
-    ("intake_operation_receipts", _receipt_values, "outcome", "stale_revision"),
+    ("intake_operation_receipts", _receipt_values, "outcome", "stale"),
+    ("intake_operation_receipts", _receipt_values, "outcome", "retryable"),
+    ("intake_operation_receipts", _receipt_values, "outcome", "retryable_failure"),
+    ("intake_operation_receipts", _receipt_values, "outcome", "permanent"),
+    ("intake_tombstones", _tombstone_values, "domain_facts_hash", "sha256:short"),
     ("intake_operation_receipts", _receipt_values, "result_json", "{not json"),
     ("intake_tombstones", _tombstone_values, "revision", 0),
     ("intake_state", _state_values, "deleted", 2),
@@ -669,7 +675,11 @@ def test_failed_insert_leaves_nothing_behind_in_the_callers_transaction(
 
 
 def _tombstone(
-    intake_id: str, *, revision: int, operation_id: str = "op-delete"
+    intake_id: str,
+    *,
+    revision: int,
+    operation_id: str = "op-delete",
+    domain_facts_hash: str = HASH_A,
 ) -> TombstoneRecord:
     return TombstoneRecord(
         owner_id=OWNER,
@@ -678,6 +688,7 @@ def _tombstone(
         deleted_at="2026-10-01T01:00:00Z",
         revision=revision,
         operation_id=operation_id,
+        domain_facts_hash=domain_facts_hash,
     )
 
 
@@ -758,9 +769,7 @@ def test_tombstone_is_permanent(connection: sqlite3.Connection) -> None:
 
     assert written == again == stored == tombstone
     with pytest.raises(IntakeTombstoneConflictError), transaction(connection):
-        _ = write_tombstone(connection, replace(tombstone, revision=4))
-    with pytest.raises(IntakeTombstoneConflictError), transaction(connection):
-        _ = write_tombstone(connection, replace(tombstone, operation_id="op-other"))
+        _ = write_tombstone(connection, replace(tombstone, domain_facts_hash=HASH_B))
     for statement in (
         "update intake_tombstones set revision = 9",
         "delete from intake_tombstones",
@@ -837,7 +846,9 @@ def test_operation_receipt_is_idempotent_and_rejects_a_different_payload(
             {**_receipt_values({}), "operation_id": "op-1"},
         )
     with pytest.raises(sqlite3.IntegrityError), transaction(connection):
-        _ = connection.execute("update intake_operation_receipts set outcome = 'stale'")
+        _ = connection.execute(
+            "update intake_operation_receipts set outcome = 'stale_revision'"
+        )
     with pytest.raises(sqlite3.IntegrityError), transaction(connection):
         _ = connection.execute("delete from intake_operation_receipts")
 
@@ -1151,3 +1162,72 @@ def test_a_failed_write_keeps_its_own_error_when_the_transaction_is_gone(
         with pytest.raises(sqlite3.OperationalError, match="disk is full"):
             _ = insert_revision(connection, record)
     assert not connection.in_transaction
+
+
+def test_tombstone_replay_under_a_new_operation_id_is_safe(
+    connection: sqlite3.Connection,
+) -> None:
+    tombstone = _tombstone("intake-gone", revision=3)
+    with transaction(connection):
+        _ = write_tombstone(connection, tombstone)
+    with transaction(connection):
+        again = write_tombstone(
+            connection, replace(tombstone, operation_id="op-redelivered")
+        )
+
+    assert again == tombstone
+    assert _count_rows(connection, "intake_tombstones") == 1
+
+
+def test_receipt_outcomes_use_the_contract_names(
+    connection: sqlite3.Connection,
+) -> None:
+    outcomes = (
+        "accepted",
+        "duplicate",
+        "stale_revision",
+        "domain_conflict",
+        "projection_conflict",
+        "permanent_failure",
+    )
+    for index, outcome in enumerate(outcomes):
+        with transaction(connection):
+            stored = append_operation_receipt(
+                connection,
+                replace(_receipt(operation_id=f"op-{index}"), outcome=outcome),
+            )
+        assert stored.outcome == outcome
+
+
+def test_retryable_failure_is_never_stored_as_a_receipt(
+    connection: sqlite3.Connection,
+) -> None:
+    retryable = replace(
+        _receipt(),
+        outcome="retryable_failure",
+    )
+    with pytest.raises(IntakeNonTerminalOutcomeError), transaction(connection):
+        _ = append_operation_receipt(connection, retryable)
+    with pytest.raises(IntakeNonTerminalOutcomeError):
+        _ = append_operation_receipt(connection, retryable)
+    assert _count_rows(connection, "intake_operation_receipts") == 0
+
+
+def test_revision_replay_with_a_different_first_projection_conflicts(
+    connection: sqlite3.Connection,
+) -> None:
+    record = revision_from_fixture("valid_worked_example.json")
+    _ = _store(connection, record)
+    changed = replace(
+        record,
+        projection_hash=HASH_B,
+        links=tuple(
+            replace(link, sync_version=link.sync_version + 1) for link in record.links
+        ),
+    )
+    with pytest.raises(IntakeProjectionConflictError), transaction(connection):
+        _ = insert_revision(connection, changed)
+    with transaction(connection):
+        same = insert_revision(connection, record)
+    assert same.record.projection_hash == record.projection_hash
+    assert _count_rows(connection, "intake_revisions") == 1
