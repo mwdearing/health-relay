@@ -135,6 +135,7 @@
         "unit": { "type": "string", "minLength": 1 },
         "metadata": {
           "type": "object",
+          "description": "String map. Optional intake keys: intake_id (lowercase UUID) with intake_component_id (slug ^[a-z0-9][a-z0-9._-]{0,63}$) travel together; sync_identifier (1-256 chars) with sync_version (decimal text 1..9223372036854775807, no sign, no leading zero) travel together. Any other key starting with intake_ is rejected by the receiver.",
           "additionalProperties": { "type": "string" }
         }
       }
