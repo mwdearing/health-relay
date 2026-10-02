@@ -727,3 +727,123 @@ def test_link_projection_with_equal_or_higher_sync_version_passes(
         NEW_IDS[1], 4, [(4, "active"), (3, "superseded")]
     )
     assert names(run(connection, higher)) == ["accepted"]
+
+
+SHARED_SYNC: Final = "shared-sync-id"
+ENERGY: Final = "HKQuantityTypeIdentifierDietaryEnergyConsumed"
+CAFFEINE: Final = "HKQuantityTypeIdentifierDietaryCaffeine"
+SAMPLE_A: Final = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+SAMPLE_B: Final = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+
+def _link(component: str, healthkit_type: str, sample: str, version: int) -> JsonObject:
+    return {
+        "component_id": component,
+        "healthkit_sample_uuid": sample,
+        "healthkit_type": healthkit_type,
+        "sync_identifier": SHARED_SYNC,
+        "sync_version": version,
+        "disposition": "active",
+    }
+
+
+def _blend_with(links: list[JsonObject]) -> JsonObject:
+    batch = clone(BLEND)
+    op0(batch)["healthkit_links"] = links
+    return ref.seal(batch)
+
+
+def _blend_projection(op_id: str, sequence: int, links: list[JsonObject]) -> JsonObject:
+    target = op0(BLEND)
+    return variant(
+        SEQ2,
+        op_id,
+        intake_id=target["intake_id"],
+        revision=target["revision"],
+        healthkit_links=links,
+        projection_sequence=sequence,
+    )
+
+
+def _worked_projection(op_id: str, sequence: int, version: int | None) -> JsonObject:
+    links: list[JsonObject] = []
+    if version is not None:
+        link = dict(links_of(WORKED)[0])
+        link["sync_version"] = version
+        links.append(link)
+    return variant(
+        SEQ2,
+        op_id,
+        revision=op0(WORKED)["revision"],
+        healthkit_links=links,
+        projection_sequence=sequence,
+    )
+
+
+def test_a_different_component_reusing_a_sync_identifier_is_a_new_identity(
+    connection: sqlite3.Connection,
+) -> None:
+    _ = run(connection, _blend_with([_link("energy-kcal", ENERGY, SAMPLE_A, 5)]))
+    other = _blend_projection(NEW_IDS[0], 2, [_link("caffeine", CAFFEINE, SAMPLE_B, 1)])
+    assert names(run(connection, other)) == ["accepted"]
+
+
+def test_the_same_full_identity_at_a_lower_version_is_still_rejected(
+    connection: sqlite3.Connection,
+) -> None:
+    _ = run(connection, _blend_with([_link("energy-kcal", ENERGY, SAMPLE_A, 5)]))
+    lower = _blend_projection(
+        NEW_IDS[0], 2, [_link("energy-kcal", ENERGY, SAMPLE_B, 4)]
+    )
+    assert names(run(connection, lower)) == ["permanent_failure"]
+
+
+def test_a_removed_identity_cannot_return_at_a_lower_version(
+    connection: sqlite3.Connection,
+) -> None:
+    _ = run(connection, WORKED)
+    assert names(run(connection, _worked_projection(NEW_IDS[0], 2, None))) == [
+        "accepted"
+    ]
+    (result,) = run(connection, _worked_projection(NEW_IDS[1], 3, 1))
+    assert result.result == "permanent_failure"
+    assert "sync_version_regression" in (result.detail or "")
+
+
+def test_a_removed_identity_may_return_at_a_higher_version(
+    connection: sqlite3.Connection,
+) -> None:
+    _ = run(connection, WORKED)
+    _ = run(connection, _worked_projection(NEW_IDS[0], 2, None))
+    assert names(run(connection, _worked_projection(NEW_IDS[1], 3, 3))) == ["accepted"]
+
+
+def _other_writer(batch: JsonObject, op_id: str | None = None) -> JsonObject:
+    other = clone(batch)
+    other["writer_bundle_id"] = "com.example.other.app"
+    if op_id:
+        op0(other)["operation_id"] = op_id
+    return ref.seal(other)
+
+
+def test_a_reused_operation_id_from_another_writer_is_a_conflict(
+    connection: sqlite3.Connection,
+) -> None:
+    _ = run(connection, WORKED)
+    assert names(run(connection, _other_writer(WORKED))) == ["domain_conflict"]
+
+
+def test_a_new_operation_from_another_writer_is_permanent_failure(
+    connection: sqlite3.Connection,
+) -> None:
+    _ = run(connection, WORKED)
+    other = _other_writer(WORKED, NEW_IDS[0])
+    assert names(run(connection, other)) == ["permanent_failure"]
+
+
+def test_an_identical_replay_stays_duplicate_after_a_foreign_writer_attempt(
+    connection: sqlite3.Connection,
+) -> None:
+    _ = run(connection, WORKED)
+    _ = run(connection, _other_writer(WORKED, NEW_IDS[0]))
+    assert names(run(connection, WORKED)) == ["duplicate"]

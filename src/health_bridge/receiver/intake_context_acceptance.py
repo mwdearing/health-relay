@@ -12,6 +12,7 @@ import re
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
+from itertools import chain
 from typing import Final, Literal, TypeAlias, TypedDict, cast
 
 from health_bridge.contract.intake_context_v1 import (
@@ -266,11 +267,15 @@ def _link_error(stored: StoredRevision, links: list[HealthKitLink]) -> str | Non
     return None
 
 
-def _highest_versions(links: Iterable[SampleLink]) -> dict[str, int]:
-    highest: dict[str, int] = {}
+_Identity = tuple[str, str, str]
+
+
+def _highest_versions(links: Iterable[SampleLink]) -> dict[_Identity, int]:
+    highest: dict[_Identity, int] = {}
     for link in links:
-        highest[link.sync_identifier] = max(
-            highest.get(link.sync_identifier, link.sync_version), link.sync_version
+        identity = (link.component_id, link.healthkit_type, link.sync_identifier)
+        highest[identity] = max(
+            highest.get(identity, link.sync_version), link.sync_version
         )
     return highest
 
@@ -278,18 +283,17 @@ def _highest_versions(links: Iterable[SampleLink]) -> dict[str, int]:
 def _version_regression(
     stored: StoredRevision, links: list[HealthKitLink]
 ) -> str | None:
-    snapshots = stored.projections
-    latest = (
-        max(snapshots, key=lambda s: s.projection_sequence).links
-        if snapshots
-        else stored.record.links
+    accepted = _highest_versions(
+        chain(
+            stored.record.links,
+            *(snapshot.links for snapshot in stored.projections),
+        )
     )
-    accepted = _highest_versions(latest)
-    for identifier, version in _highest_versions(_link_records(links)).items():
-        if version < accepted.get(identifier, version):
+    for identity, version in _highest_versions(_link_records(links)).items():
+        if version < accepted.get(identity, version):
             return (
-                f"sync_version_regression: {identifier} is at "
-                f"{accepted[identifier]}, not {version}"
+                f"sync_version_regression: {identity[2]} is at "
+                f"{accepted[identity]}, not {version}"
             )
     return None
 
@@ -417,6 +421,40 @@ def _apply_delete(
     return _Outcome("accepted", operation.revision)
 
 
+def _producer_gate(
+    connection: sqlite3.Connection,
+    batch: IntakeContextBatchV1,
+    operation: Operation,
+    producer: ProducerRecord | None,
+    key: _Key,
+) -> OperationResult | None:
+    """Revoked producer, then a reused operation_id, then a writer mismatch."""
+    scope = _Scope(owner_id=key["owner_id"], producer_id=key["producer_id"])
+    if producer is not None and producer.revoked_at is not None:
+        return OperationResult(
+            operation.operation_id, "permanent_failure", detail="producer is revoked"
+        )
+    receipt = read_operation_receipt(
+        connection, operation_id=operation.operation_id, **scope
+    )
+    if receipt is not None:
+        if receipt.client_payload_hash == operation.client_payload_hash:
+            return _replay(connection, receipt, operation.operation_id, key)
+        is_link = isinstance(operation, LinkProjectionOperation)
+        return OperationResult(
+            operation.operation_id,
+            "projection_conflict" if is_link else "domain_conflict",
+            detail="operation_id reused with different content",
+        )
+    if producer is not None and producer.writer_bundle_id != batch.writer_bundle_id:
+        return OperationResult(
+            operation.operation_id,
+            "permanent_failure",
+            detail="the writer bundle does not match the producer",
+        )
+    return None
+
+
 def _apply(
     connection: sqlite3.Connection,
     batch: IntakeContextBatchV1,
@@ -430,28 +468,10 @@ def _apply(
         intake_id=operation.intake_id,
     )
     scope = _Scope(owner_id=owner_id, producer_id=batch.producer_id)
-    is_link = isinstance(operation, LinkProjectionOperation)
     producer = read_producer(connection, **scope)
-    if producer is not None and (
-        producer.revoked_at is not None
-        or producer.writer_bundle_id != batch.writer_bundle_id
-    ):
-        return OperationResult(
-            operation.operation_id,
-            "permanent_failure",
-            detail="producer is revoked or the writer bundle does not match",
-        )
-    receipt = read_operation_receipt(
-        connection, operation_id=operation.operation_id, **scope
-    )
-    if receipt is not None:
-        if receipt.client_payload_hash == operation.client_payload_hash:
-            return _replay(connection, receipt, operation.operation_id, key)
-        return OperationResult(
-            operation.operation_id,
-            "projection_conflict" if is_link else "domain_conflict",
-            detail="operation_id reused with different content",
-        )
+    early = _producer_gate(connection, batch, operation, producer, key)
+    if early is not None:
+        return early
     newly_registered = producer is None
     if producer is None:
         _ = register_producer(
