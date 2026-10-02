@@ -1,6 +1,6 @@
 import re
 from datetime import UTC, datetime
-from typing import Annotated, ClassVar, Final, Literal, Self, TypeAlias
+from typing import Annotated, ClassVar, Final, Literal, LiteralString, Self, TypeAlias
 
 from pydantic import (
     AfterValidator,
@@ -25,6 +25,17 @@ UTC_TIMESTAMP_PATTERN: Final = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$"
 SYNTHETIC_SOURCE_PATTERN: Final = r"^(synthetic|apple_health)\.[a-z0-9_.-]+$"
 SYNTHETIC_RECORD_PATTERN: Final = r"^(synthetic|hk)-[a-z0-9-]+$"
 TYPE_CODE_PATTERN: Final = r"^[a-z][a-z0-9_]*$"
+INTAKE_PREFIX: Final = "intake_"
+INTAKE_PAIR_KEYS: Final = ("intake_id", "intake_component_id")
+SYNC_PAIR_KEYS: Final = ("sync_identifier", "sync_version")
+INTAKE_ID_PATTERN: Final = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+INTAKE_COMPONENT_PATTERN: Final = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+SYNC_VERSION_PATTERN: Final = re.compile(r"^[1-9][0-9]{0,18}$")
+SYNC_IDENTIFIER_MAX_LENGTH: Final = 256
+SYNC_VERSION_MAX: Final = 9223372036854775807
+INTAKE_METADATA_ERROR_TYPE: Final = "invalid_intake_metadata"
 
 
 def validate_utc_timestamp(value: str) -> str:
@@ -171,6 +182,47 @@ class Sample(StrictModel):
     def reject_reversed_interval(self) -> Self:
         validate_order(self.start_time, self.end_time)
         return self
+
+    @field_validator("metadata")
+    @classmethod
+    def validate_intake_metadata(cls, value: dict[str, str]) -> dict[str, str]:
+        validate_intake_metadata(value)
+        return value
+
+
+def _structure_problem(metadata: dict[str, str]) -> LiteralString | None:
+    for key in metadata:
+        if key.startswith(INTAKE_PREFIX) and key not in INTAKE_PAIR_KEYS:
+            return "unknown intake_ metadata key"
+    for pair in (INTAKE_PAIR_KEYS, SYNC_PAIR_KEYS):
+        present = [key in metadata for key in pair]
+        if any(present) and not all(present):
+            return "metadata keys must travel as a pair"
+    return None
+
+
+def _value_problem(metadata: dict[str, str]) -> LiteralString | None:
+    if "intake_id" in metadata:
+        if INTAKE_ID_PATTERN.fullmatch(metadata["intake_id"]) is None:
+            return "intake_id must be a lowercase canonical UUID"
+        if INTAKE_COMPONENT_PATTERN.fullmatch(metadata["intake_component_id"]) is None:
+            return "intake_component_id must be a lowercase slug"
+    if "sync_identifier" in metadata:
+        if not 1 <= len(metadata["sync_identifier"]) <= SYNC_IDENTIFIER_MAX_LENGTH:
+            return "sync_identifier must be 1 to 256 characters"
+        version = metadata["sync_version"]
+        if (
+            SYNC_VERSION_PATTERN.fullmatch(version) is None
+            or int(version) > SYNC_VERSION_MAX
+        ):
+            return "sync_version must be decimal text from 1 to 2^63-1"
+    return None
+
+
+def validate_intake_metadata(metadata: dict[str, str]) -> None:
+    problem = _structure_problem(metadata) or _value_problem(metadata)
+    if problem is not None:
+        raise PydanticCustomError(INTAKE_METADATA_ERROR_TYPE, problem)
 
 
 class Workout(StrictModel):
