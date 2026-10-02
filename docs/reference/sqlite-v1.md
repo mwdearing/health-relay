@@ -16,6 +16,8 @@ Tables:
 - `workouts`: workout records.
 - `electrocardiograms`: ECG recordings (classification, symptoms status, average heart rate, sampling frequency, voltage count, optional voltages as a JSON array in `voltages_json`; a summary-only replay keeps stored voltages). Added by migration `010_electrocardiograms`, which also adds `sync_runs.electrocardiogram_count`.
 - `medication_dose_events`: medication dose events (medication name, optional concept key, status enum + raw, start time, optional scheduled time, optional dose/unit). Added by migration `011_medication_dose_events`, which also adds `sync_runs.medication_dose_event_count`.
+- `lab_results`: clinical lab observations from a manual Health export (LOINC code, name, category, effective date, numeric or text value, unit, reference range). Added by migration `012_lab_results`, which also adds `sync_runs.lab_result_count`. Unique on `(source_id, client_record_id)`.
+- `delivery_receipts`: delivery receipts for the mailbox transport (migration `008_delivery_receipts`).
 - `sleep_sessions`: sleep session records.
 - `sleep_stage_intervals`: intervals attached to sleep sessions.
 - `deleted_records`: tombstones by record family and client identity.
@@ -32,6 +34,27 @@ Tables:
 - `pairing_invitation_redemptions`: immutable invitation-to-device/token result
   mapping used for exact response-loss retries.
 
+Intake-context tables (migration `013_intake_context`, see
+[the intake-context contract](intake-context-v1.md)):
+
+- `intake_producers`: registered intake producers and their owner.
+- `intake_state`: current state per intake identity.
+- `intake_revisions`: committed intake revisions.
+- `intake_compound_facts`: compound facts of a revision.
+- `intake_blend_members`: members of a blend fact.
+- `intake_projection_snapshots`: projection (link) snapshots by sequence.
+- `intake_sample_links`: claims about HealthKit sample identities (sample UUID, type, sync identifier and version, disposition) made by an intake component. There is no foreign key to `samples`: a row can exist before the sample arrives, and the evidence query reports it as pending until then.
+- `intake_operation_receipts`: receipts for operations the receiver could key, unique on `(owner_id, producer_id, operation_id)` (not `operation_id` alone), used for duplicate and conflict detection. It is not one row per submitted operation: batch or schema failures and digest mismatches return results without writing a receipt, and a `retryable_failure` is never stored.
+- `intake_tombstones`: deletions that supersede older revisions.
+
+`intake_context_tokens` (migration `014_intake_context_tokens`): intake-only
+bearer tokens (owner, producer, label, token hash, lookup prefix, revocation).
+These tokens are separate from `receiver_tokens`.
+
+Migrations from `010_` on: `010_electrocardiograms`,
+`011_medication_dose_events`, `012_lab_results`, `013_intake_context`,
+`014_intake_context_tokens`.
+
 Idempotency keys:
 
 - `sources.source_key`
@@ -41,6 +64,8 @@ Idempotency keys:
 - `workouts(source_id, client_record_id)`
 - `electrocardiograms(source_id, client_record_id)` and `electrocardiograms(source_id, start_time)`
 - `medication_dose_events(source_id, client_record_id)` and `medication_dose_events(source_id, start_time)`
+- `lab_results(source_id, client_record_id)`
+- `intake_context_tokens.token_hash`
 - `sleep_sessions(source_id, client_record_id)`
 - `sleep_sessions(source_id, start_time)` for logical-session revision
   reconciliation. The anchored iOS lane assigns a never-reused namespaced,

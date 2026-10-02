@@ -66,6 +66,41 @@ Each installation uses a separate sleep source key and a Keychain-backed ordered
 
 During a user-confirmed private-state reset, deletion occurs only after upload admission is closed, active transfers are drained, the connection generation is revalidated, and the durable clear intent is persisted. Launch recovery finishes an interrupted clear before automatic sync resumes.
 
+## Intake context
+
+Intake context carries logged intakes (what was taken, with its facts and links
+to HealthKit samples) next to the base batch path. Its contract is
+[intake-context-v1](reference/intake-context-v1.md); the read side is
+[intake-evidence](reference/intake-evidence.md).
+
+Trust boundaries:
+
+- **Routes behind a flag.** `GET /v1/intake-context/capabilities` and
+  `POST /v1/intake-context/batches` exist only when the receiver is built with
+  `intake_context_enabled`. The flag is off by default; when off, both paths
+  answer 404 like any unknown path.
+- **Intake-only tokens.** These routes accept only tokens stored in
+  `intake_context_tokens` (prefix `hri_`, bound to an owner and a producer).
+  Such a token cannot use `/v1/batches` (403 `wrong_token_type`), and a normal
+  batch token cannot use the intake routes (also 403). An unknown token gets 401.
+- **Owner binding.** The owner comes from the token, never from client input.
+  The receiver stays a single-user store.
+- **Operation outcomes.** Every fully identifiable operation in a batch gets
+  one result: `accepted`, `duplicate`, `stale_revision`, `domain_conflict`,
+  `projection_conflict`, `retryable_failure` or `permanent_failure`. If an
+  entry lacks an `operation_id` or is not an object, valid operations in the
+  same batch may still commit, but the handler answers only 400
+  `invalid_batch` because the result count does not match. The caller then
+  cannot tell which operations committed; it should resend the whole batch,
+  and committed operations come back as `duplicate`.
+- **Evidence query.** A read-only query joins stored intakes with their linked
+  samples. Each item carries the logged intake's own amount, unit, `value_state`
+  and component code; the joined HealthKit sample's measurement value is
+  withheld.
+- **MCP.** The read-only tool `get_intake_evidence_v1` exposes that query to
+  agents. `owner_id` is optional only when exactly one owner is registered;
+  with none or several the tool returns an error. The tool cannot write.
+
 ## Agent boundary
 
 MCP tools expose:
