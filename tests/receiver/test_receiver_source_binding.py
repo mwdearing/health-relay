@@ -28,6 +28,11 @@ TOKEN_A = "hb_" + "a" * 64
 TOKEN_B = "hb_" + "b" * 64
 ERROR_BODY_ADAPTER = TypeAdapter(dict[str, str])
 COUNT_ROW_ADAPTER = TypeAdapter(tuple[int])
+TOMBSTONE_ROWS_ADAPTER = TypeAdapter(list[tuple[str, str, str]])
+TOMBSTONE_SQL = """
+select s.source_key, d.record_family, d.client_record_id
+from deleted_records d join sources s using (source_id)
+"""
 
 
 def canonical_source_key(installation_id: str) -> str:
@@ -351,11 +356,12 @@ def test_export_lab_tombstone_deletes_lab_row_and_stays_export_source(
         assert post_batch(url, TOKEN_A, delete_lab) == 202
 
     with sqlite3.connect(db_path) as connection:
-        lab_count = connection.execute("select count(*) from lab_results").fetchone()[0]
-        tombstones = connection.execute(
-            "select s.source_key, d.record_family, d.client_record_id "
-            "from deleted_records d join sources s using (source_id)"
-        ).fetchall()
+        (lab_count,) = COUNT_ROW_ADAPTER.validate_python(
+            connection.execute("select count(*) from lab_results").fetchone()
+        )
+        tombstones = TOMBSTONE_ROWS_ADAPTER.validate_python(
+            connection.execute(TOMBSTONE_SQL).fetchall()
+        )
 
     assert lab_count == 0, f"lab row not deleted (still {lab_count})"
     assert ("apple_health.export", "lab_result", lab.client_record_id) in tombstones, (
@@ -399,10 +405,9 @@ def test_phone_lane_deletion_still_rewritten_to_canonical_key(
         assert post_batch(url, TOKEN_A, phone_delete) == 202
 
     with sqlite3.connect(db_path) as connection:
-        tombstones = connection.execute(
-            "select s.source_key, d.record_family, d.client_record_id "
-            "from deleted_records d join sources s using (source_id)"
-        ).fetchall()
+        tombstones = TOMBSTONE_ROWS_ADAPTER.validate_python(
+            connection.execute(TOMBSTONE_SQL).fetchall()
+        )
 
     canon = canonical_source_key(INSTALLATION_A)
     assert len(tombstones) == 1
@@ -445,15 +450,14 @@ def test_export_deletion_non_lab_family_rewritten_to_canonical(
 
     try:
         with running_receiver(db_path) as url:
-            post_batch(url, TOKEN_A, odd_delete)
+            _ = post_batch(url, TOKEN_A, odd_delete)
     except HTTPError:
         pass  # 500 is expected: the rewritten canonical source isn't in the DB
 
     with sqlite3.connect(db_path) as connection:
-        tombstones = connection.execute(
-            "select s.source_key, d.record_family, d.client_record_id "
-            "from deleted_records d join sources s using (source_id)"
-        ).fetchall()
+        tombstones = TOMBSTONE_ROWS_ADAPTER.validate_python(
+            connection.execute(TOMBSTONE_SQL).fetchall()
+        )
 
     # A tombstone with export source and non-lab record_family must not exist.
     assert not any(
