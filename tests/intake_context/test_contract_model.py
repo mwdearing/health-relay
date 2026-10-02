@@ -62,6 +62,7 @@ NEGATIVE = {
     "invalid_revision_above_int64.json": "revision",
     "invalid_sample_on_two_components.json": "sample_on_multiple_components",
     "invalid_sync_identity_on_two_samples.json": "sync_identity_on_multiple_samples",
+    "invalid_sync_version_order.json": "sync_version_order",
     "invalid_unknown_major_version.json": "schema_version",
     "invalid_unknown_time_zone.json": "unknown_time_zone",
     "invalid_unknown_with_amount.json": "amount",
@@ -70,8 +71,6 @@ NEGATIVE = {
 }
 
 INT64_MAX = 9223372036854775807
-# Rejected by the reference validator only (see test_fixtures_schema.py).
-REFERENCE_ONLY_NEGATIVE = {"invalid_sync_version_order.json"}
 
 UUID_A = "2c932bd1-c46d-4e38-b481-e0d842fdd429"
 UUID_B = "9a1f3c57-8e2d-4b60-a7c4-d5e0b1f28396"
@@ -200,7 +199,7 @@ def test_digest_keys_per_operation_type() -> None:
 
 def test_fixture_set_is_covered() -> None:
     on_disk = {path.name for path in FIXTURE_DIR.glob("invalid_*.json")}
-    assert on_disk - REFERENCE_ONLY_NEGATIVE == set(NEGATIVE)
+    assert on_disk == set(NEGATIVE)
 
 
 @pytest.mark.parametrize(("name", "token"), sorted(NEGATIVE.items()))
@@ -678,10 +677,12 @@ def test_duplicate_component_sample_pair_in_one_array() -> None:
 def test_same_sample_on_one_component_with_different_pairs_is_allowed() -> None:
     raw = _worked()
     links = _upsert(raw)["healthkit_links"]
-    links.append(
-        copy.deepcopy(links[0])
-        | {"healthkit_sample_uuid": UUID_B, "disposition": "superseded"}
-    )
+    older = copy.deepcopy(links[0]) | {
+        "healthkit_sample_uuid": UUID_B,
+        "disposition": "superseded",
+        "sync_version": 1,
+    }
+    links.append(older)
     assert validate_batch(raw) is not None
 
 
@@ -719,10 +720,12 @@ def test_sync_identity_active_on_two_samples() -> None:
 def test_sync_identity_superseded_beside_active_is_allowed() -> None:
     raw = _worked()
     links = _upsert(raw)["healthkit_links"]
-    links.append(
-        copy.deepcopy(links[0])
-        | {"healthkit_sample_uuid": UUID_B, "disposition": "superseded"}
-    )
+    older = copy.deepcopy(links[0]) | {
+        "healthkit_sample_uuid": UUID_B,
+        "disposition": "superseded",
+        "sync_version": 1,
+    }
+    links.append(older)
     assert validate_batch(raw) is not None
 
 

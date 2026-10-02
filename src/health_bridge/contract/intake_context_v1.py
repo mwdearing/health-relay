@@ -439,6 +439,26 @@ def healthkit_type_for(code: str) -> str | None:
     )
 
 
+def _check_sync_version_order(links: list[HealthKitLink]) -> None:
+    versions: dict[tuple[str, str, str], list[tuple[int, bool]]] = {}
+    for link in links:
+        identity = (link.component_id, link.healthkit_type, link.sync_identifier)
+        versions.setdefault(identity, []).append(
+            (link.sync_version, link.disposition == "active")
+        )
+    for identity, entries in versions.items():
+        numbers = [number for number, _ in entries]
+        newest = max(numbers)
+        if len(set(numbers)) != len(numbers) or any(
+            is_active and number < newest for number, is_active in entries
+        ):
+            _fail(
+                "sync_version_order",
+                "{identity} repeats a sync_version or has a newer inactive link",
+                identity=identity[2],
+            )
+
+
 def _check_links(links: list[HealthKitLink]) -> None:
     pairs: set[tuple[str, str]] = set()
     sample_owners: dict[str, set[str]] = {}
@@ -467,6 +487,7 @@ def _check_links(links: list[HealthKitLink]) -> None:
                 "{identity} is active on more than one sample",
                 identity=identity[2],
             )
+    _check_sync_version_order(links)
     for sample, owners in sample_owners.items():
         if len(owners) > 1:
             _fail(

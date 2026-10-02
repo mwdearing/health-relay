@@ -86,6 +86,12 @@ class IntakeOperationConflictError(IntakeContextStorageError):
         self.operation_id: str = operation_id
 
 
+class IntakeStateRegressionError(IntakeContextStorageError):
+    def __init__(self, intake_id: str) -> None:
+        super().__init__("intake state never moves backwards or out of deleted")
+        self.intake_id: str = intake_id
+
+
 class IntakeNonTerminalOutcomeError(IntakeContextStorageError, ValueError):
     def __init__(self, outcome: str) -> None:
         super().__init__("only terminal outcomes are stored as operation receipts")
@@ -954,7 +960,23 @@ def write_intake_state(
     connection: sqlite3.Connection,
     state: IntakeStateRecord,
 ) -> None:
-    """Set the current pointer of an intake; the caller decides what is current."""
+    """Set the current pointer of an intake; the caller decides what is current.
+
+    The pointer never moves backwards and a deleted intake is never undeleted:
+    either raises ``IntakeStateRegressionError`` and writes nothing.
+    """
+    existing = read_intake_state(
+        connection,
+        owner_id=state.owner_id,
+        producer_id=state.producer_id,
+        intake_id=state.intake_id,
+    )
+    if existing is not None and (
+        (state.current_revision, state.current_projection_sequence)
+        < (existing.current_revision, existing.current_projection_sequence)
+        or (existing.deleted and not state.deleted)
+    ):
+        raise IntakeStateRegressionError(state.intake_id)
     with _write_scope(connection, "write_intake_state"):
         _ = connection.execute(
             WRITE_STATE_SQL,
