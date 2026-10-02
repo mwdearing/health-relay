@@ -34,6 +34,16 @@
       ]
     },
     {
+      "type_code": "hydration",
+      "display_name": "Hydration",
+      "category": "other",
+      "default_unit": "mL",
+      "sensitivity": "low",
+      "aliases": [
+        "HKQuantityTypeIdentifierDietaryWater"
+      ]
+    },
+    {
       "type_code": "heart_rate",
       "display_name": "Heart Rate",
       "category": "heart",
@@ -68,11 +78,11 @@
     {
       "client_record_id": "synthetic-sample-intake-water-1",
       "source_key": "synthetic.phone.alpha",
-      "type_code": "steps",
+      "type_code": "hydration",
       "start_time": "2026-06-01T00:00:00Z",
       "end_time": "2026-06-02T00:00:00Z",
       "value": 4321,
-      "unit": "count",
+      "unit": "mL",
       "metadata": {
         "aggregation": "daily_sum",
         "intake_id": "e6677963-418c-4027-b563-551d8a531eed",
