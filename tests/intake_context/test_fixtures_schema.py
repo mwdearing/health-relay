@@ -64,6 +64,7 @@ SEMANTIC_NEGATIVE = {
     "invalid_link_type_mismatch.json": "healthkit_type_mismatch",
     "invalid_offset_zone_mismatch.json": "offset_zone_mismatch",
     "invalid_sync_identity_on_two_samples.json": "sync_identity_on_multiple_samples",
+    "invalid_sync_version_order.json": "sync_version_order",
 }
 UNPARSEABLE_NEGATIVE = {
     "invalid_duplicate_object_name.json": "duplicate object name",
@@ -1019,3 +1020,84 @@ def test_offset_check_survives_conversion_overflow() -> None:
     errors = semantic_errors(batch)
 
     assert any(e.startswith("offset_zone_mismatch") for e in errors)
+
+
+_WATER_SYNC = "intake:e6677963-418c-4027-b563-551d8a531eed:water"
+_UUID_C = "3b8e2f61-5c47-4d1a-9e02-7f6a1c8d4b93"
+_UUID_D = "7d1c0a52-9b3e-4f68-8a21-c4e5f6071829"
+
+
+def _version_order_errors(*links: tuple[str, int, str]) -> list[str]:
+    """Errors for one link projection holding (sample, version, disposition) links."""
+    batch = _load("valid_link_projection_seq2.json")
+    operation = _operations(batch)[0]
+    template = cast("list[JsonObject]", operation["healthkit_links"])[0]
+    operation["healthkit_links"] = [
+        template
+        | {
+            "healthkit_sample_uuid": sample,
+            "sync_version": version,
+            "disposition": disposition,
+        }
+        for sample, version, disposition in links
+    ]
+    return [e for e in semantic_errors(batch) if e.startswith("sync_version_order")]
+
+
+def test_sync_version_order_rejects_inactive_link_newer_than_active() -> None:
+    errors = _version_order_errors((_UUID_C, 1, "active"), (_UUID_D, 2, "superseded"))
+
+    assert len(errors) == 1
+    assert errors[0].startswith(
+        f"sync_version_order at /operations/0/healthkit_links: {_WATER_SYNC} "
+    )
+
+
+def test_sync_version_order_rejects_active_equal_to_deleted() -> None:
+    assert _version_order_errors((_UUID_C, 2, "active"), (_UUID_D, 2, "deleted"))
+
+
+def test_sync_version_order_rejects_duplicate_versions_without_active() -> None:
+    assert _version_order_errors((_UUID_C, 2, "superseded"), (_UUID_D, 2, "deleted"))
+
+
+def test_sync_version_order_allows_unique_versions_without_active() -> None:
+    assert not _version_order_errors(
+        (_UUID_C, 1, "superseded"), (_UUID_D, 2, "deleted")
+    )
+
+
+def test_sync_version_order_allows_a_valid_chain() -> None:
+    chain = (
+        (_UUID_C, 3, "active"),
+        (_UUID_D, 2, "superseded"),
+        ("c2d3e4f5-0a1b-4c2d-8e3f-a4b5c6d7e8f9", 1, "deleted"),
+    )
+
+    assert not _version_order_errors(*chain)
+
+
+def test_sync_version_order_ignores_other_sync_identities() -> None:
+    batch = _load("valid_link_projection_seq2.json")
+    operation = _operations(batch)[0]
+    links = cast("list[JsonObject]", operation["healthkit_links"])
+    links[0]["sync_version"] = 1
+    links[1]["sync_identifier"] = _WATER_SYNC + ":other"
+
+    assert not [e for e in semantic_errors(batch) if e.startswith("sync_version_order")]
+
+
+def test_sync_version_order_applies_to_upsert_links() -> None:
+    batch = _example()
+    operation = _operations(batch)[0]
+    links = cast("list[JsonObject]", operation["healthkit_links"])
+    links.append(
+        links[0]
+        | {
+            "healthkit_sample_uuid": _UUID_C,
+            "sync_version": cast("int", links[0]["sync_version"]) + 1,
+            "disposition": "superseded",
+        }
+    )
+
+    assert [e for e in semantic_errors(batch) if e.startswith("sync_version_order")]
