@@ -28,6 +28,7 @@ from health_bridge.storage.intake_context import (
     IntakeProjectionConflictError,
     IntakeRevisionConflictError,
     IntakeStateRecord,
+    IntakeStateRegressionError,
     IntakeTombstoneConflictError,
     IntakeTransactionRequiredError,
     OperationReceiptRecord,
@@ -1149,6 +1150,56 @@ def test_intake_state_is_one_row_per_intake_and_follows_the_caller(
         == moved
     )
     assert _count_rows(connection, "intake_state") == 1
+
+
+def _state(**changes: object) -> IntakeStateRecord:
+    base = IntakeStateRecord(
+        owner_id=OWNER,
+        producer_id="nutrition-app",
+        intake_id="intake-1",
+        current_revision=3,
+        current_projection_sequence=2,
+        deleted=False,
+        updated_at=NOW,
+    )
+    return replace(base, **changes)
+
+
+@pytest.mark.parametrize(
+    "backwards",
+    [
+        {"current_revision": 2, "current_projection_sequence": 9},
+        {"current_projection_sequence": 1},
+    ],
+)
+def test_intake_state_never_moves_backwards(
+    connection: sqlite3.Connection, backwards: dict[str, int]
+) -> None:
+    with transaction(connection):
+        write_intake_state(connection, _state())
+    with pytest.raises(IntakeStateRegressionError), transaction(connection):
+        write_intake_state(connection, _state(**backwards))
+    stored = read_intake_state(
+        connection, owner_id=OWNER, producer_id="nutrition-app", intake_id="intake-1"
+    )
+    assert stored == _state()
+
+
+def test_a_deleted_intake_is_never_undeleted(
+    connection: sqlite3.Connection,
+) -> None:
+    with transaction(connection):
+        write_intake_state(connection, _state(deleted=True))
+    with pytest.raises(IntakeStateRegressionError), transaction(connection):
+        write_intake_state(connection, _state(current_revision=4, deleted=False))
+
+
+def test_intake_state_may_be_rewritten_at_the_same_position(
+    connection: sqlite3.Connection,
+) -> None:
+    with transaction(connection):
+        write_intake_state(connection, _state())
+        write_intake_state(connection, _state(updated_at="2026-10-02T00:00:00Z"))
 
 
 def test_a_link_must_name_a_fact_of_its_revision(
