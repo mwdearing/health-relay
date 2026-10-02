@@ -441,3 +441,30 @@ def test_leading_zeros_in_content_length_are_accepted(tmp_path: Path) -> None:
         head = post_head(issued.token, f"\r\nContent-Length: 0{len(WORKED)}")
         status, _, _ = raw_post(base, head, WORKED)
         assert status == 200, f"Leading zeros should be accepted (got {status})"
+
+
+def test_trailing_whitespace_in_content_length_is_accepted(tmp_path: Path) -> None:
+    db = tmp_path / "r.sqlite"
+    issued = create_intake_token(
+        db, owner_id="o", producer_id="nutrition-app", label="l"
+    )
+    with served(db, enabled=True) as base:
+        for padding in (" ", "\t"):
+            head = post_head(
+                issued.token, f"\r\nContent-Length: {len(WORKED)}{padding}"
+            )
+            status, _, _ = raw_post(base, head, WORKED)
+            assert status == 200
+
+
+def test_huge_digit_content_length_is_413(tmp_path: Path) -> None:
+    db = tmp_path / "r.sqlite"
+    issued = create_intake_token(
+        db, owner_id="o", producer_id="nutrition-app", label="l"
+    )
+    with served(db, enabled=True) as base:
+        head = post_head(issued.token, "\r\nContent-Length: " + "9" * 5000)
+        status, header, payload = raw_post(base, head, WORKED)
+    assert status == 413
+    assert "connection: close" in header
+    assert json.loads(payload) == {"error": "batch_too_large"}

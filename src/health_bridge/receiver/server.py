@@ -605,7 +605,8 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
                 close_connection=close_on_reject,
             )
             return None
-        value = values[0]
+        # RFC 9110: 1*DIGIT, surrounded by optional whitespace (space or tab).
+        value = values[0].strip(" \t")
         if re.fullmatch(r"[0-9]+", value) is None:
             self._reject_body(
                 HTTPStatus.BAD_REQUEST,
@@ -613,15 +614,17 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
                 close_connection=close_on_reject,
             )
             return None
-        content_length = int(value)
-        if content_length > max_bytes:
+        # More digits than the limit has cannot fit; this also keeps int() below
+        # the interpreter's integer-string conversion limit.
+        too_many_digits = len(value.lstrip("0")) > len(str(max_bytes))
+        if too_many_digits or int(value) > max_bytes:
             self._reject_body(
                 HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
                 too_large_error,
                 close_connection=close_on_reject,
             )
             return None
-        return self.rfile.read(content_length)
+        return self.rfile.read(int(value))
 
     def _reject_body(
         self,
