@@ -75,22 +75,59 @@ public enum IntakeMetadataAllowlist {
         var result: [String: String] = [:]
 
         if let rawIntakeID = healthKitMetadata["HealthRelayIntakeID"] as? String,
-           let uuid = UUID(uuidString: rawIntakeID),
            let component = healthKitMetadata["HealthRelayIntakeComponentID"] as? String,
-           isSlug(component) {
-            result["intake_id"] = uuid.uuidString.lowercased()
-            result["intake_component_id"] = component
+           let pair = validIntakePair(intakeID: rawIntakeID, component: component) {
+            result["intake_id"] = pair.intakeID
+            result["intake_component_id"] = pair.component
         }
 
         if let identifier = healthKitMetadata["HKMetadataKeySyncIdentifier"] as? String,
-           !identifier.isEmpty,
-           identifier.count <= 256,
+           isValidSyncIdentifier(identifier),
            let version = syncVersion(from: healthKitMetadata["HKMetadataKeySyncVersion"]) {
             result["sync_identifier"] = identifier
             result["sync_version"] = String(version)
         }
 
         return result
+    }
+
+    /// Re-applies the pair rules to already-converted batch metadata. Only the four
+    /// allowlisted keys can survive; anything invalid is dropped.
+    public static func sanitized(batchMetadata: [String: String]) -> [String: String] {
+        var result: [String: String] = [:]
+
+        if let rawIntakeID = batchMetadata["intake_id"],
+           let component = batchMetadata["intake_component_id"],
+           let pair = validIntakePair(intakeID: rawIntakeID, component: component) {
+            result["intake_id"] = pair.intakeID
+            result["intake_component_id"] = pair.component
+        }
+
+        if let identifier = batchMetadata["sync_identifier"],
+           isValidSyncIdentifier(identifier),
+           let versionText = batchMetadata["sync_version"],
+           isValidSyncVersionText(versionText) {
+            result["sync_identifier"] = identifier
+            result["sync_version"] = versionText
+        }
+
+        return result
+    }
+
+    private static func validIntakePair(intakeID: String, component: String) -> (intakeID: String, component: String)? {
+        guard let uuid = UUID(uuidString: intakeID), isSlug(component) else { return nil }
+        return (uuid.uuidString.lowercased(), component)
+    }
+
+    private static func isValidSyncIdentifier(_ identifier: String) -> Bool {
+        !identifier.isEmpty && identifier.count <= 256
+    }
+
+    private static func isValidSyncVersionText(_ text: String) -> Bool {
+        guard let first = text.unicodeScalars.first, first != "0" else { return false }
+        guard text.unicodeScalars.allSatisfy({ $0.value >= 48 && $0.value <= 57 }) else { return false }
+        guard let value = Int64(text) else { return false }
+        return value >= 1
     }
 
     private static func isSlug(_ value: String) -> Bool {
@@ -102,17 +139,25 @@ public enum IntakeMetadataAllowlist {
     }
 
     private static func syncVersion(from raw: Any?) -> Int64? {
-        guard let raw else { return nil }
-        if let integer = raw as? Int {
-            return integer >= 1 ? Int64(integer) : nil
+        guard let raw, let number = raw as? NSNumber else { return nil }
+        #if canImport(Darwin)
+        if CFGetTypeID(number) == CFBooleanGetTypeID() { return nil }
+        #endif
+        switch String(cString: number.objCType) {
+        case "f", "d":
+            let double = number.doubleValue
+            // 2^63 is the first double above Int64.max; anything at or above it is out of range.
+            guard double.isFinite, double == double.rounded(), double >= 1,
+                  double < 9_223_372_036_854_775_808.0 else { return nil }
+            return Int64(double)
+        case "Q", "L":
+            let unsigned = number.uint64Value
+            guard unsigned >= 1, unsigned <= UInt64(Int64.max) else { return nil }
+            return Int64(unsigned)
+        default:
+            let signed = number.int64Value
+            return signed >= 1 ? signed : nil
         }
-        guard let number = raw as? NSNumber else { return nil }
-        let double = number.doubleValue
-        guard double.isFinite, double == double.rounded(), double >= 1 else { return nil }
-        if double >= 9_223_372_036_854_775_807.0 {
-            return double == 9_223_372_036_854_775_807.0 ? Int64.max : nil
-        }
-        return Int64(double)
     }
 }
 
@@ -747,7 +792,7 @@ public enum GenericQuantitySyncBatchFactory {
                 if let provenance = sample.provenance {
                     metadata.merge(provenance.metadata) { current, _ in current }
                 }
-                metadata.merge(sample.intakeMetadata) { current, _ in current }
+                metadata.merge(IntakeMetadataAllowlist.sanitized(batchMetadata: sample.intakeMetadata)) { current, _ in current }
                 return HealthBridgeSample(
                     clientRecordID: clientRecordID(for: sample, typeCode: entry.typeCode),
                     sourceKey: source.sourceKey,

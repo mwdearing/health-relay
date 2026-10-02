@@ -151,4 +151,81 @@ final class IntakeMetadataAllowlistTests: XCTestCase {
         XCTAssertEqual(metadata["sync_version"], "3")
         XCTAssertEqual(metadata["sample_kind"], "raw_quantity")
     }
+
+    func testSyncVersionJustAboveInt64MaxIsDropped() {
+        var input = full()
+        input["HKMetadataKeySyncVersion"] = NSNumber(value: UInt64(Int64.max) + 1)
+        let result = IntakeMetadataAllowlist.batchMetadata(from: input)
+        XCTAssertNil(result["sync_version"])
+        XCTAssertNil(result["sync_identifier"])
+        input["HKMetadataKeySyncVersion"] = NSNumber(value: UInt64.max)
+        XCTAssertNil(IntakeMetadataAllowlist.batchMetadata(from: input)["sync_version"])
+        input["HKMetadataKeySyncVersion"] = NSNumber(value: UInt64(Int64.max))
+        XCTAssertEqual(IntakeMetadataAllowlist.batchMetadata(from: input)["sync_version"], "9223372036854775807")
+    }
+
+    func testBooleanSyncVersionIsDropped() {
+        var input = full()
+        input["HKMetadataKeySyncVersion"] = NSNumber(value: true)
+        let result = IntakeMetadataAllowlist.batchMetadata(from: input)
+        XCTAssertNil(result["sync_version"])
+        XCTAssertNil(result["sync_identifier"])
+    }
+
+    private func batch(withIntakeMetadata intakeMetadata: [String: String]) throws -> [String: String] {
+        let start = try XCTUnwrap(HealthBridgeUTCFormatter.date(from: "2026-06-15T07:30:00Z"))
+        let sample = HealthKitQuantitySampleSummary(
+            uuid: try XCTUnwrap(UUID(uuidString: "BBBBBBBB-1111-2222-3333-444455556666")),
+            typeCode: "body_mass",
+            start: start,
+            end: start,
+            value: 72.4,
+            intakeMetadata: intakeMetadata
+        )
+        let made = try XCTUnwrap(GenericQuantitySyncBatchFactory.makeQuantityBatch(
+            samples: [sample],
+            selectedTypeCodes: ["body_mass"],
+            windowStart: try XCTUnwrap(HealthBridgeUTCFormatter.date(from: "2026-06-15T00:00:00Z")),
+            windowEnd: try XCTUnwrap(HealthBridgeUTCFormatter.date(from: "2026-06-16T00:00:00Z")),
+            generatedAt: try XCTUnwrap(HealthBridgeUTCFormatter.date(from: "2026-06-16T00:01:00Z"))
+        ))
+        return try XCTUnwrap(made.samples.first?.metadata)
+    }
+
+    func testFactoryDropsArbitraryIntakeMetadataStrings() throws {
+        let metadata = try batch(withIntakeMetadata: [
+            "intake_id": "not-a-uuid",
+            "intake_component_id": "water",
+            "foo": "bar",
+        ])
+        XCTAssertNil(metadata["intake_id"])
+        XCTAssertNil(metadata["intake_component_id"])
+        XCTAssertNil(metadata["foo"])
+    }
+
+    func testFactoryForwardsValidIntakeMetadataLowercased() throws {
+        let metadata = try batch(withIntakeMetadata: [
+            "intake_id": uuidText,
+            "intake_component_id": "water",
+            "sync_identifier": "sync-abc",
+            "sync_version": "7",
+        ])
+        XCTAssertEqual(metadata["intake_id"], uuidText.lowercased())
+        XCTAssertEqual(metadata["intake_component_id"], "water")
+        XCTAssertEqual(metadata["sync_identifier"], "sync-abc")
+        XCTAssertEqual(metadata["sync_version"], "7")
+    }
+
+    func testSanitizedRejectsBadSyncVersionText() {
+        for bad in ["0", "01", "-1", "+1", "9223372036854775808", "1.5", "", "abc"] {
+            let result = IntakeMetadataAllowlist.sanitized(batchMetadata: [
+                "sync_identifier": "x", "sync_version": bad,
+            ])
+            XCTAssertTrue(result.isEmpty, bad)
+        }
+        XCTAssertEqual(
+            IntakeMetadataAllowlist.sanitized(batchMetadata: ["sync_identifier": "x", "sync_version": "9223372036854775807"]),
+            ["sync_identifier": "x", "sync_version": "9223372036854775807"]
+        )
+    }
 }
