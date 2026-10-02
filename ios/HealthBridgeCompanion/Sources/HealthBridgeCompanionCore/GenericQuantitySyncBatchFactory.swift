@@ -73,10 +73,10 @@ public struct HealthKitQuantitySampleSummary: Equatable, Sendable {
 public enum IntakeMetadataAllowlist {
     public static let intakeIDKey = "HealthRelayIntakeID"
     public static let intakeComponentIDKey = "HealthRelayIntakeComponentID"
-    /// Value of HKMetadataKeySyncIdentifier (the constant's name is not its value).
-    public static let syncIdentifierKey = "HKSyncIdentifier"
-    /// Value of HKMetadataKeySyncVersion.
-    public static let syncVersionKey = "HKSyncVersion"
+    /// Value of HKMetadataKeySyncIdentifier (equals the constant's name).
+    public static let syncIdentifierKey = "HKMetadataKeySyncIdentifier"
+    /// Value of HKMetadataKeySyncVersion (equals the constant's name).
+    public static let syncVersionKey = "HKMetadataKeySyncVersion"
 
     public static func batchMetadata(from healthKitMetadata: [String: Any]) -> [String: String] {
         var result: [String: String] = [:]

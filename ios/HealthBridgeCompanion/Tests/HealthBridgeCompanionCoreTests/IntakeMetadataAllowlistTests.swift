@@ -8,8 +8,8 @@ final class IntakeMetadataAllowlistTests: XCTestCase {
         [
             "HealthRelayIntakeID": uuidText,
             "HealthRelayIntakeComponentID": "main-1",
-            "HKSyncIdentifier": "sync-abc",
-            "HKSyncVersion": NSNumber(value: 3),
+            "HKMetadataKeySyncIdentifier": "sync-abc",
+            "HKMetadataKeySyncVersion": NSNumber(value: 3),
         ]
     }
 
@@ -75,15 +75,15 @@ final class IntakeMetadataAllowlistTests: XCTestCase {
 
     func testSyncVersionFromNSNumberIsForwardedAsDecimalText() {
         var input = full()
-        input["HKSyncVersion"] = NSNumber(value: Int64.max)
+        input["HKMetadataKeySyncVersion"] = NSNumber(value: Int64.max)
         XCTAssertEqual(IntakeMetadataAllowlist.batchMetadata(from: input)["sync_version"], "9223372036854775807")
-        input["HKSyncVersion"] = 12
+        input["HKMetadataKeySyncVersion"] = 12
         XCTAssertEqual(IntakeMetadataAllowlist.batchMetadata(from: input)["sync_version"], "12")
     }
 
     func testNonIntegralSyncVersionIsDropped() {
         var input = full()
-        input["HKSyncVersion"] = NSNumber(value: 2.5)
+        input["HKMetadataKeySyncVersion"] = NSNumber(value: 2.5)
         let result = IntakeMetadataAllowlist.batchMetadata(from: input)
         XCTAssertNil(result["sync_version"])
         XCTAssertNil(result["sync_identifier"])
@@ -91,26 +91,26 @@ final class IntakeMetadataAllowlistTests: XCTestCase {
 
     func testSyncVersionZeroIsDropped() {
         var input = full()
-        input["HKSyncVersion"] = NSNumber(value: 0)
+        input["HKMetadataKeySyncVersion"] = NSNumber(value: 0)
         XCTAssertNil(IntakeMetadataAllowlist.batchMetadata(from: input)["sync_version"])
-        input["HKSyncVersion"] = NSNumber(value: -4)
+        input["HKMetadataKeySyncVersion"] = NSNumber(value: -4)
         XCTAssertNil(IntakeMetadataAllowlist.batchMetadata(from: input)["sync_version"])
     }
 
     func testSyncIdentifierLongerThan256IsDropped() {
         var input = full()
-        input["HKSyncIdentifier"] = String(repeating: "x", count: 257)
+        input["HKMetadataKeySyncIdentifier"] = String(repeating: "x", count: 257)
         let result = IntakeMetadataAllowlist.batchMetadata(from: input)
         XCTAssertNil(result["sync_identifier"])
         XCTAssertNil(result["sync_version"])
-        input["HKSyncIdentifier"] = String(repeating: "x", count: 256)
+        input["HKMetadataKeySyncIdentifier"] = String(repeating: "x", count: 256)
         XCTAssertNotNil(IntakeMetadataAllowlist.batchMetadata(from: input)["sync_identifier"])
     }
 
     func testSyncKeysWithoutIntakeAreForwarded() {
         let result = IntakeMetadataAllowlist.batchMetadata(from: [
-            "HKSyncIdentifier": "other-app-1",
-            "HKSyncVersion": NSNumber(value: 1),
+            "HKMetadataKeySyncIdentifier": "other-app-1",
+            "HKMetadataKeySyncVersion": NSNumber(value: 1),
         ])
         XCTAssertEqual(result, ["sync_identifier": "other-app-1", "sync_version": "1"])
     }
@@ -119,8 +119,8 @@ final class IntakeMetadataAllowlistTests: XCTestCase {
         let result = IntakeMetadataAllowlist.batchMetadata(from: [
             "HealthRelayIntakeID": 42,
             "HealthRelayIntakeComponentID": 7,
-            "HKSyncIdentifier": 9,
-            "HKSyncVersion": "5",
+            "HKMetadataKeySyncIdentifier": 9,
+            "HKMetadataKeySyncVersion": "5",
         ])
         XCTAssertTrue(result.isEmpty)
     }
@@ -154,13 +154,13 @@ final class IntakeMetadataAllowlistTests: XCTestCase {
 
     func testSyncVersionJustAboveInt64MaxIsDropped() {
         var input = full()
-        input["HKSyncVersion"] = NSNumber(value: UInt64(Int64.max) + 1)
+        input["HKMetadataKeySyncVersion"] = NSNumber(value: UInt64(Int64.max) + 1)
         let result = IntakeMetadataAllowlist.batchMetadata(from: input)
         XCTAssertNil(result["sync_version"])
         XCTAssertNil(result["sync_identifier"])
-        input["HKSyncVersion"] = NSNumber(value: UInt64.max)
+        input["HKMetadataKeySyncVersion"] = NSNumber(value: UInt64.max)
         XCTAssertNil(IntakeMetadataAllowlist.batchMetadata(from: input)["sync_version"])
-        input["HKSyncVersion"] = NSNumber(value: UInt64(Int64.max))
+        input["HKMetadataKeySyncVersion"] = NSNumber(value: UInt64(Int64.max))
         XCTAssertEqual(IntakeMetadataAllowlist.batchMetadata(from: input)["sync_version"], "9223372036854775807")
     }
 
@@ -204,7 +204,7 @@ final class IntakeMetadataAllowlistTests: XCTestCase {
 
     func testBooleanSyncVersionIsDropped() {
         var input = full()
-        input["HKSyncVersion"] = NSNumber(value: true)
+        input["HKMetadataKeySyncVersion"] = NSNumber(value: true)
         let result = IntakeMetadataAllowlist.batchMetadata(from: input)
         XCTAssertNil(result["sync_version"])
         XCTAssertNil(result["sync_identifier"])
