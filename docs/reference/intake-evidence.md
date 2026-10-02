@@ -92,7 +92,7 @@ verified sample is superseded and is not reported. A component with no active
 link is `complete` because nothing is awaited.
 
 Resolution is bounded by the page: only the items on the page are resolved, and
-`complete` comes from one aggregate query per component on the page, so cost does
+`complete` comes from one short-circuiting probe per component on the page (it stops at the first link that is not verified), so cost does
 not grow with the number of links a component holds.
 
 ## Pagination
@@ -101,13 +101,13 @@ not grow with the number of links a component holds.
 capability: every query is still scoped to `owner_id`, so a cursor from another
 query can only change where the listing starts. Items are ordered by
 `(intake_id, producer_id, component position, sample UUID)` and the cursor names
-the last item by that key, so a page boundary never repeats or skips an item,
+the last item by that key plus its component id, so a page boundary never repeats or skips an item,
 including inside a component whose links change between requests. The last page
 has `next_cursor = null`.
 
-The cursor does not carry a revision. If an intake's effective revision changes
+The cursor carries the component id but not a revision. If an intake's effective revision changes
 between pages, the next page continues from the position after the cursor in the
-new revision; components at or before that position are not emitted again. A
+new revision; components at or before that position are not emitted again. At the cursor's own position, the cursor's sample UUID applies only if the component there is the same one; if the revision put a different component at that position, the whole position is skipped. A
 caller that needs one consistent revision lists that intake again with
 `intake_id`. Cursors issued by earlier builds are rejected.
 

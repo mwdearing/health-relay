@@ -496,6 +496,12 @@ def test_limit_bounds_are_accepted(conn: sqlite3.Connection, limit: int) -> None
         # Four elements with a boolean position.
         "WyJhIiwiYiIsdHJ1ZSwieCJd",
         "WyJhIiwiYiIsLTEsIngiXQ",
+        # The previous four-element shape: [str, str, int, str].
+        "WyJhIiwiYiIsMSwieCJd",
+        # A non-string component id.
+        "WyJhIiwiYiIsMSw1LCJ4Il0",
+        # A boolean position with a component id.
+        "WyJhIiwiYiIsdHJ1ZSwiYyIsIngiXQ",
     ],
 )
 def test_malformed_cursor_is_rejected(conn: sqlite3.Connection, cursor: str) -> None:
@@ -791,12 +797,12 @@ def test_cursor_survives_a_revision_that_drops_a_component(
     assert component_ids(second.items) == ["c3"]
 
 
-def test_cursor_has_four_elements(conn: sqlite3.Connection) -> None:
+def test_cursor_has_five_elements(conn: sqlite3.Connection) -> None:
     _ = many_components(conn, intakes=1, per_intake=3)
     cursor = list_intake_evidence(conn, owner_id=OWNER, limit=1).next_cursor
     assert cursor is not None
     raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
-    assert len(cast("list[object]", json.loads(raw))) == 4
+    assert len(cast("list[object]", json.loads(raw))) == 5
 
 
 def test_sample_stored_under_a_non_dietary_type_is_a_mismatch(
@@ -977,7 +983,7 @@ def test_completeness_aggregate_uses_the_unique_indexes(
     rows = cast(
         "list[tuple[int, int, int, str]]",
         conn.execute(
-            "explain query plan " + intake_evidence.UNVERIFIED_LINK_COUNT_SQL,
+            "explain query plan " + intake_evidence.FIRST_UNVERIFIED_LINK_SQL,
             params,
         ).fetchall(),
     )
@@ -990,3 +996,74 @@ def test_completeness_aggregate_uses_the_unique_indexes(
         "SCAN deleted_records",
     ):
         assert scan not in plan
+
+
+@pytest.mark.parametrize("replacement_uuid", [uid(9), uid(1)])
+def test_cursor_skips_a_position_whose_component_changed(
+    conn: sqlite3.Connection, replacement_uuid: str
+) -> None:
+    # Page 1 ends on the link uid(5) of c1; revision 2 puts another component
+    # at position 1 whose link sorts either after or before that key.
+    _ = put_revision(
+        conn,
+        intake_id=INTAKE_A,
+        revision=1,
+        facts=[fact("c0"), fact("c1"), fact("c2")],
+        links=[link("c1", uid(5))],
+    )
+    first = list_intake_evidence(conn, owner_id=OWNER, limit=2)
+    assert component_ids(first.items) == ["c0", "c1"]
+    _ = put_revision(
+        conn,
+        intake_id=INTAKE_A,
+        revision=2,
+        facts=[fact("c0"), fact("d1"), fact("c2")],
+        links=[link("d1", replacement_uuid)],
+    )
+    second = list_intake_evidence(
+        conn, owner_id=OWNER, cursor=first.next_cursor, limit=5
+    )
+    assert component_ids(second.items) == ["c2"]
+
+
+def test_completeness_work_does_not_grow_with_pending_links(
+    conn: sqlite3.Connection,
+) -> None:
+    def work(links: int, intake_id: str, offset: int) -> tuple[int, int]:
+        row_id = put_revision(
+            conn,
+            intake_id=intake_id,
+            revision=1,
+            facts=[fact("water")],
+            links=[link("water", uid(n + 1 + offset)) for n in range(links)],
+        )
+        params = {
+            "revision_row_id": row_id,
+            "component_id": "water",
+            "code": "hydration",
+            "id_prefix": "hk-quantity-hydration-",
+            "writer_bundle_id": WRITER_BUNDLE,
+            "owner_id": OWNER,
+            "producer_id": PRODUCER,
+            "intake_id": intake_id,
+        }
+        sql = intake_evidence.FIRST_UNVERIFIED_LINK_SQL
+        _ = conn.execute(sql, params).fetchall()  # warm the statement cache
+        counter = [0]
+
+        def tick() -> None:
+            counter[0] += 1
+
+        conn.set_progress_handler(tick, 1)
+        try:
+            found = conn.execute(sql, params).fetchall()
+        finally:
+            conn.set_progress_handler(None, 0)
+        return len(found), counter[0]
+
+    small_rows, small_ops = work(6, INTAKE_A, 0)
+    large_rows, large_ops = work(60, INTAKE_B, 100)
+    assert (small_rows, large_rows) == (1, 1)
+    assert abs(large_ops - small_ops) <= 5
+    page = list_intake_evidence(conn, owner_id=OWNER, limit=1, intake_id=INTAKE_B)
+    assert page.items[0].complete is False

@@ -179,12 +179,13 @@ join deleted_records
  and deleted_records.client_record_id in (select value from json_each(:ids))
 limit 1
 """
-# One aggregate per component: how many of its current active links are not
-# verified. Mirrors the per-link resolution: no exact sample from the registered
-# writer, a copy under another (type, id), a tombstone under any candidate id,
+# One probe per component: the first of its current active links that is not
+# verified, so work stops at the first hit. Mirrors the per-link resolution: no
+# exact sample from the registered writer, a copy under another (type, id), a
+# tombstone under any candidate id,
 # or another effective component actively claiming the same sample.
-UNVERIFIED_LINK_COUNT_SQL: Final = """
-select count(*)
+FIRST_UNVERIFIED_LINK_SQL: Final = """
+select 1
 from intake_sample_links as link
 where link.intake_revision_row_id = :revision_row_id
   and link.component_id = :component_id
@@ -291,6 +292,7 @@ where link.intake_revision_row_id = :revision_row_id
             )
       )
   )
+limit 1
 """
 
 
@@ -338,6 +340,7 @@ class _Position:
     intake_id: str
     producer_id: str
     position: int
+    component_id: str
     link_key: str
 
 
@@ -375,6 +378,7 @@ def _encode_cursor(position: _Position) -> str:
             position.intake_id,
             position.producer_id,
             position.position,
+            position.component_id,
             position.link_key,
         ],
         separators=(",", ":"),
@@ -393,9 +397,10 @@ def _decode_cursor(cursor: str) -> _Position:
             str() as intake_id,
             str() as producer_id,
             int() as position,
+            str() as component_id,
             str() as link_key,
         ] if not any(isinstance(part, bool) for part in parts) and position >= 0:
-            return _Position(intake_id, producer_id, position, link_key)
+            return _Position(intake_id, producer_id, position, component_id, link_key)
         case _:
             raise InvalidIntakeEvidenceCursorError
 
@@ -549,9 +554,9 @@ def _is_complete(
 ) -> bool:
     code = row[7]
     unverified = cast(
-        "tuple[int]",
+        "object",
         connection.execute(
-            UNVERIFIED_LINK_COUNT_SQL,
+            FIRST_UNVERIFIED_LINK_SQL,
             {
                 "revision_row_id": row[3],
                 "component_id": row[5],
@@ -564,7 +569,7 @@ def _is_complete(
             },
         ).fetchone(),
     )
-    return unverified[0] == 0
+    return unverified is None
 
 
 def list_intake_evidence(
@@ -586,7 +591,9 @@ def list_intake_evidence(
     The cursor names a component position and link inside an intake. If the
     intake's effective revision changes between pages, the next page continues
     from the position after the cursor in the new revision; components at or
-    before that position are not emitted again. A caller that needs one
+    before that position are not emitted again. At the cursor's own position the
+    link key applies only when the component is the same; a position whose
+    component changed with the revision is skipped entirely. A caller that needs one
     consistent revision lists that intake again with `intake_id`.
 
     Work is bounded by the page: at most `limit + 1` links are collected, only
@@ -617,26 +624,25 @@ def list_intake_evidence(
     candidates: list[tuple[_Position, ComponentRow, tuple[str, str] | None]] = []
     for row in rows:
         row_intake_id, producer_id, _revision, _row_id, position = row[:5]
-        own_component = after is not None and (
+        at_cursor = after is not None and (
             row_intake_id,
             producer_id,
             position,
         ) == (after.intake_id, after.producer_id, after.position)
+        if after is not None and at_cursor and after.component_id != row[5]:
+            # The revision changed and another component now sits at the
+            # cursor's position: everything there is at or before the cursor.
+            continue
         links = _links_for(
             connection,
             row,
-            after_link=after.link_key if after is not None and own_component else None,
+            after_link=after.link_key if after is not None and at_cursor else None,
             link_limit=limit + 1 - len(candidates),
         )
         for claim_link in links or [None]:
             link_key = claim_link[0] if claim_link else ""
-            where = _Position(row_intake_id, producer_id, position, link_key)
-            if after is not None and (
-                row_intake_id,
-                producer_id,
-                position,
-                link_key,
-            ) <= (after.intake_id, after.producer_id, after.position, after.link_key):
+            where = _Position(row_intake_id, producer_id, position, row[5], link_key)
+            if after is not None and at_cursor and link_key <= after.link_key:
                 continue
             candidates.append((where, row, claim_link))
         if len(candidates) > limit:
