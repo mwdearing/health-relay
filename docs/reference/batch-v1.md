@@ -163,4 +163,7 @@ failure) when a rule is broken.
 - Every other metadata key (for example `sync_window` or `aggregation`) is
   unchanged and stays allowed.
 
+The public JSON Schema mirrors these rules, except the numeric int64 upper
+bound of `sync_version`, which the receiver still enforces.
+
 See `fixtures/health_bridge_batch_v1.intake_metadata.synthetic.json`.

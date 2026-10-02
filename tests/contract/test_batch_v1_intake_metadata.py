@@ -1,12 +1,16 @@
 import copy
 import json
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
+from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
 from health_bridge.contract.batch_v1 import HealthBridgeBatchV1
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 BASE = cast(
@@ -126,3 +130,64 @@ def test_new_fixture_valid_and_carries_all_keys() -> None:
     ).read_text()
     batch = HealthBridgeBatchV1.model_validate_json(text)
     assert any(set(GOOD) <= set(s.metadata) for s in batch.samples)
+
+
+SCHEMA = cast(
+    "dict[str, object]",
+    json.loads(
+        (
+            Path(__file__).resolve().parents[2]
+            / "schemas"
+            / "health_bridge.batch.v1.schema.json"
+        ).read_text()
+    ),
+)
+VALIDATOR = Draft202012Validator(SCHEMA)
+is_valid = cast("Callable[[object], bool]", VALIDATOR.is_valid)
+
+
+def schema_valid(meta: dict[str, str]) -> bool:
+    batch = copy.deepcopy(BASE)
+    samples = cast("list[dict[str, object]]", batch["samples"])
+    samples[0]["metadata"] = meta
+    return is_valid(batch)
+
+
+def test_schema_accepts_intake_fixture() -> None:
+    batch = cast(
+        "dict[str, object]",
+        json.loads(
+            (
+                FIXTURES / "health_bridge_batch_v1.intake_metadata.synthetic.json"
+            ).read_text()
+        ),
+    )
+    assert is_valid(batch)
+
+
+def test_schema_accepts_good_and_unrelated_metadata() -> None:
+    assert schema_valid(GOOD)
+    assert schema_valid({"sync_window": "anchored"})
+    assert schema_valid({"sync_identifier": "abc", "sync_version": "1"})
+    assert schema_valid({**GOOD, "aggregation": "daily_sum"})
+
+
+@pytest.mark.parametrize(
+    "meta",
+    [
+        {"intake_id": UUID},
+        {"intake_component_id": "water"},
+        {"sync_identifier": "abc"},
+        {"sync_version": "1"},
+        {**GOOD, "intake_revision": "3"},
+        {"intake_other": "x"},
+        {**GOOD, "intake_id": UUID.upper()},
+        {**GOOD, "intake_component_id": "-water"},
+        {**GOOD, "sync_version": "01"},
+        {**GOOD, "sync_version": "0"},
+        {**GOOD, "sync_identifier": "x" * 257},
+        {**GOOD, "sync_identifier": ""},
+    ],
+)
+def test_schema_rejects_invalid_intake_metadata(meta: dict[str, str]) -> None:
+    assert not schema_valid(meta)

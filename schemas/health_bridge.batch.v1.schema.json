@@ -135,7 +135,35 @@
         "unit": { "type": "string", "minLength": 1 },
         "metadata": {
           "type": "object",
-          "description": "String map. Optional intake keys: intake_id (lowercase UUID) with intake_component_id (slug ^[a-z0-9][a-z0-9._-]{0,63}$) travel together; sync_identifier (1-256 chars) with sync_version (decimal text 1..9223372036854775807, no sign, no leading zero) travel together. Any other key starting with intake_ is rejected by the receiver.",
+          "description": "String map. Optional intake keys: intake_id (lowercase UUID) with intake_component_id (slug) travel together; sync_identifier (1-256 chars) with sync_version (decimal text 1..9223372036854775807, no sign, no leading zero) travel together. Any other key starting with intake_ is rejected by the receiver. The schema mirrors these rules except the numeric int64 upper bound of sync_version, which a pattern cannot express exactly (the pattern allows up to 19 digits); the receiver enforces the bound.",
+          "properties": {
+            "intake_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "intake_component_id": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+            },
+            "sync_identifier": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sync_version": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,18}$"
+            }
+          },
+          "patternProperties": {
+            "^intake_(?!id$|component_id$)": false
+          },
+          "dependentRequired": {
+            "intake_id": ["intake_component_id"],
+            "intake_component_id": ["intake_id"],
+            "sync_identifier": ["sync_version"],
+            "sync_version": ["sync_identifier"]
+          },
           "additionalProperties": { "type": "string" }
         }
       }
