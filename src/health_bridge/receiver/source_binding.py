@@ -79,7 +79,12 @@ def bind_batch_to_principal(
                 for session in batch.sleep_sessions
             ),
             "deleted_records": tuple(
-                deleted.model_copy(update={"source_key": canonical_source_key})
+                deleted.model_copy(
+                    update={}
+                    if deleted.source_key == EXPORT_SOURCE_KEY
+                    and deleted.record_family == "lab_result"
+                    else {"source_key": canonical_source_key}
+                )
                 for deleted in batch.deleted_records
             ),
             "lab_results": tuple(
