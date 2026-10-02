@@ -21,7 +21,7 @@ from health_bridge.contract.intake_context_v1 import (
     IntakeContextContractError,
     LinkProjectionOperation,
     UpsertOperation,
-    digest_mismatches,
+    expected_digests,
     healthkit_type_for,
     validate_batch,
 )
@@ -119,7 +119,7 @@ def _operation_ids(payload: str | bytes | dict[str, object]) -> list[str]:
                     value = cast("dict[str, object]", operation).get("operation_id")
                     if isinstance(value, str):
                         found.append(value)
-    return list(dict.fromkeys(found))
+    return found
 
 
 def _fact_record(fact: Fact) -> FactRecord:
@@ -400,6 +400,7 @@ def _apply(
             detail="operation_id reused with different content",
         )
     producer = read_producer(connection, **scope)
+    newly_registered = producer is None
     if producer is None:
         _ = register_producer(
             connection,
@@ -435,6 +436,11 @@ def _apply(
         outcome = _apply_link_projection(connection, operation, key, received_at)
     else:
         outcome = _apply_delete(connection, operation, key, received_at)
+    if newly_registered and outcome.result != "accepted":
+        _ = connection.execute(
+            "delete from intake_producers where owner_id = ? and producer_id = ?",
+            (owner_id, batch.producer_id),
+        )
     cursor: int | None = None
     if outcome.result in TERMINAL_OUTCOMES:
         stored = append_operation_receipt(
@@ -502,6 +508,18 @@ def _in_own_transaction(
     return result
 
 
+def _mismatched_positions(batch: IntakeContextBatchV1) -> set[int]:
+    """Array indexes of operations carrying a digest that recomputes differently."""
+    return {
+        position
+        for position, expected in enumerate(expected_digests(batch))
+        if any(
+            getattr(batch.operations[position], field, value) != value
+            for field, value in expected.items()
+        )
+    }
+
+
 def accept_batch(
     connection: sqlite3.Connection,
     *,
@@ -525,10 +543,10 @@ def accept_batch(
             OperationResult(op_id, "permanent_failure", detail=str(error))
             for op_id in _operation_ids(payload)
         ]
-    bad = {operation_id for operation_id, _ in digest_mismatches(batch)}
+    bad = _mismatched_positions(batch)
     results: list[OperationResult] = []
-    for operation in batch.operations:
-        if operation.operation_id in bad:
+    for position, operation in enumerate(batch.operations):
+        if position in bad:
             results.append(
                 OperationResult(
                     operation.operation_id,

@@ -23,6 +23,7 @@ from health_bridge.storage.intake_context import (
     OperationReceiptRecord,
     read_intake_state,
     read_operation_receipt,
+    read_producer,
     read_tombstone,
 )
 from tests.intake_context import reference as ref
@@ -611,3 +612,47 @@ def test_same_operation_and_intake_from_another_owner_is_independent(
     assert other is not None
     assert not other.deleted
     assert names(run(connection, WORKED, OTHER)) == ["duplicate"]
+
+
+def _duplicate_id_batch() -> JsonObject:
+    batch = clone(WORKED)
+    second = clone(op0(WORKED))
+    second["revision"] = 3
+    ops(batch).append(second)
+    return ref.seal(batch)
+
+
+def test_digest_failure_is_tracked_by_position_not_operation_id(
+    connection: sqlite3.Connection,
+) -> None:
+    batch = _duplicate_id_batch()
+    ops(batch)[1]["domain_facts_hash"] = "sha256:" + "0" * 64
+    results = run(connection, batch)
+    assert names(results) == ["accepted", "permanent_failure"]
+    current = state(connection)
+    assert current is not None
+    assert current.current_revision == 2
+
+
+def test_invalid_batch_keeps_duplicate_operation_ids_in_array_order(
+    connection: sqlite3.Connection,
+) -> None:
+    batch = _duplicate_id_batch()
+    batch["schema_version"] = "2.0"
+    results = run(connection, batch)
+    assert [r.operation_id for r in results] == [op_id_of(WORKED)] * 2
+    assert set(names(results)) == {"permanent_failure"}
+
+
+def _producer_row(connection: sqlite3.Connection) -> object:
+    return read_producer(connection, owner_id=OWNER, producer_id=PRODUCER)
+
+
+def test_retryable_first_operation_registers_no_producer(
+    connection: sqlite3.Connection,
+) -> None:
+    assert names(run(connection, SEQ2)) == ["retryable_failure"]
+    assert _producer_row(connection) is None
+    other = clone(WORKED)
+    other["writer_bundle_id"] = "com.example.someone.else"
+    assert names(run(connection, ref.seal(other))) == ["accepted"]
