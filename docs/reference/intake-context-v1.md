@@ -247,6 +247,9 @@ alone, and a copied metadata string is not proof of source ownership. Superseded
 and deleted links are kept for audit and never for resurrection. A sample is not
 attributed to more than one active component without a flagged conflict.
 
+The exact join and the resulting link statuses are described in
+[Intake evidence query](intake-evidence.md).
+
 ## Revisions and projection lifecycle
 
 - `revision` is monotonic per intake. A newer revision replaces the facts of an
