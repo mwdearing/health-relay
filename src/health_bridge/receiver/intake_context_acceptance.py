@@ -10,6 +10,7 @@ revision and projection rules of ``docs/reference/intake-context-v1.md``.
 import json
 import re
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Final, Literal, TypeAlias, TypedDict, cast
 
@@ -108,7 +109,7 @@ def _operation_ids(payload: str | bytes | dict[str, object]) -> list[str]:
         )
         try:
             document = cast("object", json.loads(text))
-        except ValueError:
+        except (ValueError, RecursionError):
             found = _OPERATION_ID_TEXT.findall(text)
             document = None
     if isinstance(document, dict):
@@ -201,6 +202,7 @@ def _apply_upsert(
     key: _Key,
     received_at: str,
 ) -> _Outcome:
+    current = read_intake_state(connection, **key)
     existing = read_revision(connection, revision=operation.revision, **key)
     if existing is not None:
         record = existing.record
@@ -212,8 +214,9 @@ def _apply_upsert(
             return _Outcome(
                 "projection_conflict", detail="different first link snapshot"
             )
+        if current is not None and operation.revision < current.current_revision:
+            return _stale(current.current_revision)
         return _Outcome("duplicate", operation.revision, 1)
-    current = read_intake_state(connection, **key)
     if current is not None and operation.revision < current.current_revision:
         return _stale(current.current_revision)
     _ = insert_revision(
@@ -263,6 +266,34 @@ def _link_error(stored: StoredRevision, links: list[HealthKitLink]) -> str | Non
     return None
 
 
+def _highest_versions(links: Iterable[SampleLink]) -> dict[str, int]:
+    highest: dict[str, int] = {}
+    for link in links:
+        highest[link.sync_identifier] = max(
+            highest.get(link.sync_identifier, link.sync_version), link.sync_version
+        )
+    return highest
+
+
+def _version_regression(
+    stored: StoredRevision, links: list[HealthKitLink]
+) -> str | None:
+    snapshots = stored.projections
+    latest = (
+        max(snapshots, key=lambda s: s.projection_sequence).links
+        if snapshots
+        else stored.record.links
+    )
+    accepted = _highest_versions(latest)
+    for identifier, version in _highest_versions(_link_records(links)).items():
+        if version < accepted.get(identifier, version):
+            return (
+                f"sync_version_regression: {identifier} is at "
+                f"{accepted[identifier]}, not {version}"
+            )
+    return None
+
+
 def _known_snapshot(
     stored: StoredRevision, operation: LinkProjectionOperation
 ) -> _Outcome | None:
@@ -276,6 +307,22 @@ def _known_snapshot(
                 "projection_conflict", detail="different snapshot at this sequence"
             )
     return None
+
+
+def _snapshot_blocker(
+    stored: StoredRevision,
+    operation: LinkProjectionOperation,
+    current: IntakeStateRecord,
+) -> _Outcome | None:
+    known = _known_snapshot(stored, operation)
+    if known is not None:
+        return known
+    if operation.projection_sequence < current.current_projection_sequence:
+        return _stale(current.current_revision)
+    regression = _version_regression(stored, operation.healthkit_links)
+    if regression is None:
+        return None
+    return _Outcome("permanent_failure", detail=regression)
 
 
 def _link_projection_blocker(
@@ -299,12 +346,8 @@ def _link_projection_blocker(
     problem = _link_error(stored, operation.healthkit_links)
     if problem is not None:
         return _Outcome("permanent_failure", detail=problem), None
-    known = _known_snapshot(stored, operation)
-    if known is not None:
-        return known, None
-    if operation.projection_sequence < current.current_projection_sequence:
-        return _stale(current.current_revision), None
-    return None, stored
+    early = _snapshot_blocker(stored, operation, current)
+    return early, (None if early is not None else stored)
 
 
 def _apply_link_projection(
@@ -388,6 +431,16 @@ def _apply(
     )
     scope = _Scope(owner_id=owner_id, producer_id=batch.producer_id)
     is_link = isinstance(operation, LinkProjectionOperation)
+    producer = read_producer(connection, **scope)
+    if producer is not None and (
+        producer.revoked_at is not None
+        or producer.writer_bundle_id != batch.writer_bundle_id
+    ):
+        return OperationResult(
+            operation.operation_id,
+            "permanent_failure",
+            detail="producer is revoked or the writer bundle does not match",
+        )
     receipt = read_operation_receipt(
         connection, operation_id=operation.operation_id, **scope
     )
@@ -399,7 +452,6 @@ def _apply(
             "projection_conflict" if is_link else "domain_conflict",
             detail="operation_id reused with different content",
         )
-    producer = read_producer(connection, **scope)
     newly_registered = producer is None
     if producer is None:
         _ = register_producer(
@@ -410,14 +462,6 @@ def _apply(
                 display_label=batch.producer_id,
                 registered_at=received_at,
             ),
-        )
-    elif producer.revoked_at is not None or (
-        producer.writer_bundle_id != batch.writer_bundle_id
-    ):
-        return OperationResult(
-            operation.operation_id,
-            "permanent_failure",
-            detail="producer is revoked or the writer bundle does not match",
         )
     tombstone = read_tombstone(connection, **key)
     if tombstone is not None:

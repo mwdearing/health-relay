@@ -656,3 +656,74 @@ def test_retryable_first_operation_registers_no_producer(
     other = clone(WORKED)
     other["writer_bundle_id"] = "com.example.someone.else"
     assert names(run(connection, ref.seal(other))) == ["accepted"]
+
+
+def test_deeply_nested_payload_is_permanent_failure_not_an_exception(
+    connection: sqlite3.Connection,
+) -> None:
+    op_id = op_id_of(WORKED)
+    text = '{"operations":[{"operation_id":"' + op_id + '"}],"x":'
+    text += "[" * 100_000 + "]" * 100_000 + "}"
+    results = accept_batch(connection, owner_id=OWNER, payload=text, received_at=NOW)
+    assert names(results) == ["permanent_failure"]
+    assert results[0].operation_id == op_id
+
+
+def test_revoked_producer_replaying_an_accepted_operation_is_permanent_failure(
+    connection: sqlite3.Connection,
+) -> None:
+    _ = run(connection, WORKED)
+    _ = connection.execute(
+        "update intake_producers set revoked_at = ? where producer_id = ?",
+        (NOW, PRODUCER),
+    )
+    connection.commit()
+    assert names(run(connection, WORKED)) == ["permanent_failure"]
+
+
+def test_old_revision_under_a_new_operation_id_is_stale_not_duplicate(
+    connection: sqlite3.Connection,
+) -> None:
+    _ = run(connection, WORKED)
+    _ = run(connection, variant(WORKED, NEW_IDS[0], revision=3))
+    (result,) = run(connection, variant(WORKED, NEW_IDS[1]))
+    assert (result.result, result.current_revision) == ("stale_revision", 3)
+
+
+def _projection_with_versions(
+    op_id: str, sequence: int, versions: list[tuple[int, str]]
+) -> JsonObject:
+    links: list[JsonObject] = []
+    for index, (version, disposition) in enumerate(versions):
+        link = dict(links_of(SEQ2)[index])
+        link["sync_version"] = version
+        link["disposition"] = disposition
+        links.append(link)
+    return variant(SEQ2, op_id, healthkit_links=links, projection_sequence=sequence)
+
+
+def test_link_projection_may_not_lower_an_accepted_sync_version(
+    connection: sqlite3.Connection,
+) -> None:
+    _ = run(connection, WORKED)
+    _ = run(connection, SEQ2)
+    lower = _projection_with_versions(NEW_IDS[0], 3, [(2, "active")])
+    (result,) = run(connection, lower)
+    assert result.result == "permanent_failure"
+    assert "sync_version_regression" in (result.detail or "")
+    state_now = state(connection)
+    assert state_now is not None
+    assert state_now.current_projection_sequence == 2
+
+
+def test_link_projection_with_equal_or_higher_sync_version_passes(
+    connection: sqlite3.Connection,
+) -> None:
+    _ = run(connection, WORKED)
+    _ = run(connection, SEQ2)
+    same = _projection_with_versions(NEW_IDS[0], 3, [(3, "active")])
+    assert names(run(connection, same)) == ["accepted"]
+    higher = _projection_with_versions(
+        NEW_IDS[1], 4, [(4, "active"), (3, "superseded")]
+    )
+    assert names(run(connection, higher)) == ["accepted"]
