@@ -5,6 +5,11 @@ import XCTest
 import HealthKit
 
 final class HealthKitGenericQuantityReaderTests: XCTestCase {
+    func testAllowlistKeysMatchHealthKitConstants() {
+        XCTAssertEqual(IntakeMetadataAllowlist.syncIdentifierKey, HKMetadataKeySyncIdentifier)
+        XCTAssertEqual(IntakeMetadataAllowlist.syncVersionKey, HKMetadataKeySyncVersion)
+    }
+
     func testMapperConvertsKnownQuantitySamplesToCanonicalUnits() throws {
         let start = try date("2026-06-15T07:00:00Z")
         let end = try date("2026-06-15T07:00:05Z")
