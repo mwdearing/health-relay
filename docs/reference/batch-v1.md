@@ -142,3 +142,28 @@ late overlap or outbox replay cannot resurrect an obsolete session identity.
 `sync` includes the batch `sync_window` and source cursors. Missing data in a
 future query surface must remain unknown availability: it can reflect no record,
 permission limits, source gaps, or sync gaps.
+
+## Intake Metadata
+
+A sample's `metadata` map may carry four optional string keys that link a sample
+to a logged intake. The receiver validates them and rejects the batch (schema
+failure) when a rule is broken.
+
+| Key | Rule |
+| --- | --- |
+| `intake_id` | lowercase canonical UUID (uppercase is rejected) |
+| `intake_component_id` | slug matching `^[a-z0-9][a-z0-9._-]{0,63}$` |
+| `sync_identifier` | 1 to 256 characters |
+| `sync_version` | decimal text from 1 to 9223372036854775807, no sign, no leading zero |
+
+- `intake_id` and `intake_component_id` travel together or not at all.
+- `sync_identifier` and `sync_version` travel together or not at all. The sync
+  pair may appear without the intake pair (for samples written by another app).
+- Any other key starting with `intake_` is rejected.
+- Every other metadata key (for example `sync_window` or `aggregation`) is
+  unchanged and stays allowed.
+
+The public JSON Schema mirrors these rules, except the numeric int64 upper
+bound of `sync_version`, which the receiver still enforces.
+
+See `fixtures/health_bridge_batch_v1.intake_metadata.synthetic.json`.
