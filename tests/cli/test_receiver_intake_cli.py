@@ -1967,3 +1967,67 @@ def _strip_terminal_styling(text: str) -> str:
     """Drop ANSI colour codes and the box drawing rich adds around help."""
     without_colour = ANSI_PATTERN.sub("", text)
     return BOX_PATTERN.sub(" ", without_colour)
+
+
+@pytest.mark.parametrize("features", [[], ["upsert"], ["upsert", "delete"]])
+def test_intake_smoke_cli_requires_the_baseline_intake_features(
+    tmp_path: Path,
+    features: list[str],
+) -> None:
+    # Given a receiver that advertises fewer operations than an uploader needs
+    secret_path = _smoke_token_file(tmp_path)
+    document = cast("dict[str, object]", json.loads(VALID_CAPABILITIES))
+    document["features"] = features
+    body = json.dumps(document).encode()
+
+    with _canned_receiver(HTTPStatus.OK, body) as base:
+        # When
+        result = _cli("intake-smoke", "--url", base, "--token-file", str(secret_path))
+
+    # Then it is not reported as usable
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+
+
+def test_intake_smoke_cli_never_sends_the_token_through_an_environment_proxy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given a proxy configured in the environment that would see the bearer token
+    with socket.socket() as unused:
+        unused.bind(("127.0.0.1", 0))
+        dead_port = cast("tuple[str, int]", unused.getsockname())[1]
+    proxy_names = ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy")
+    for name in (*proxy_names, "ALL_PROXY", "all_proxy"):
+        monkeypatch.setenv(name, f"http://127.0.0.1:{dead_port}")
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    secret_path = _smoke_token_file(tmp_path)
+
+    with _canned_receiver(HTTPStatus.OK, VALID_CAPABILITIES) as base:
+        # When
+        result = _cli("intake-smoke", "--url", base, "--token-file", str(secret_path))
+
+    # Then the request goes straight to the receiver, not through the proxy
+    assert result.exit_code == 0, result.output
+
+
+def test_intake_create_token_cli_refuses_to_replace_an_unreadable_secret_file(
+    tmp_path: Path,
+) -> None:
+    # Given an existing destination this command cannot read back to restore it
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    secret_path = tmp_path / "private" / "token.json"
+    secret_path.parent.mkdir(mode=0o700)
+    original = b"\xff\xfe not utf-8"
+    _ = secret_path.write_bytes(original)
+
+    # When
+    result = _issue_to_file(db_path, secret_path)
+
+    # Then nothing is overwritten and no credential becomes active
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert secret_path.read_bytes() == original
+    assert _active_token_count(db_path) == 0

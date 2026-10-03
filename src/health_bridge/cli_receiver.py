@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 from urllib.request import (
     HTTPRedirectHandler,
     OpenerDirector,
+    ProxyHandler,
     Request,
     build_opener,
     urlopen,
@@ -174,6 +175,8 @@ MAX_REQUEST_TIMEOUT_SECONDS: Final = 300.0
 INTAKE_SMOKE_OK_STATUS: Final = 200
 INTAKE_SMOKE_NOT_FOUND_STATUS: Final = 404
 INTAKE_SMOKE_TIMEOUT_SECONDS: Final = 10
+# The operations an intake uploader needs; a receiver advertising fewer is not usable.
+INTAKE_SMOKE_REQUIRED_FEATURES: Final = ("upsert", "delete", "link_projection")
 # A capabilities document is a few hundred bytes. Reading only this much keeps a
 # large or endlessly drip-fed response from being buffered whole.
 INTAKE_SMOKE_MAX_BODY_BYTES: Final = 64 * 1024
@@ -1426,6 +1429,16 @@ def _echo_intake_token_file_result(  # noqa: PLR0913 -- one identity per issuanc
     file is never destroyed by a failed issuance.
     """
     secret_text = json.dumps(secret_payload, sort_keys=True) + "\n"
+    if _is_unreadable_regular_file(output_secret):
+        # A file this command cannot read back cannot be restored after a failed
+        # issuance, so it is never replaced: refuse before anything is written.
+        _discard_pending_intake_token_or_warn(db, issued.token_prefix)
+        hint = "move it away or choose another --output-secret path"
+        refusal = (
+            f"Refusing to replace {output_secret}: it cannot be read back; {hint}."
+        )
+        typer.echo(refusal, err=True)
+        raise typer.Exit(code=1)
     replaced_secret = _existing_secret_text(output_secret)
     try:
         write_private_text_file(output_secret, secret_text)
@@ -2103,7 +2116,9 @@ def _intake_smoke_opener() -> OpenerDirector:
         def redirect_request(self, *_args: object, **_kwargs: object) -> None:
             """Refuse the redirect: urllib reads this handler's ``None`` as no."""
 
-    return build_opener(_RefuseRedirect)
+    # No ProxyHandler mapping means no proxy: the bearer token never goes to a proxy
+    # named in HTTP_PROXY/HTTPS_PROXY, only to the receiver the user configured.
+    return build_opener(ProxyHandler({}), _RefuseRedirect)
 
 
 def _intake_capabilities_url(base_url: str) -> str:
@@ -2207,6 +2222,9 @@ def _invalid_features_reason(features: object) -> str | None:
     named = cast("list[object]", features)
     if any(not isinstance(feature, str) or feature.strip() == "" for feature in named):
         return f"features is {features!r}, not a list of names"
+    missing = [name for name in INTAKE_SMOKE_REQUIRED_FEATURES if name not in named]
+    if missing:
+        return f"features lacks {', '.join(missing)}"
     return None
 
 
