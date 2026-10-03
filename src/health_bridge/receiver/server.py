@@ -186,6 +186,12 @@ class IntakeRateLimiter:
         max_tokens: int = INTAKE_RATE_LIMIT_MAX_TOKENS,
         clock: Callable[[], float] | None = None,
     ) -> None:
+        if max_batches < 1:
+            msg = "intake rate limit count must be at least 1"
+            raise ValueError(msg)
+        if not window_seconds > 0:
+            msg = "intake rate limit window must be positive"
+            raise ValueError(msg)
         self.max_batches = max_batches
         self.window_seconds = window_seconds
         self.max_tokens = max_tokens
@@ -200,9 +206,9 @@ class IntakeRateLimiter:
 
     def allow(self, token_prefix: str) -> bool:
         """Count one batch for this token, or refuse when the window is full."""
-        now = self.clock()
-        cutoff = now - self.window_seconds
         with self._lock:
+            now = self.clock()
+            cutoff = now - self.window_seconds
             self._drop_idle_keys(cutoff)
             hits = self._hits.get(token_prefix)
             if hits is None:
@@ -221,9 +227,9 @@ class IntakeRateLimiter:
 
     def retry_after_seconds(self, token_prefix: str) -> int:
         """Whole seconds until the oldest counted batch leaves the window."""
-        now = self.clock()
-        cutoff = now - self.window_seconds
         with self._lock:
+            now = self.clock()
+            cutoff = now - self.window_seconds
             hits = self._hits.get(token_prefix)
             if hits is None:
                 return 1

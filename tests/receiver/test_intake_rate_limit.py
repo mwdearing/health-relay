@@ -8,6 +8,8 @@ from pathlib import Path
 from threading import Thread
 from typing import cast, final
 
+import pytest
+
 from health_bridge.receiver.intake_tokens import create_intake_token
 from health_bridge.receiver.server import (
     INTAKE_RATE_LIMIT_COUNT,
@@ -243,3 +245,31 @@ def test_idle_token_keys_are_dropped() -> None:
         now[0] = 500.0 + index * 30.0
         assert limiter.allow(f"hri_{index:04d}")
     assert len(limiter.tracked_clients) <= limiter.max_tokens
+
+
+@pytest.mark.parametrize(
+    ("max_batches", "window_seconds"),
+    [(0, 60.0), (-1, 60.0), (1, 0.0), (1, -5.0)],
+)
+def test_limiter_rejects_nonpositive_settings(
+    max_batches: int, window_seconds: float
+) -> None:
+    with pytest.raises(ValueError, match="intake rate limit"):
+        _ = IntakeRateLimiter(max_batches=max_batches, window_seconds=window_seconds)
+
+
+def test_limiter_samples_the_clock_while_holding_its_lock() -> None:
+    holder: list[IntakeRateLimiter] = []
+    seen: list[bool] = []
+
+    def clock() -> float:
+        seen.append(holder[0]._lock.locked())  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        return 100.0
+
+    limiter = IntakeRateLimiter(max_batches=1, window_seconds=60.0, clock=clock)
+    holder.append(limiter)
+    assert limiter.allow("tok_a")
+    assert not limiter.allow("tok_a")
+    _ = limiter.retry_after_seconds("tok_a")
+    assert seen
+    assert all(seen)
