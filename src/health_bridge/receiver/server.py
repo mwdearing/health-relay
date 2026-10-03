@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import re
 
 # noqa: RUF100 -- no-excuse marker "# noqa: SIZE_OK": cohesive HTTP framing and mappings.
@@ -51,6 +52,7 @@ from health_bridge.receiver.intake_context_acceptance import (
     accept_batch,
 )
 from health_bridge.receiver.intake_tokens import (
+    INTAKE_TOKEN_PREFIX_LENGTH,
     IntakeTokenPrincipal,
     authenticate_intake_token,
 )
@@ -96,6 +98,9 @@ INTAKE_CONTEXT_FEATURES: Final = ["upsert", "delete", "link_projection"]
 PAIRING_REDEEM_LIMIT: Final = 5
 PAIRING_REDEEM_WINDOW_SECONDS: Final = 60
 PAIRING_REDEEM_MAX_CLIENTS: Final = 1_024
+INTAKE_RATE_LIMIT_COUNT: Final = 60
+INTAKE_RATE_LIMIT_WINDOW_SECONDS: Final = 60.0
+INTAKE_RATE_LIMIT_MAX_TOKENS: Final = 1_024
 JsonPayloadValue: TypeAlias = (
     bool | int | str | list[str] | list[dict[str, str | int | None]] | dict[str, str]
 )
@@ -163,7 +168,83 @@ class PairingRedeemRateLimiter:
             return True
 
 
+@final
+class IntakeRateLimiter:
+    """Sliding-window limiter over authenticated intake token prefixes.
+
+    One key per token prefix, so one producer's noisy client cannot spend
+    another's budget. Keys are dropped once their window empties, and the
+    oldest key is evicted past ``max_tokens``, keeping memory bounded no
+    matter how many distinct prefixes arrive.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_batches: int = INTAKE_RATE_LIMIT_COUNT,
+        window_seconds: float = INTAKE_RATE_LIMIT_WINDOW_SECONDS,
+        max_tokens: int = INTAKE_RATE_LIMIT_MAX_TOKENS,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        self.max_batches = max_batches
+        self.window_seconds = window_seconds
+        self.max_tokens = max_tokens
+        self.clock = time.monotonic if clock is None else clock
+        self._hits: OrderedDict[str, deque[float]] = OrderedDict()
+        self._lock = Lock()
+
+    @property
+    def tracked_clients(self) -> tuple[str, ...]:
+        with self._lock:
+            return tuple(self._hits)
+
+    def allow(self, token_prefix: str) -> bool:
+        """Count one batch for this token, or refuse when the window is full."""
+        now = self.clock()
+        cutoff = now - self.window_seconds
+        with self._lock:
+            self._drop_idle_keys(cutoff)
+            hits = self._hits.get(token_prefix)
+            if hits is None:
+                if len(self._hits) >= self.max_tokens:
+                    _ = self._hits.popitem(last=False)
+                hits = deque[float]()
+                self._hits[token_prefix] = hits
+            else:
+                self._hits.move_to_end(token_prefix)
+            while hits and hits[0] <= cutoff:
+                _ = hits.popleft()
+            if len(hits) >= self.max_batches:
+                return False
+            hits.append(now)
+            return True
+
+    def retry_after_seconds(self, token_prefix: str) -> int:
+        """Whole seconds until the oldest counted batch leaves the window."""
+        now = self.clock()
+        cutoff = now - self.window_seconds
+        with self._lock:
+            hits = self._hits.get(token_prefix)
+            if hits is None:
+                return 1
+            window = [hit for hit in hits if hit > cutoff]
+        if not window:
+            return 1
+        return max(1, math.ceil(window[0] + self.window_seconds - now))
+
+    def _drop_idle_keys(self, cutoff: float) -> None:
+        for key in [key for key, hits in self._hits.items() if hits[-1] <= cutoff]:
+            _ = self._hits.pop(key)
+
+
+_INTAKE_LIMITER_LOCK = Lock()
+
+
 class ReceiverHTTPServer(ThreadingHTTPServer):
+    # Class-level defaults so a subclass that skips __init__ still works.
+    intake_rate_limit_count: int = INTAKE_RATE_LIMIT_COUNT
+    intake_rate_limit_window_seconds: float = INTAKE_RATE_LIMIT_WINDOW_SECONDS
+
     def __init__(  # noqa: PLR0913 - explicit transport dependencies.
         self,
         host: str,
@@ -175,10 +256,14 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
         mailbox_worker: MailboxRuntimeWorker | None = None,
         intake_context_enabled: bool = False,
         request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        intake_rate_limit_count: int = INTAKE_RATE_LIMIT_COUNT,
+        intake_rate_limit_window_seconds: float = INTAKE_RATE_LIMIT_WINDOW_SECONDS,
     ) -> None:
         self.db_path: Path = db_path
         self.intake_context_enabled: bool = intake_context_enabled
         self.request_timeout_seconds: float = request_timeout_seconds
+        self.intake_rate_limit_count = intake_rate_limit_count
+        self.intake_rate_limit_window_seconds = intake_rate_limit_window_seconds
         self.mailbox_key_store: MailboxKeyStore | None = mailbox_key_store
         self.mailbox_connection_store: MailboxConnectionStore | None = (
             mailbox_connection_store
@@ -187,7 +272,26 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
         self.pairing_redeem_limiter: PairingRedeemRateLimiter = (
             PairingRedeemRateLimiter()
         )
+        self.intake_limiter: IntakeRateLimiter = IntakeRateLimiter(
+            max_batches=intake_rate_limit_count,
+            window_seconds=intake_rate_limit_window_seconds,
+        )
         super().__init__((host, port), ReceiverRequestHandler)
+
+    @property
+    def limiter(self) -> IntakeRateLimiter:
+        """The intake limiter, built on first use if __init__ was bypassed."""
+        limiter = getattr(self, "intake_limiter", None)
+        if limiter is None:
+            with _INTAKE_LIMITER_LOCK:
+                limiter = getattr(self, "intake_limiter", None)
+                if limiter is None:
+                    limiter = IntakeRateLimiter(
+                        max_batches=self.intake_rate_limit_count,
+                        window_seconds=self.intake_rate_limit_window_seconds,
+                    )
+                    self.intake_limiter = limiter
+        return limiter
 
     @override
     def handle_error(
@@ -593,6 +697,22 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
         principal = self._authorize_intake_request()
         if principal is None:
             return
+        # Counted per authenticated token, so a rejected request never spends
+        # another producer's budget; the body is left unread on 429.
+        token = self._bearer_token()
+        limiter = self.receiver_server.limiter
+        token_prefix = "" if token is None else token[:INTAKE_TOKEN_PREFIX_LENGTH]
+        if not limiter.allow(token_prefix):
+            self.close_connection = True
+            self._send_json(
+                HTTPStatus.TOO_MANY_REQUESTS,
+                {"error": "rate_limited"},
+                extra_headers={
+                    "Retry-After": str(limiter.retry_after_seconds(token_prefix)),
+                    "Connection": "close",
+                },
+            )
+            return
         body = self._read_body(close_on_reject=True)
         if body is None:
             return
@@ -784,6 +904,8 @@ def build_receiver_server(  # noqa: PLR0913 - explicit transport dependencies.
     intake_context_enabled: bool = False,
     request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
     mailbox_worker: MailboxRuntimeWorker | None = None,
+    intake_rate_limit_count: int = INTAKE_RATE_LIMIT_COUNT,
+    intake_rate_limit_window_seconds: float = INTAKE_RATE_LIMIT_WINDOW_SECONDS,
 ) -> ReceiverHTTPServer:
     initialize_database(db_path)
     return ReceiverHTTPServer(
@@ -795,6 +917,8 @@ def build_receiver_server(  # noqa: PLR0913 - explicit transport dependencies.
         intake_context_enabled=intake_context_enabled,
         request_timeout_seconds=request_timeout_seconds,
         mailbox_worker=mailbox_worker,
+        intake_rate_limit_count=intake_rate_limit_count,
+        intake_rate_limit_window_seconds=intake_rate_limit_window_seconds,
     )
 
 
