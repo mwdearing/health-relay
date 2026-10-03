@@ -450,11 +450,13 @@ public enum HealthBridgeBackgroundSync {
         HealthBridgeAppIdentity.appRefreshIdentifier
     }
     public static let defaultMinimumInterval: TimeInterval = 15 * 60
-    /// HealthRelay: `.medicationDoseEvents` is observed so a newly logged dose wakes the app. It is
-    /// resolved through `HealthKitReadTypeCatalog.observerSampleTypes`, never the authorization set.
-    public static let defaultObservedHealthTypes: [HealthBridgeHealthType] = [
-        .steps, .workouts, .sleepAnalysis, .medicationDoseEvents,
-    ]
+    public static let defaultObservedHealthTypes: [HealthBridgeHealthType] = [.steps, .workouts, .sleepAnalysis]
+    /// HealthRelay: types an earlier build registered for background delivery and this build no
+    /// longer observes. HealthKit keeps such a registration across app updates, so it is disabled
+    /// explicitly whenever observers start, and when automatic sync is switched off. 1.2.28 observed
+    /// medication dose events; background uploads stopped with that build, so 1.2.29 turns automatic
+    /// medication sync off (Sync Now still syncs doses) to isolate the cause.
+    public static let retiredBackgroundDeliveryHealthTypes: [HealthBridgeHealthType] = [.medicationDoseEvents]
     public static let dailyActivityTypeCodes = [
         "basal_energy",
         "distance_walking_running",
@@ -481,15 +483,11 @@ public enum HealthBridgeBackgroundSync {
     /// dedicated read type for authorization and disclosure, but only the foreground lane
     /// syncs them; scheduling them as a quantity lane can never run and stalls the cycle).
     ///
-    /// Medication dose events are a background-eligible lane but deliberately NOT part of the
-    /// unified read set: that set feeds `requestAuthorization`, which throws for per-object types.
-    /// The lane reads without prompting (see `MedicationDoseLanePolicy`).
+    /// Medication dose events are not an automatic lane (see `retiredBackgroundDeliveryHealthTypes`).
     public static var supportedAutomaticLaneTypeCodes: [String] {
-        (supportedUnifiedReadTypeCodes + [HealthBridgeHealthType.medicationDoseEvents.typeCode])
-            .filter { typeCode in
-                HealthKitTypeCatalog.entry(for: typeCode)?.backgroundEligible ?? true
-            }
-            .sorted()
+        supportedUnifiedReadTypeCodes.filter { typeCode in
+            HealthKitTypeCatalog.entry(for: typeCode)?.backgroundEligible ?? true
+        }
     }
 
     public static var observedHealthTypes: [HealthBridgeHealthType] {
@@ -498,8 +496,11 @@ public enum HealthBridgeBackgroundSync {
 
     public static var allKnownBackgroundDeliveryHealthTypes: [HealthBridgeHealthType] {
         appendUnique(
-            defaultObservedHealthTypes,
-            automaticQuantityHealthTypes(typeCodes: supportedAutomaticQuantityTypeCodes)
+            appendUnique(
+                defaultObservedHealthTypes,
+                automaticQuantityHealthTypes(typeCodes: supportedAutomaticQuantityTypeCodes)
+            ),
+            retiredBackgroundDeliveryHealthTypes
         )
     }
 

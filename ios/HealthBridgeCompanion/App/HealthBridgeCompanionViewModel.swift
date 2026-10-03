@@ -2981,7 +2981,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             succeeded: false,
             summary: "HealthKit background delivery registration requested for \(expectedTypeCount) type(s); active_observers=\(automaticSyncActiveObserverCount)."
         )
-        backgroundSyncStatus = "Automatic sync scope includes steps, workouts, sleep, medication doses (once you allow HealthRelay to read them), ECG recordings, and \(availableQuantityTypeCount) runtime-available supported quantity types. Background delivery registration is in progress; iOS still decides timing."
+        backgroundSyncStatus = "Automatic sync scope includes steps, workouts, sleep, ECG recordings, and \(availableQuantityTypeCount) runtime-available supported quantity types. Background delivery registration is in progress; iOS still decides timing."
         #endif
     }
 
