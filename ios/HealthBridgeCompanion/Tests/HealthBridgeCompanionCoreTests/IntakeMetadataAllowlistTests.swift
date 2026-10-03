@@ -210,6 +210,57 @@ final class IntakeMetadataAllowlistTests: XCTestCase {
         XCTAssertNil(result["sync_identifier"])
     }
 
+    func testDecimalSyncVersionAtExactInt64MaxIsAccepted() throws {
+        let decimal = try XCTUnwrap(NSDecimalNumber(string: "9223372036854775807"))
+        var input = full()
+        input[IntakeMetadataAllowlist.syncVersionKey] = decimal
+        let result = IntakeMetadataAllowlist.batchMetadata(from: input)
+        XCTAssertEqual(result["sync_version"], "9223372036854775807")
+        XCTAssertEqual(result["sync_identifier"], "sync-abc")
+    }
+
+    func testDecimalSyncVersionJustAboveInt64MaxIsRejected() throws {
+        let decimal = try XCTUnwrap(NSDecimalNumber(string: "9223372036854775808"))
+        var input = full()
+        input[IntakeMetadataAllowlist.syncVersionKey] = decimal
+        let result = IntakeMetadataAllowlist.batchMetadata(from: input)
+        XCTAssertNil(result["sync_version"])
+        XCTAssertNil(result["sync_identifier"])
+    }
+
+    func testDecimalSyncVersionAboveTwoFiftyThreeBitsIsNotRounded() throws {
+        let decimal = try XCTUnwrap(NSDecimalNumber(string: "9007199254740993"))
+        var input = full()
+        input[IntakeMetadataAllowlist.syncVersionKey] = decimal
+        XCTAssertEqual(IntakeMetadataAllowlist.batchMetadata(from: input)["sync_version"], "9007199254740993")
+    }
+
+    func testFractionalDecimalSyncVersionIsRejected() {
+        var input = full()
+        input[IntakeMetadataAllowlist.syncVersionKey] = NSDecimalNumber(value: 1.5)
+        let result = IntakeMetadataAllowlist.batchMetadata(from: input)
+        XCTAssertNil(result["sync_version"])
+        XCTAssertNil(result["sync_identifier"])
+    }
+
+    func testNotANumberDecimalSyncVersionIsRejected() {
+        var input = full()
+        input[IntakeMetadataAllowlist.syncVersionKey] = NSDecimalNumber.notANumber
+        let result = IntakeMetadataAllowlist.batchMetadata(from: input)
+        XCTAssertNil(result["sync_version"])
+        XCTAssertNil(result["sync_identifier"])
+    }
+
+    func testZeroAndNegativeDecimalSyncVersionsAreRejected() {
+        var input = full()
+        input[IntakeMetadataAllowlist.syncVersionKey] = NSDecimalNumber(value: 0)
+        XCTAssertNil(IntakeMetadataAllowlist.batchMetadata(from: input)["sync_version"])
+        input[IntakeMetadataAllowlist.syncVersionKey] = NSDecimalNumber(value: -7)
+        XCTAssertNil(IntakeMetadataAllowlist.batchMetadata(from: input)["sync_version"])
+        input[IntakeMetadataAllowlist.syncVersionKey] = NSDecimalNumber(value: 1)
+        XCTAssertEqual(IntakeMetadataAllowlist.batchMetadata(from: input)["sync_version"], "1")
+    }
+
     private func batch(withIntakeMetadata intakeMetadata: [String: String]) throws -> [String: String] {
         let start = try XCTUnwrap(HealthBridgeUTCFormatter.date(from: "2026-06-15T07:30:00Z"))
         let sample = HealthKitQuantitySampleSummary(
