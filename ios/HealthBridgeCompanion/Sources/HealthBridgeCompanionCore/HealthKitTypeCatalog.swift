@@ -229,7 +229,7 @@ public enum HealthKitTypeCatalog {
             sensitivity: .high,
             aggregation: .count,
             usesDedicatedSyncLane: false,
-            backgroundEligible: true
+            backgroundEligible: false
         ),
         HealthKitTypeCatalogEntry(
             typeCode: "heart_rate",

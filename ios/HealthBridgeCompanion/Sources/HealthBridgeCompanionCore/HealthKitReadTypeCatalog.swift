@@ -239,8 +239,10 @@ public final class HealthKitBackgroundDeliveryCoordinator {
             healthStore.execute(observer)
             activeObserverQueries.append(observer)
         }
+        disableRetiredRegistrations(observing: healthTypes)
         reconcileRegistrations()
     }
+
 
     public func reconcileRegistrations() {
         guard isCurrent() else { return }
@@ -275,6 +277,17 @@ public final class HealthKitBackgroundDeliveryCoordinator {
 
         let sampleTypes = HealthKitReadTypeCatalog.observerSampleTypes(for: healthTypes)
         for sampleType in sampleTypes {
+            healthStore.disableBackgroundDelivery(for: sampleType) { _, _ in }
+        }
+    }
+
+    /// Turns off background delivery an earlier build registered for a type this build no longer
+    /// observes. Without an observer query, a delivery for that type is never acknowledged.
+    private func disableRetiredRegistrations(observing healthTypes: [HealthBridgeHealthType]) {
+        let observed = Set(healthTypes.map(\.typeCode))
+        let retired = HealthBridgeBackgroundSync.retiredBackgroundDeliveryHealthTypes
+            .filter { !observed.contains($0.typeCode) }
+        for sampleType in HealthKitReadTypeCatalog.observerSampleTypes(for: retired) {
             healthStore.disableBackgroundDelivery(for: sampleType) { _, _ in }
         }
     }

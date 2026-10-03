@@ -176,6 +176,16 @@ the full command reference.
   batch token cannot use the intake routes (also 403). An unknown token gets 401.
 - **Owner binding.** The owner comes from the token, never from client input.
   The receiver stays a single-user store.
+- **Rate limit.** `POST /v1/intake-context/batches` allows 60 batches per
+  60 seconds per intake token, counted on a sliding window keyed by the token
+  prefix. Over the limit, the receiver answers 429 `rate_limited` with a
+  `Retry-After` header giving whole seconds until a slot frees (at least 1) and
+  closes the connection; the body is neither read nor stored. Failed
+  authentication is not counted, so a bad token cannot spend a producer's
+  budget, and each token is limited independently of the others. The
+  capabilities GET is not limited. Limits are set per server with
+  `intake_rate_limit_count` and `intake_rate_limit_window_seconds`, and idle
+  token keys are dropped so memory stays bounded.
 - **Operation outcomes.** Every fully identifiable operation in a batch gets
   one result: `accepted`, `duplicate`, `stale_revision`, `domain_conflict`,
   `projection_conflict`, `retryable_failure` or `permanent_failure`. If an
@@ -188,6 +198,9 @@ the full command reference.
   samples. Each item carries the logged intake's own amount, unit, `value_state`
   and component code; the joined HealthKit sample's measurement value is
   withheld.
+- **Query CLI.** `health-bridge query intake-evidence` prints that same page as
+  one JSON document for a terminal. It opens an existing database read-only,
+  never migrates it and never writes.
 - **MCP.** The read-only tool `get_intake_evidence_v1` exposes that query to
   agents. `owner_id` is optional only when exactly one owner is registered;
   with none or several the tool returns an error. The tool cannot write.
