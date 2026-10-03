@@ -153,6 +153,9 @@ the full command reference.
   samples. Each item carries the logged intake's own amount, unit, `value_state`
   and component code; the joined HealthKit sample's measurement value is
   withheld.
+- **Query CLI.** `health-bridge query intake-evidence` prints that same page as
+  one JSON document for a terminal. It opens an existing database read-only,
+  never migrates it and never writes.
 - **MCP.** The read-only tool `get_intake_evidence_v1` exposes that query to
   agents. `owner_id` is optional only when exactly one owner is registered;
   with none or several the tool returns an error. The tool cannot write.
