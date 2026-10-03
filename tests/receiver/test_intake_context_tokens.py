@@ -1,14 +1,18 @@
 import sqlite3
 from pathlib import Path
-from typing import cast
+from typing import Final, TypeAlias, cast
 
 import pytest
+from pydantic import TypeAdapter
 
 from health_bridge.receiver.intake_tokens import (
     activate_intake_token,
     authenticate_intake_token,
     create_intake_token,
     create_pending_intake_token,
+    discard_pending_intake_token,
+    intake_token_status,
+    revoke_active_intake_token,
     revoke_intake_token,
 )
 from health_bridge.receiver.tokens import (
@@ -17,10 +21,17 @@ from health_bridge.receiver.tokens import (
 )
 from health_bridge.storage.database import connect_database, initialize_database
 from health_bridge.storage.intake_context import (
+    PENDING_INTAKE_TOKEN_MARKER,
     ProducerRecord,
+    reactivate_producer,
     register_producer,
     revoke_producer,
     revoke_producer_tokens,
+)
+
+RevokedAtRow: TypeAlias = tuple[str | None]
+REVOKED_AT_ROWS_ADAPTER: Final[TypeAdapter[list[RevokedAtRow]]] = TypeAdapter(
+    list[RevokedAtRow]
 )
 
 
@@ -218,3 +229,107 @@ def test_activation_refuses_a_pending_row_for_another_owner(tmp_path: Path) -> N
     # Then only the owning producer can activate it
     assert activated == 0
     assert authenticate_intake_token(db, issued.token) is None
+
+
+def _token_revoked_at_values(db: Path) -> list[str | None]:
+    """The raw ``revoked_at`` column of every intake token row, in insert order."""
+    with sqlite3.connect(db) as connection:
+        rows = REVOKED_AT_ROWS_ADAPTER.validate_python(
+            connection.execute(
+                "select revoked_at from intake_context_tokens order by intake_token_id",
+            ).fetchall(),
+        )
+    return [row[0] for row in rows]
+
+
+def test_revoking_a_pending_token_makes_it_never_activate(tmp_path: Path) -> None:
+    # Given a pending token whose prefix is discovered and revoked in between
+    db = _registered_db(tmp_path)
+    issued = create_pending_intake_token(
+        db, owner_id="owner-1", producer_id="nutrition-app", label="l"
+    )
+    revoked = revoke_active_intake_token(db, issued.token_prefix)
+
+    # When the issuance that inserted it goes on to activate it
+    activated = activate_intake_token(
+        db,
+        owner_id="owner-1",
+        producer_id="nutrition-app",
+        token_prefix=issued.token_prefix,
+    )
+
+    # Then the explicit revocation wins and the credential never authenticates
+    assert revoked == 1
+    assert activated == 0
+    assert authenticate_intake_token(db, issued.token) is None
+
+
+def test_a_pending_token_reactivated_after_reactivation_still_stays_revoked(
+    tmp_path: Path,
+) -> None:
+    # Given a pending token revoked through its producer, then reactivated
+    db = _registered_db(tmp_path)
+    issued = create_pending_intake_token(
+        db, owner_id="owner-1", producer_id="nutrition-app", label="l"
+    )
+    _revoke(db)
+    with connect_database(db) as connection:
+        _ = connection.execute("begin immediate")
+        _ = reactivate_producer(
+            connection,
+            owner_id="owner-1",
+            producer_id="nutrition-app",
+        )
+        connection.commit()
+
+    # When the stale issuance activates it after the producer is active again
+    activated = activate_intake_token(
+        db,
+        owner_id="owner-1",
+        producer_id="nutrition-app",
+        token_prefix=issued.token_prefix,
+    )
+
+    # Then only a still-pending row may activate
+    assert activated == 0
+    assert authenticate_intake_token(db, issued.token) is None
+
+
+def test_discarding_a_pending_token_keeps_a_revoked_row(tmp_path: Path) -> None:
+    # Given a pending token somebody revoked before the secret write failed
+    db = _registered_db(tmp_path)
+    issued = create_pending_intake_token(
+        db, owner_id="owner-1", producer_id="nutrition-app", label="l"
+    )
+    assert revoke_active_intake_token(db, issued.token_prefix) == 1
+
+    # When a failed issuance drops the row it inserted
+    discard_pending_intake_token(db, issued.token_prefix)
+
+    # Then the revoked row keeps its audit trail instead of disappearing
+    statuses = _token_revoked_at_values(db)
+    assert statuses[0] is not None
+    assert statuses[0] != PENDING_INTAKE_TOKEN_MARKER
+    assert intake_token_status(statuses[0]) == "revoked"
+
+
+def test_pending_and_revoked_rows_report_distinct_statuses(tmp_path: Path) -> None:
+    # Given one active, one pending and one revoked token row
+    db = _registered_db(tmp_path)
+    active = create_intake_token(
+        db, owner_id="owner-1", producer_id="nutrition-app", label="a"
+    )
+    pending = create_pending_intake_token(
+        db, owner_id="owner-1", producer_id="nutrition-app", label="p"
+    )
+    revoked = create_intake_token(
+        db, owner_id="owner-1", producer_id="nutrition-app", label="r"
+    )
+    assert revoke_active_intake_token(db, revoked.token_prefix) == 1
+
+    # When the raw column is mapped to a status
+    statuses = [
+        intake_token_status(revoked_at) for revoked_at in _token_revoked_at_values(db)
+    ]
+    assert statuses == ["active", "pending", "revoked"]
+    assert active.token != pending.token != revoked.token

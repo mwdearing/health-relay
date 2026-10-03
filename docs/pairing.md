@@ -268,16 +268,19 @@ registered, or whose registration is revoked, and writes no token row in either
 case; the check and the insert share one transaction, so a producer revoked
 concurrently cannot slip a token through. Prefer `--output-secret`: stdout then
 carries only the token prefix and the file path, and the file is created with
-mode 0600. With `--output-secret` the row is inserted already revoked and
+mode 0600. With `--output-secret` the row is inserted in a `pending` state and
 activated only once the secret file is on disk, and that activation rechecks the
 producer in the same statement, so a producer revoked mid-write never receives an
 active credential and a failed write cannot leave one behind even when the
-database cannot be reached. If the write or the activation fails, the command
-removes its own unusable row, restores any secret file it replaced, and exits 1
-with a one-line error, so an existing credential file is never destroyed by a
-failed issuance. The destination is resolved before anything is written, and a
-path that lands on the `--db` file or one of its SQLite sidecars is refused
-rather than overwritten.
+database cannot be reached. Pending is a state of its own, not a kind of
+revocation: a prefix revoked from another terminal while the secret file is
+still being written is permanently retired, because the later activation only
+ever promotes a row still marked pending. If the write or the activation fails,
+the command removes its own unusable row, restores any secret file it replaced,
+and exits 1 with a one-line error, so an existing credential file is never
+destroyed by a failed issuance. The destination is resolved before anything is
+written, and a path that lands on the `--db` file or one of its SQLite sidecars
+is refused rather than overwritten.
 
 List tokens without ever revealing a token or its hash:
 
@@ -293,9 +296,13 @@ uv run health-bridge receiver intake-revoke-token \
   --token-prefix <prefix-from-intake-create-token>
 ```
 
-`intake-revoke-token` exits 1 when no active token carries that prefix, so
+`intake-list-tokens` reports each row's `status` as `active`, `pending` or
+`revoked`, so a pending row is never mistaken for a revocation timestamp.
+
+`intake-revoke-token` exits 1 when no usable token carries that prefix, so
 revoking twice, or revoking a prefix that was never issued, is visible rather
-than silently accepted.
+than silently accepted. A pending row counts as revoked: a prefix an operator
+saw in the listing is retired for good.
 
 To retire a whole producer, revoke it and every active token it owns in one
 SQLite transaction:
@@ -341,13 +348,20 @@ uv run health-bridge receiver intake-smoke \
 `intake-create-token`, requests `/v1/intake-context/capabilities`, and prints
 one JSON line with the HTTP status and the capability fields. It exits 0 only on
 a 200 that also names the intake-context schema, offers a supported version and
-carries the capability fields, so a wrong service or a proxy fallback page is not
-mistaken for a working receiver; it exits 1 otherwise. A 404 says the intake
-routes are not enabled, so restart the receiver with `--enable-intake-context`.
-A redirect is refused rather than followed, so the bearer token is never
-forwarded to another host, and a stalled or undecodable response is reported as
-the same concise failure as an unreachable receiver. The token and its hash are
-never printed. The URL must use `http` or `https`.
+carries capability values an uploader can use: an `authentication` object with a
+scheme and header, a list of feature names, and positive `max_body_bytes` and
+`max_operations` limits. A wrong service, a proxy fallback page or a response
+whose values are `null` or wrongly typed is therefore not mistaken for a working
+receiver; it exits 1 otherwise. A 404 says the intake routes are not enabled, so
+restart the receiver with `--enable-intake-context`. A redirect is refused
+rather than followed, so the bearer token is never forwarded to another host. A
+stalled, oversized or undecodable response, and a connection that hangs up or
+answers with an unparseable status line, are reported as the same concise
+failure as an unreachable receiver rather than a traceback. The token and its
+hash are never printed. `--url` must be an `http` or `https` URL with a host that
+can actually be opened, and the token in `--token-file` must be a well-formed
+generated token, so a corrupted or hand-edited file is reported instead of
+producing a broken request.
 
 The receiver also bounds how long it waits on a stalled connection. The default is
 30 seconds; lower it for a stricter local receiver:

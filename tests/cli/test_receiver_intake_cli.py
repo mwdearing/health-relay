@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 import sqlite3
 import stat
@@ -9,7 +10,7 @@ from contextlib import contextmanager
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
-from typing import TYPE_CHECKING, ClassVar, Final
+from typing import TYPE_CHECKING, ClassVar, Final, cast
 
 import pytest
 from pydantic import BaseModel, TypeAdapter
@@ -1395,6 +1396,64 @@ def test_intake_create_token_cli_keeps_an_existing_secret_file_when_activation_f
     assert _active_token_count(db_path) == 1
 
 
+def test_intake_create_token_cli_restores_the_previous_file_when_the_write_fails_late(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given a working secret file that a late write failure would overwrite
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    first_path = tmp_path / "private" / "token.json"
+    assert _issue_to_file(db_path, first_path).exit_code == 0
+    original = first_path.read_text("utf-8")
+    real_write = private_files.write_private_text_file
+
+    def failing_after_replace(path: Path, text: str) -> None:
+        # The atomic replace succeeds and a later step (chmod, fsync) fails.
+        real_write(path, text)
+        message = "synthetic post-replace failure"
+        raise OSError(message)
+
+    monkeypatch.setattr(cli_receiver, "write_private_text_file", failing_after_replace)
+
+    # When a second issuance to the same path fails after replacing it
+    result = _issue_to_file(db_path, first_path)
+
+    # Then the earlier credential is put back rather than overwritten
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert first_path.read_text("utf-8") == original
+    assert _active_token_count(db_path) == 1
+
+
+def test_intake_create_token_cli_removes_a_late_failed_write_to_a_new_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given a destination that does not exist yet and a write failing after replace
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    real_write = private_files.write_private_text_file
+
+    def failing_after_replace(path: Path, text: str) -> None:
+        real_write(path, text)
+        message = "synthetic post-replace failure"
+        raise OSError(message)
+
+    monkeypatch.setattr(cli_receiver, "write_private_text_file", failing_after_replace)
+
+    # When
+    secret_path = tmp_path / "private" / "token.json"
+    result = _issue_to_file(db_path, secret_path)
+
+    # Then no unusable credential file is left behind
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert not secret_path.exists()
+    assert _active_token_count(db_path) == 0
+    assert _token_rows(db_path) == 0
+
+
 def test_intake_create_token_cli_removes_its_own_new_file_when_activation_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1535,12 +1594,18 @@ VALID_CAPABILITIES: Final = json.dumps(
 ).encode()
 
 
+# The shape intake-create-token writes: the `hri_` prefix plus 32 bytes of
+# URL-safe base64. Anything else is not a token this CLI will send.
+ANSI_PATTERN: Final = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+BOX_PATTERN: Final = re.compile(r"[\u2500-\u257f\u2580-\u259f]")
+
+SYNTHETIC_TOKEN: Final = "hri_" + "Ab3-_x" * 7 + "Z"
+
+
 def _smoke_token_file(tmp_path: Path) -> Path:
     secret_path = tmp_path / "private" / "token.json"
     secret_path.parent.mkdir(mode=0o700, exist_ok=True)
-    _ = secret_path.write_text(
-        json.dumps({"token": "hri_synthetic_token"}), encoding="utf-8"
-    )
+    _ = secret_path.write_text(json.dumps({"token": SYNTHETIC_TOKEN}), encoding="utf-8")
     return secret_path
 
 
@@ -1596,6 +1661,211 @@ def test_intake_smoke_cli_rejects_capabilities_without_a_supported_version(
     # Then
     assert result.exit_code == 1
     assert "Traceback" not in result.output
+
+
+def test_intake_smoke_cli_rejects_a_capabilities_document_with_null_values(
+    tmp_path: Path,
+) -> None:
+    # Given a 200 response whose capability fields are all present but null
+    secret_path = _smoke_token_file(tmp_path)
+    body = json.dumps(
+        {
+            "schema": "healthrelay.intake-context",
+            "supported_versions": ["1.0"],
+            "authentication": None,
+            "features": None,
+            "max_body_bytes": None,
+            "max_operations": None,
+        }
+    ).encode()
+
+    with _canned_receiver(HTTPStatus.OK, body) as base:
+        # When
+        result = _cli("intake-smoke", "--url", base, "--token-file", str(secret_path))
+
+    # Then presence alone is not enough to call the receiver usable
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("authentication", "bearer"),
+        ("authentication", {"scheme": "bearer"}),
+        ("features", "upsert"),
+        ("features", [1, 2]),
+        ("max_body_bytes", "1048576"),
+        ("max_body_bytes", 0),
+        ("max_body_bytes", -1),
+        ("max_operations", 0),
+        ("max_operations", "500"),
+    ],
+)
+def test_intake_smoke_cli_rejects_malformed_capability_values(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    # Given a 200 response with one capability field of the wrong shape
+    secret_path = _smoke_token_file(tmp_path)
+    document = cast("dict[str, object]", json.loads(VALID_CAPABILITIES))
+    document[field] = value
+    body = json.dumps(document).encode()
+
+    with _canned_receiver(HTTPStatus.OK, body) as base:
+        # When
+        result = _cli("intake-smoke", "--url", base, "--token-file", str(secret_path))
+
+    # Then an uploader that cannot use the value is reported as unusable
+    assert result.exit_code == 1, field
+    assert field in result.stderr
+
+
+def test_intake_smoke_cli_rejects_an_unbounded_capabilities_body(
+    tmp_path: Path,
+) -> None:
+    # Given a receiver whose capabilities response is far larger than any document
+    secret_path = _smoke_token_file(tmp_path)
+    padding = "x" * (cli_receiver.INTAKE_SMOKE_MAX_BODY_BYTES + 1024)
+    body = json.dumps({**json.loads(VALID_CAPABILITIES), "padding": padding}).encode()
+
+    with _canned_receiver(HTTPStatus.OK, body) as base:
+        # When
+        result = _cli("intake-smoke", "--url", base, "--token-file", str(secret_path))
+
+    # Then the oversized response is refused instead of buffered whole
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "too large" in result.stderr
+
+
+TRUNCATED_HEAD: Final = (
+    b"HTTP/1.1 200 OK\r\n"
+    b"Content-Type: application/json\r\n"
+    b"Content-Length: 4096\r\n"
+    b"\r\n{"
+)
+
+
+@contextmanager
+def _truncating_receiver(head: bytes) -> Generator[str]:
+    """A server that answers with ``head`` and then closes the connection."""
+
+    def serve(listener: socket.socket) -> None:
+        with listener:
+            try:
+                connection = listener.accept()[0]
+            except OSError:
+                return
+            with connection:
+                try:
+                    _ = connection.recv(4096)
+                    _ = connection.sendall(head)
+                except OSError:
+                    return
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        thread = Thread(target=serve, args=(listener,), daemon=True)
+        thread.start()
+        try:
+            yield f"http://127.0.0.1:{listener.getsockname()[1]}"
+        finally:
+            listener.close()
+            thread.join(timeout=5)
+
+
+def test_intake_smoke_cli_reports_a_truncated_capabilities_body(
+    tmp_path: Path,
+) -> None:
+    # Given a receiver that hangs up before sending the body it advertised
+    secret_path = _smoke_token_file(tmp_path)
+
+    with _truncating_receiver(TRUNCATED_HEAD) as base:
+        # When
+        result = _cli("intake-smoke", "--url", base, "--token-file", str(secret_path))
+
+    # Then the partial body is refused without a traceback
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "not a JSON object" in result.stderr
+
+
+def test_intake_smoke_cli_reports_a_connection_closed_before_a_response(
+    tmp_path: Path,
+) -> None:
+    # Given a peer that answers with a status line urllib cannot parse
+    secret_path = _smoke_token_file(tmp_path)
+
+    with _truncating_receiver(b"not a status line at all\r\n\r\n") as base:
+        # When
+        result = _cli("intake-smoke", "--url", base, "--token-file", str(secret_path))
+
+    # Then the HTTP error is the normal unreachable diagnostic, not a traceback
+    # A BadStatusLine is an HTTPException rather than an OSError, so it used to
+    # escape this handler as a traceback.
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "not reachable" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://[::1",
+        "http://exa mple.com",
+        "http://127.0.0.1:notaport",
+        "http://",
+        "https://exam\u00f8ple.com",
+        "http://127.0.0.1:99999",
+    ],
+)
+def test_intake_smoke_cli_refuses_a_malformed_url(tmp_path: Path, url: str) -> None:
+    # Given a URL that cannot be parsed into a usable HTTP authority
+    secret_path = _smoke_token_file(tmp_path)
+
+    # When
+    result = _cli("intake-smoke", "--url", url, "--token-file", str(secret_path))
+
+    # Then the documented URL error replaces an escaping parse or request error
+    assert result.exit_code == 1, url
+    assert "Traceback" not in result.output
+    assert "http or https" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "hri_abc\ndef",
+        "hri_abc\rX-Injected: 1",
+        "hri_caf\u00e9",
+        "hri_ok\n",
+    ],
+)
+def test_intake_smoke_cli_refuses_a_token_that_is_not_header_safe(
+    tmp_path: Path,
+    token: str,
+) -> None:
+    # Given a token file whose token cannot go in an Authorization header
+    secret_path = tmp_path / "private" / "token.json"
+    secret_path.parent.mkdir(mode=0o700, exist_ok=True)
+    _ = secret_path.write_text(json.dumps({"token": token}), encoding="utf-8")
+
+    # When
+    result = _cli(
+        "intake-smoke",
+        "--url",
+        "http://127.0.0.1:8765",
+        "--token-file",
+        str(secret_path),
+    )
+
+    # Then the token-file diagnostic replaces an unhandled header error
+    assert result.exit_code == 1, repr(token)
+    assert "Traceback" not in result.output
+    assert "--token-file" in result.stderr
 
 
 def test_intake_smoke_cli_accepts_a_complete_capabilities_document(
@@ -1677,15 +1947,23 @@ def test_intake_smoke_cli_reports_a_stalled_capabilities_body(
     assert "not reachable" in result.stderr
 
 
-def test_receiver_start_help_describes_the_request_timeout_as_inactivity(
-    tmp_path: Path,
-) -> None:
-    # Given
-    del tmp_path
-
+def test_receiver_start_help_describes_the_request_timeout_as_inactivity() -> None:
+    # Given a help render with a fixed, wide, colourless terminal, so the
+    # assertion does not depend on the CI terminal width or ANSI styling
+    # rewrapping or splitting the option name.
     # When
-    result = _cli("start", "--help")
+    result = CliRunner(env={"COLUMNS": "200", "NO_COLOR": "1", "TERM": "dumb"}).invoke(
+        app, ["receiver", "start", "--help"]
+    )
+    rendered = _strip_terminal_styling(result.output)
 
     # Then the help text does not promise a total request deadline
-    assert "--request-timeout" in result.output
-    assert "inactivity" in result.output.lower()
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert "--request-timeout" in rendered
+    assert "inactivity" in rendered.lower()
+
+
+def _strip_terminal_styling(text: str) -> str:
+    """Drop ANSI colour codes and the box drawing rich adds around help."""
+    without_colour = ANSI_PATTERN.sub("", text)
+    return BOX_PATTERN.sub(" ", without_colour)

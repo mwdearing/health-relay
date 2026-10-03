@@ -9,8 +9,9 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import replace
 from datetime import UTC, datetime
+from http.client import HTTPException, HTTPResponse
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Final, Literal, TypeAlias, cast
+from typing import Annotated, Final, Literal, TypeAlias, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import (
@@ -57,6 +58,7 @@ from health_bridge.receiver.intake_tokens import (
     create_intake_token_for_active_producer,
     create_pending_intake_token,
     discard_pending_intake_token,
+    intake_token_status,
     list_intake_tokens_on,
     revoke_active_intake_token,
 )
@@ -109,9 +111,6 @@ from health_bridge.storage.intake_context import (
     revoke_producer_tokens,
 )
 
-if TYPE_CHECKING:
-    from http.client import HTTPResponse
-
 receiver_app = typer.Typer(
     add_completion=False,
     help="User-owned local receiver commands for HealthKit companion sync.",
@@ -158,7 +157,11 @@ INTAKE_ROUTES_DISABLED_MESSAGE: Final = (
     "--enable-intake-context to serve the intake-context routes."
 )
 INTAKE_SMOKE_URL_MESSAGE: Final = (
-    "Receiver intake smoke failed: URL must use http or https."
+    "Receiver intake smoke failed: --url must be an http or https URL with a host."
+)
+INTAKE_SMOKE_BODY_TOO_LARGE_MESSAGE: Final = (
+    "Receiver intake smoke failed: the capabilities response is too large to be a "
+    "capabilities document."
 )
 INTAKE_SMOKE_UNREACHABLE_MESSAGE: Final = (
     "Receiver intake smoke failed: the receiver was not reachable."
@@ -171,6 +174,9 @@ MAX_REQUEST_TIMEOUT_SECONDS: Final = 300.0
 INTAKE_SMOKE_OK_STATUS: Final = 200
 INTAKE_SMOKE_NOT_FOUND_STATUS: Final = 404
 INTAKE_SMOKE_TIMEOUT_SECONDS: Final = 10
+# A capabilities document is a few hundred bytes. Reading only this much keeps a
+# large or endlessly drip-fed response from being buffered whole.
+INTAKE_SMOKE_MAX_BODY_BYTES: Final = 64 * 1024
 INTAKE_SMOKE_UNUSABLE_CAPABILITIES_MESSAGE: Final = (
     "Receiver intake smoke failed: the capabilities response is not a usable "
     "intake receiver ({reason}). Check that --url points at a health-bridge "
@@ -232,6 +238,13 @@ REQUIRED_INTAKE_CAPABILITY_FIELDS: Final = frozenset(
         "max_operations",
     }
 )
+# A generated intake token: the `hri_` prefix plus 32 bytes of URL-safe base64.
+# Nothing else can be sent as a bearer credential without corrupting the request.
+INTAKE_TOKEN_PATTERN: Final = re.compile(
+    re.escape(INTAKE_TOKEN_PREFIX) + r"[A-Za-z0-9_-]{43}",
+)
+# Hostnames and IP literals urllib can encode into a request line.
+INTAKE_SMOKE_HOST_PATTERN: Final = re.compile(r"[A-Za-z0-9._~!$&'()*+,;=%:-]+")
 PurgeIdentity: TypeAlias = tuple[int, int, int, int, int]
 SMOKE_RESPONSE_ADAPTER: Final[TypeAdapter[SmokeResponse]] = TypeAdapter(SmokeResponse)
 INTAKE_JSON_OBJECT_ADAPTER: Final[TypeAdapter[dict[str, object]]] = TypeAdapter(
@@ -1400,22 +1413,28 @@ def _echo_intake_token_file_result(  # noqa: PLR0913 -- one identity per issuanc
 ) -> None:
     """Write the secret privately, then activate the token that secret unlocks.
 
-    The token row is inserted already revoked, so nothing can authenticate with
-    it until the file is on disk. A failed write therefore leaves no active
-    credential even if the database cannot be reached to revoke one afterwards;
-    the unusable row is then dropped. Activation happens after the write, so a
-    token is never usable before the secret it belongs to exists, and activation
-    rechecks the producer in the same statement so a producer revoked in between
-    cannot receive one. When activation fails, any file this command replaced is
-    put back, so an existing credential file is never destroyed by a failed
-    issuance.
+    The token row is inserted pending, a state of its own, so nothing can
+    authenticate with it until the file is on disk. A failed write therefore
+    leaves no active credential even if the database cannot be reached to revoke
+    one afterwards; the unusable row is then dropped. Activation happens after
+    the write, so a token is never usable before the secret it belongs to exists,
+    and activation promotes only a row still marked pending, with the producer
+    rechecked in the same statement, so neither a revocation applied from another
+    terminal nor a producer revoked in between can produce an active credential.
+    Both a write that fails after replacing its destination and a failed
+    activation put any file this command replaced back, so an existing credential
+    file is never destroyed by a failed issuance.
     """
     secret_text = json.dumps(secret_payload, sort_keys=True) + "\n"
     replaced_secret = _existing_secret_text(output_secret)
     try:
         write_private_text_file(output_secret, secret_text)
     except OSError as exc:
+        # The write replaces its destination before it can still fail (chmod or
+        # directory fsync), so a late failure leaves this command's unusable
+        # token where a working credential used to be. Put the old file back.
         _discard_pending_intake_token_or_warn(db, issued.token_prefix)
+        _restore_secret_file_or_warn(output_secret, replaced_secret)
         typer.echo(INTAKE_WRITE_FAILURE_MESSAGE, err=True)
         raise typer.Exit(code=1) from exc
     try:
@@ -1480,6 +1499,7 @@ def intake_list_tokens(
                         "label": token.label,
                         "created_at": token.created_at,
                         "revoked_at": token.revoked_at,
+                        "status": intake_token_status(token.revoked_at),
                     }
                     for token in tokens
                 ]
@@ -2035,15 +2055,17 @@ def intake_smoke(
             ),
         ) as response:
             status = response.status
-            body = response.read()
+            body = _read_intake_capabilities_body(response)
     except HTTPError as exc:
         # The error carries the open response; close it so the socket is released.
         with suppress(OSError):
             exc.close()
         _echo_intake_smoke_failure(exc.code)
         raise typer.Exit(code=1) from exc
-    except (URLError, TimeoutError, OSError) as exc:
-        # A read that stalls after the headers raise TimeoutError directly.
+    except (URLError, HTTPException, TimeoutError, OSError) as exc:
+        # A read that stalls after the headers raise TimeoutError directly, and
+        # a connection that hangs up mid-body raises IncompleteRead, which is an
+        # HTTPException rather than an OSError.
         typer.echo(INTAKE_SMOKE_UNREACHABLE_MESSAGE, err=True)
         raise typer.Exit(code=1) from exc
 
@@ -2088,6 +2110,30 @@ def _intake_capabilities_url(base_url: str) -> str:
     return f"{base_url.rstrip('/')}{INTAKE_CONTEXT_CAPABILITIES_PATH}"
 
 
+def _read_intake_capabilities_body(response: HTTPResponse) -> bytes:
+    """Read at most a capabilities document, and refuse anything larger.
+
+    The socket timeout only bounds silence, so a peer that keeps sending bytes
+    would keep this read going while buffering all of them. The advertised
+    length is checked first when the receiver provides one, and the read itself
+    is capped, so an oversized or endless response fails instead of filling
+    memory.
+    """
+    declared = response.headers.get("Content-Length")
+    if (
+        declared is not None
+        and declared.strip().isdigit()
+        and int(declared) > INTAKE_SMOKE_MAX_BODY_BYTES
+    ):
+        typer.echo(INTAKE_SMOKE_BODY_TOO_LARGE_MESSAGE, err=True)
+        raise typer.Exit(code=1)
+    body = response.read(INTAKE_SMOKE_MAX_BODY_BYTES + 1)
+    if len(body) > INTAKE_SMOKE_MAX_BODY_BYTES:
+        typer.echo(INTAKE_SMOKE_BODY_TOO_LARGE_MESSAGE, err=True)
+        raise typer.Exit(code=1)
+    return body
+
+
 def _intake_capabilities_fields(body: bytes) -> dict[str, object]:
     """The capability fields worth showing, with anything unexpected dropped."""
     document = _intake_json_object(body)
@@ -2118,6 +2164,62 @@ def _intake_capabilities_unusable_reason(body: bytes) -> str | None:
     missing = sorted(REQUIRED_INTAKE_CAPABILITY_FIELDS - document.keys())
     if missing:
         return f"capability fields are missing: {', '.join(missing)}"
+    # Presence is not enough: an uploader reads these values, so a null or
+    # wrongly typed one means the endpoint cannot be used even at HTTP 200.
+    invalid = _invalid_intake_capability_reason(document)
+    if invalid is not None:
+        return invalid
+    return None
+
+
+def _invalid_intake_capability_reason(document: Mapping[str, object]) -> str | None:
+    """The first capability value an uploader could not use, or nothing.
+
+    ``authentication`` must describe the bearer header to send, ``features``
+    must be a list of feature names, and both limits must be positive whole
+    numbers a client can compare against.
+    """
+    reasons = (
+        _invalid_authentication_reason(document.get("authentication")),
+        _invalid_features_reason(document.get("features")),
+        _invalid_capability_limit_reason(document, "max_body_bytes"),
+        _invalid_capability_limit_reason(document, "max_operations"),
+    )
+    return next((reason for reason in reasons if reason is not None), None)
+
+
+def _invalid_authentication_reason(authentication: object) -> str | None:
+    """Why the advertised authentication cannot be used, or nothing."""
+    if not isinstance(authentication, dict):
+        return f"authentication is {authentication!r}, not an object"
+    described = cast("Mapping[str, object]", authentication)
+    for key in ("scheme", "header"):
+        value = described.get(key)
+        if not isinstance(value, str) or value.strip() == "":
+            return f"authentication.{key} is {value!r}"
+    return None
+
+
+def _invalid_features_reason(features: object) -> str | None:
+    """Why the advertised feature list cannot be used, or nothing."""
+    if not isinstance(features, list):
+        return f"features is {features!r}, not a list of names"
+    named = cast("list[object]", features)
+    if any(not isinstance(feature, str) or feature.strip() == "" for feature in named):
+        return f"features is {features!r}, not a list of names"
+    return None
+
+
+def _invalid_capability_limit_reason(
+    document: Mapping[str, object],
+    field: str,
+) -> str | None:
+    """Why a numeric capability limit cannot be used, or nothing."""
+    limit = document.get(field)
+    if isinstance(limit, bool) or not isinstance(limit, int):
+        return f"{field} is {limit!r}, not a whole number"
+    if limit <= 0:
+        return f"{field} is {limit!r}, not a positive limit"
     return None
 
 
@@ -2149,14 +2251,39 @@ def _read_intake_smoke_token(token_file: Path) -> str:
         raise typer.Exit(code=1) from exc
     document = _intake_json_object(text.encode("utf-8"))
     token = None if document is None else document.get("token")
-    if not isinstance(token, str) or not token.startswith(INTAKE_TOKEN_PREFIX):
+    # The whole generated format, not just the prefix: a corrupted or edited file
+    # can hold a newline, a carriage return or a non-Latin-1 character, and
+    # urllib raises while building or sending the Authorization header for any of
+    # those rather than failing the request cleanly.
+    if not isinstance(token, str) or INTAKE_TOKEN_PATTERN.fullmatch(token) is None:
         typer.echo(INTAKE_SMOKE_TOKEN_FILE_MESSAGE, err=True)
         raise typer.Exit(code=1)
     return token
 
 
 def _validate_intake_smoke_url(url: str) -> None:
-    if urlparse(url).scheme not in {"http", "https"}:
+    """Accept only an http(s) URL urllib can actually open.
+
+    Parsing is defensive because the malformed inputs a user can type raise from
+    different places: ``urlparse`` itself rejects an unmatched IPv6 bracket,
+    ``.port`` rejects a non-numeric or out-of-range port, and the request would
+    otherwise fail later with a host that is empty, holds whitespace, or cannot
+    be encoded for a header.
+    """
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+        _ = parsed.port
+    except ValueError:
+        typer.echo(INTAKE_SMOKE_URL_MESSAGE, err=True)
+        raise typer.Exit(code=1) from None
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or host is None
+        or host.strip() == ""
+        or not INTAKE_SMOKE_HOST_PATTERN.fullmatch(host)
+    ):
         typer.echo(INTAKE_SMOKE_URL_MESSAGE, err=True)
         raise typer.Exit(code=1)
 

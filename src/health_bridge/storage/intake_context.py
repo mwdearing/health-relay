@@ -37,6 +37,14 @@ TERMINAL_OUTCOMES: Final = frozenset(get_args(OperationOutcome))
 SAVEPOINT_NAME: Final = "intake_context_write"
 
 
+# The `revoked_at` value marking an intake token row as inserted-pending rather
+# than revoked on purpose. `intake_context_tokens` has no separate state column,
+# so a pending row needs its own value: a real revocation stamp would leave it
+# indistinguishable from one somebody deliberately revoked, and a later
+# activation could then clear that deliberate revocation.
+PENDING_INTAKE_TOKEN_MARKER: Final = "pending"  # noqa: S105 - a state name, not a secret.
+
+
 class IntakeContextStorageError(Exception):
     """Base class for every error this module raises."""
 
@@ -361,7 +369,8 @@ where owner_id = ? and producer_id = ? and revoked_at is not null
 REVOKE_PRODUCER_TOKENS_SQL: Final = """
 update intake_context_tokens
 set revoked_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-where owner_id = ? and producer_id = ? and revoked_at is null
+where owner_id = ? and producer_id = ?
+  and (revoked_at is null or revoked_at = ?)
 """
 SELECT_REVISION_SQL: Final = """
 select intake_revision_row_id, owner_id, producer_id, intake_id, revision,
@@ -624,12 +633,18 @@ def revoke_producer_tokens(
     owner_id: str,
     producer_id: str,
 ) -> int:
-    """Revoke every active intake token of one producer, in the caller's transaction."""
+    """Revoke every usable intake token of one producer, in the caller's transaction.
+
+    Tokens still marked pending are stamped too. A pending token belongs to this
+    producer and has not authenticated yet, so revoking the producer has to
+    retire it permanently: leaving the pending marker would let a later
+    activation hand out a credential the revocation was meant to stop.
+    """
     with _write_scope(connection, "revoke_producer_tokens"):
         return int(
             connection.execute(
                 REVOKE_PRODUCER_TOKENS_SQL,
-                (owner_id, producer_id),
+                (owner_id, producer_id, PENDING_INTAKE_TOKEN_MARKER),
             ).rowcount
         )
 

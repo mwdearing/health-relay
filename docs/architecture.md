@@ -135,14 +135,18 @@ destination: `--output-secret` writes the token to a mode-0600 private file and
 prints only the prefix, refuses a destination that resolves to the database or
 one of its sidecars, and drops the token if the write fails. Its producer check
 and the token insert share one transaction, so an unknown or revoked producer
-never receives a token. With `--output-secret` the row is inserted already
-revoked and activated only after the secret is on disk, with the producer
+never receives a token. With `--output-secret` the row is inserted in a `pending`
+state and activated only after the secret is on disk, with the producer
 rechecked in that same statement, so neither a failed write nor a producer
 revoked mid-write can leave an active credential behind even when the database
-cannot be reached to revoke one; a failed activation restores any secret file it
-replaced. `intake-list-producers` and `intake-list-tokens` open the
-store read-only and never create or migrate it, and `intake-revoke-token` exits
-non-zero when no active token carries the prefix.
+cannot be reached to revoke one. A pending row is distinct from a revoked one,
+so `intake-revoke-token` or `intake-revoke-producer` applied while a secret
+file is still being written retires that credential permanently instead of
+being undone by the later activation. Any secret file a failed write or a
+failed activation replaced is put back. `intake-list-producers` and
+`intake-list-tokens` open the store read-only and never create or migrate it;
+token rows report a `status` of `active`, `pending` or `revoked`, and
+`intake-revoke-token` exits non-zero when no usable token carries the prefix.
 
 `intake-revoke-producer` retires a producer and every active token it owns in one
 transaction; `intake-reactivate-producer` clears the revocation but leaves those
@@ -153,8 +157,13 @@ producer is refused with a message naming `intake-reactivate-producer`.
 file, prints only the status and capability fields, and reports a 404 as "the
 intake routes are not enabled". A redirect is refused rather than followed so the
 bearer token cannot reach another host, and a 200 that is not an intake
-capabilities document (wrong schema, no supported version, or missing capability
-fields) is reported as a failure rather than a passing smoke check.
+capabilities document (wrong schema, no supported version, missing capability
+fields, or capability values an uploader cannot use) is reported as a failure
+rather than a passing smoke check. The token must be a well-formed generated
+token, `--url` must be an http(s) URL with a host that can actually be opened,
+only a bounded capabilities document is read, and a connection that stalls,
+hangs up or answers with an unparseable status line is reported as an
+unreachable receiver rather than a traceback.
 `--request-timeout` is a socket-read inactivity timeout in seconds (greater than
 0, at most 300, default 30): it restarts on each blocking read, so it bounds how
 long the receiver waits on a silent connection rather than total request time.
