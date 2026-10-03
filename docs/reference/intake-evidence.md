@@ -170,6 +170,12 @@ is the whole listing.
 Without `--owner-id` the command uses the only owner with a registered intake
 producer. With no registered owner it fails with "no intake owner registered";
 with several it asks for `--owner-id`. A cursor this query did not issue and a
-`limit` outside 1 to 500 are errors too. Every failure prints one line on
-standard error and exits 1, so a shell script can branch on the exit code; the
-item order and the join rules are the ones above.
+`limit` outside 1 to 500 are errors too.
+
+Once the arguments parse, every query failure prints one line on standard error
+and exits 1, so a shell script can branch on the exit code. Argument-parsing
+failures happen before that: a missing `--db`, a non-integer `--limit` or an
+unknown option makes the option parser print its usage text and exit 2, as it
+does for the other query commands. Either way the exit code is 1 for a query
+failure and 2 for a rejected command line, and the item order and the join
+rules are the ones above.

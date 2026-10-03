@@ -276,6 +276,32 @@ def test_limit_above_the_maximum_exits_with_one_line(tmp_path: Path) -> None:
     assert len(result.stderr.strip().splitlines()) == 1
 
 
+@pytest.mark.parametrize(
+    "cli_args",
+    [
+        pytest.param((), id="missing-db"),
+        pytest.param(
+            ("--db", "ignored.sqlite", "--limit", "many"), id="non-integer-limit"
+        ),
+        pytest.param(("--db", "ignored.sqlite", "--nope"), id="unknown-option"),
+    ],
+)
+def test_argument_parsing_failure_uses_the_usage_exit_code(
+    cli_args: tuple[str, ...],
+) -> None:
+    # Given a command line the option parser rejects before the query runs
+
+    # When
+    result = run_query(*cli_args)
+
+    # Then the parser owns the failure: usage output on stderr and exit code 2,
+    # which the reference documents as distinct from the exit code 1 used by
+    # query failures.
+    assert result.exit_code == 2
+    assert "Usage:" in result.output
+    assert result.stdout == ""
+
+
 def test_missing_database_is_not_created(tmp_path: Path) -> None:
     # Given
     missing = tmp_path / "absent" / "receiver.sqlite"
