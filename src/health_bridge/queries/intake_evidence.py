@@ -40,6 +40,7 @@ ComponentRow: TypeAlias = tuple[
 ]
 ActiveLinkRow: TypeAlias = tuple[str, str]
 SampleRow: TypeAlias = tuple[str, str, str | None]
+OwnerRow: TypeAlias = tuple[str]
 COMPONENT_ROWS_ADAPTER: Final[TypeAdapter[list[ComponentRow]]] = TypeAdapter(
     list[ComponentRow],
 )
@@ -48,6 +49,9 @@ ACTIVE_LINK_ROWS_ADAPTER: Final[TypeAdapter[list[ActiveLinkRow]]] = TypeAdapter(
 )
 SAMPLE_ROWS_ADAPTER: Final[TypeAdapter[list[SampleRow]]] = TypeAdapter(
     list[SampleRow],
+)
+OWNER_ROWS_ADAPTER: Final[TypeAdapter[list[OwnerRow]]] = TypeAdapter(
+    list[OwnerRow],
 )
 
 # Effective revision: the newest accepted revision of each intake. A tombstone,
@@ -131,6 +135,11 @@ order by samples.sample_id
 DISTINCT_TYPE_CODES_SQL: Final = """
 select type_code from health_types order by type_code
 """
+# Two owners are enough to tell "exactly one" from "several", so the probe is
+# bounded however many producers are registered.
+INTAKE_OWNERS_SQL: Final = (
+    "select distinct owner_id from intake_producers order by owner_id limit 2"
+)
 # The same sample actively claimed by another effective component is a conflict.
 OTHER_ACTIVE_CLAIMS_SQL: Final = """
 select count(*)
@@ -310,6 +319,11 @@ class InvalidIntakeEvidenceLimitError(ValueError):
         )
 
 
+@final
+class UnresolvedIntakeOwnerError(ValueError):
+    """A listing asked for without an owner_id that names exactly one owner."""
+
+
 @dataclass(frozen=True, slots=True)
 class IntakeEvidenceItem:
     intake_id: str
@@ -333,6 +347,13 @@ class IntakeEvidenceItem:
 class IntakeEvidencePage:
     items: list[IntakeEvidenceItem]
     next_cursor: str | None
+
+
+# One serializer for every surface: the page is a JSON document with `items`
+# and `next_cursor`, and the CLI prints what the MCP tool returns.
+INTAKE_EVIDENCE_PAGE_ADAPTER: Final[TypeAdapter[IntakeEvidencePage]] = TypeAdapter(
+    IntakeEvidencePage,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -580,6 +601,35 @@ def _is_complete(
     return unverified is None
 
 
+def resolve_intake_owner(
+    connection: sqlite3.Connection,
+    owner_id: str | None,
+    *,
+    owner_option: str = "owner_id",
+) -> str:
+    """Resolve the intake owner a listing is scoped to.
+
+    An explicit `owner_id` is taken as given. Without one the owner is the
+    single owner with a registered intake producer, because every item of the
+    listing belongs to exactly one owner. No registered owner and several
+    registered owners are both `UnresolvedIntakeOwnerError`, so no surface
+    guesses an owner. `owner_option` is how the calling surface names the owner
+    input, so the error points at that surface's option.
+    """
+    if owner_id is not None:
+        return owner_id
+    owners = OWNER_ROWS_ADAPTER.validate_python(
+        connection.execute(INTAKE_OWNERS_SQL).fetchall(),
+    )
+    if not owners:
+        message = "no intake owner registered"
+        raise UnresolvedIntakeOwnerError(message)
+    if len(owners) > 1:
+        message = f"more than one intake owner is registered; pass {owner_option}"
+        raise UnresolvedIntakeOwnerError(message)
+    return owners[0][0]
+
+
 def list_intake_evidence(
     connection: sqlite3.Connection,
     *,
@@ -695,6 +745,7 @@ def list_intake_evidence(
 
 __all__ = [
     "DEFAULT_LIMIT",
+    "INTAKE_EVIDENCE_PAGE_ADAPTER",
     "MAX_LIMIT",
     "MIN_LIMIT",
     "IntakeEvidenceItem",
@@ -702,6 +753,8 @@ __all__ = [
     "InvalidIntakeEvidenceCursorError",
     "InvalidIntakeEvidenceLimitError",
     "LinkStatus",
+    "UnresolvedIntakeOwnerError",
     "exporter_client_record_id",
     "list_intake_evidence",
+    "resolve_intake_owner",
 ]
