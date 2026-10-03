@@ -703,7 +703,7 @@ final class BackgroundSyncTests: XCTestCase {
         }
         XCTAssertEqual(
             HealthKitReadTypeCatalog.observerSampleTypes(for: HealthBridgeBackgroundSync.observedHealthTypes).count,
-            4
+            3
         )
         XCTAssertEqual(
             HealthKitReadTypeCatalog.observerSampleTypes(
@@ -711,7 +711,7 @@ final class BackgroundSyncTests: XCTestCase {
                     automaticQuantityTypeCodes: ["heart_rate"]
                 )
             ).count,
-            5
+            4
         )
     }
 
