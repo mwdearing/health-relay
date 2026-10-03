@@ -131,3 +131,45 @@ unknown argument returns a JSON-RPC `-32602` error naming the tool and the
 problem; the server keeps running. The result is the page as JSON: `items[]`
 (each with `producer_id`, `link_status`, `complete` and the fields above) and
 `next_cursor`. It carries metadata and identifiers only, no sample values.
+
+## CLI `health-bridge query intake-evidence`
+
+The same page is available to a terminal, next to the other
+`health-bridge query` commands:
+
+```bash
+health-bridge query intake-evidence \
+  --db ~/.local/share/health-bridge/health.sqlite \
+  --owner-id <owner> \
+  --intake-id <intake> \
+  --limit 100
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--db` | required | Path of an existing database. |
+| `--owner-id` | the single registered owner | Intake owner to read. |
+| `--intake-id` | none | Limit the listing to one intake. |
+| `--cursor` | none | `next_cursor` from an earlier page. |
+| `--limit` | 100 | Items per page, 1 to 500. |
+| `--all` | off | Follow every page and print one document. |
+
+The command is read-only. It opens the database with the same read-only
+connection the MCP tool uses, so it never migrates, writes or creates anything:
+a missing database is an error, not an empty store, and the file is unchanged
+after a run.
+
+For the same arguments it prints exactly the document the
+`get_intake_evidence_v1` tool returns: `items[]` and `next_cursor`. Without
+`--all` that is one page. With `--all` it follows `next_cursor` until the
+listing ends and prints one document with every item and `next_cursor: null`;
+`--all` follows at most 1000 pages, then stops with an error rather than
+walking forever, and it cannot be combined with `--cursor` because its result
+is the whole listing.
+
+Without `--owner-id` the command uses the only owner with a registered intake
+producer. With no registered owner it fails with "no intake owner registered";
+with several it asks for `--owner-id`. A cursor this query did not issue and a
+`limit` outside 1 to 500 are errors too. Every failure prints one line on
+standard error and exits 1, so a shell script can branch on the exit code; the
+item order and the join rules are the ones above.

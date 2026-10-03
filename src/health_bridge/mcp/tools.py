@@ -9,7 +9,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    TypeAdapter,
     field_validator,
     model_validator,
 )
@@ -29,10 +28,12 @@ from health_bridge.queries import (
     list_synced_metrics,
 )
 from health_bridge.queries.intake_evidence import (
-    IntakeEvidencePage,
+    INTAKE_EVIDENCE_PAGE_ADAPTER,
     InvalidIntakeEvidenceCursorError,
     InvalidIntakeEvidenceLimitError,
+    UnresolvedIntakeOwnerError,
     list_intake_evidence,
+    resolve_intake_owner,
 )
 from health_bridge.status import read_status_markdown, read_status_snapshot
 from health_bridge.storage.database import connect_readonly_database
@@ -376,36 +377,19 @@ def _call_explain_sources(db_path: Path, _args: JsonMapping) -> BaseModel:
     return explain_sources(db_path)
 
 
-OWNERS_SQL: Final = (
-    "select distinct owner_id from intake_producers order by owner_id limit 2"
-)
-INTAKE_EVIDENCE_PAGE_ADAPTER: Final[TypeAdapter[IntakeEvidencePage]] = TypeAdapter(
-    IntakeEvidencePage,
-)
-
-
 def _call_intake_evidence(db_path: Path, args: JsonMapping) -> str:
     parsed = IntakeEvidenceArgs.model_validate(args)
     with connect_readonly_database(db_path) as connection:
-        owner_id = parsed.owner_id
-        if owner_id is None:
-            owners = [str(row[0]) for row in connection.execute(OWNERS_SQL)]  # pyright: ignore[reportAny]
-            if not owners:
-                message = "no intake owner registered"
-                raise ToolInputError(message)
-            if len(owners) > 1:
-                message = "more than one intake owner is registered; pass owner_id"
-                raise ToolInputError(message)
-            owner_id = owners[0]
         try:
             page = list_intake_evidence(
                 connection,
-                owner_id=owner_id,
+                owner_id=resolve_intake_owner(connection, parsed.owner_id),
                 cursor=parsed.cursor,
                 limit=parsed.limit,
                 intake_id=parsed.intake_id,
             )
         except (
+            UnresolvedIntakeOwnerError,
             InvalidIntakeEvidenceCursorError,
             InvalidIntakeEvidenceLimitError,
         ) as error:
