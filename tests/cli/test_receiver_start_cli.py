@@ -68,6 +68,7 @@ def test_receiver_start_preserves_direct_defaults_and_skips_mailbox_stores(
         mailbox_connection_store: MailboxConnectionStore | None,
         mailbox_root: Path | None,
         intake_context_enabled: bool,
+        request_timeout_seconds: float,
     ) -> None:
         captured.update(
             db_path=db_path,
@@ -77,6 +78,7 @@ def test_receiver_start_preserves_direct_defaults_and_skips_mailbox_stores(
             mailbox_connection_store=mailbox_connection_store,
             mailbox_root=mailbox_root,
             intake_context_enabled=intake_context_enabled,
+            request_timeout_seconds=request_timeout_seconds,
         )
 
     monkeypatch.setattr(
@@ -104,6 +106,7 @@ def test_receiver_start_preserves_direct_defaults_and_skips_mailbox_stores(
         "mailbox_connection_store": None,
         "mailbox_root": None,
         "intake_context_enabled": False,
+        "request_timeout_seconds": 30.0,
     }
 
 

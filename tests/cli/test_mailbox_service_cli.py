@@ -335,7 +335,7 @@ def test_receiver_start_loads_owned_service_config_into_supported_runtime(
     request = service_request(tmp_path)
     _ = write_launch_agent_artifacts(request, activate=False)
     monkeypatch.setattr(sys, "platform", "darwin")
-    captured: dict[str, Path | str | int | None] = {}
+    captured: dict[str, object] = {}
 
     def fake_serve_receiver(  # noqa: PLR0913 -- Mirrors the receiver server API.
         db_path: Path,
@@ -346,6 +346,7 @@ def test_receiver_start_loads_owned_service_config_into_supported_runtime(
         mailbox_connection_store: MailboxConnectionStore | None,
         mailbox_root: Path | None,
         intake_context_enabled: bool,
+        request_timeout_seconds: float,
     ) -> None:
         del mailbox_key_store, mailbox_connection_store
         captured.update(
@@ -354,6 +355,7 @@ def test_receiver_start_loads_owned_service_config_into_supported_runtime(
             port=port,
             mailbox_root=mailbox_root,
             intake_context_enabled=intake_context_enabled,
+            request_timeout_seconds=request_timeout_seconds,
         )
 
     def select_mailbox(
@@ -401,6 +403,7 @@ def test_receiver_start_loads_owned_service_config_into_supported_runtime(
         "port": 8765,
         "mailbox_root": request.mailbox_root,
         "intake_context_enabled": enable_intake,
+        "request_timeout_seconds": 30.0,
     }
 
 
