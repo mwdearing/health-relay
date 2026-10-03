@@ -118,7 +118,12 @@ health-bridge receiver intake-create-token \
   --owner-id <owner> --producer-id nutrition-app --label phone \
   --output-secret .private/intake-token.json
 
-health-bridge receiver start --db .tmp/device.sqlite --enable-intake-context
+health-bridge receiver start --db .tmp/device.sqlite --enable-intake-context \
+  --request-timeout 30
+
+health-bridge receiver intake-smoke \
+  --url http://127.0.0.1:8765 \
+  --token-file .private/intake-token.json
 ```
 
 `intake-register-producer` is idempotent for identical details and fails closed
@@ -130,9 +135,22 @@ destination: `--output-secret` writes the token to a mode-0600 private file and
 prints only the prefix, refuses a destination that resolves to the database or
 one of its sidecars, and revokes the token if the write fails. Its producer check
 and the token insert share one transaction, so an unknown or revoked producer
-never receives a token. `intake-list-producers` and `intake-list-tokens` open the
+never receives a token. With `--output-secret` the row is inserted already
+revoked and activated only after the secret is on disk, so a failed write cannot
+leave an active credential behind even when the database cannot be reached to
+revoke one. `intake-list-producers` and `intake-list-tokens` open the
 store read-only and never create or migrate it, and `intake-revoke-token` exits
-non-zero when no active token carries the prefix. See
+non-zero when no active token carries the prefix.
+
+`intake-revoke-producer` retires a producer and every active token it owns in one
+transaction; `intake-reactivate-producer` clears the revocation but leaves those
+tokens revoked, so a new token is required. Both exit non-zero for an unknown
+producer or one already in the opposite state, and re-registering a revoked
+producer is refused with a message naming `intake-reactivate-producer`.
+`intake-smoke` checks the capabilities route with a token read from a private
+file, prints only the status and capability fields, and reports a 404 as "the
+intake routes are not enabled". `--request-timeout` bounds a single HTTP request
+(greater than 0, at most 300 seconds, default 30). See
 [Pairing and receiver setup](pairing.md#intake-producers-and-intake-tokens) for
 the full command reference.
 - **Intake-only tokens.** These routes accept only tokens stored in

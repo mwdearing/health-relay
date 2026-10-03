@@ -1,21 +1,27 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import stat
+from contextlib import contextmanager
+from threading import Thread
 from typing import TYPE_CHECKING, Final
 
 import pytest
 from pydantic import BaseModel, TypeAdapter
 from typer.testing import CliRunner, Result
 
+from health_bridge import cli_receiver, private_files
 from health_bridge.cli import app
 from health_bridge.receiver.intake_tokens import (
     IntakeProducerInactiveError,
     authenticate_intake_token,
     create_intake_token_for_active_producer,
 )
+from health_bridge.receiver.server import build_receiver_server, server_port
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
 
 COUNT_ROWS_ADAPTER: TypeAdapter[list[tuple[int]]] = TypeAdapter(list[tuple[int]])
@@ -77,6 +83,30 @@ class RevokePayload(BaseModel):
     revoked_token_count: int
 
 
+class RevokeProducerPayload(BaseModel):
+    owner_id: str
+    producer_id: str
+    writer_bundle_id: str
+    label: str
+    registered_at: str
+    revoked_at: str | None
+    revoked_token_count: int
+    status: str
+
+
+class ReactivateProducerPayload(BaseModel):
+    owner_id: str
+    producer_id: str
+    registered_at: str
+    revoked_at: str | None
+    status: str
+    warning: str
+
+
+class IntakeSmokePayload(BaseModel):
+    http_status: int
+
+
 CREATE_TOKEN_ARGS: Final = (
     "intake-create-token",
     "--owner-id",
@@ -97,10 +127,36 @@ REGISTER_ARGS: Final = (
     "--label",
     DISPLAY_LABEL,
 )
+PRODUCER_ARGS: Final = (
+    "--owner-id",
+    OWNER_ID,
+    "--producer-id",
+    PRODUCER_ID,
+)
 
 
 def _cli(*args: str) -> Result:
     return CliRunner().invoke(app, ["receiver", *args])
+
+
+def _revoke_producer(db_path: Path) -> Result:
+    return _cli("intake-revoke-producer", "--db", str(db_path), *PRODUCER_ARGS)
+
+
+def _reactivate_producer(db_path: Path) -> Result:
+    return _cli("intake-reactivate-producer", "--db", str(db_path), *PRODUCER_ARGS)
+
+
+def _active_token_count(db_path: Path) -> int:
+    if not db_path.exists():
+        return 0
+    with sqlite3.connect(db_path) as connection:
+        counts = COUNT_ROWS_ADAPTER.validate_python(
+            connection.execute(
+                "select count(*) from intake_context_tokens where revoked_at is null",
+            ).fetchall(),
+        )
+    return counts[0][0]
 
 
 def _single_column(db_path: Path, sql: str) -> list[str]:
@@ -805,3 +861,395 @@ def test_create_intake_token_for_active_producer_issues_a_working_token(
     # Then
     assert issued.token.startswith("hri_")
     assert authenticate_intake_token(db_path, issued.token) is not None
+
+
+def test_intake_revoke_producer_cli_revokes_the_producer_and_its_tokens(
+    tmp_path: Path,
+) -> None:
+    # Given a producer with two live tokens
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    tokens: list[IssuedTokenPayload] = []
+    for index in range(2):
+        secret_path = tmp_path / "private" / f"token-{index}.json"
+        created = _issue_to_file(db_path, secret_path)
+        assert created.exit_code == 0, (created.output, created.exception)
+        tokens.append(
+            IssuedTokenPayload.model_validate_json(secret_path.read_text("utf-8"))
+        )
+    first_token, second_token = tokens
+    assert authenticate_intake_token(db_path, first_token.token) is not None
+    assert authenticate_intake_token(db_path, second_token.token) is not None
+
+    # When
+    result = _revoke_producer(db_path)
+
+    # Then
+    assert result.exit_code == 0, (result.output, result.exception)
+    payload = RevokeProducerPayload.model_validate_json(result.stdout)
+    assert payload.status == "revoked"
+    assert payload.producer_id == PRODUCER_ID
+    assert payload.revoked_token_count == 2
+    assert payload.revoked_at
+    for issued in tokens:
+        assert authenticate_intake_token(db_path, issued.token) is None
+        assert issued.token not in result.stdout
+        assert issued.token_prefix not in result.stdout
+
+
+def test_intake_revoke_producer_cli_refuses_an_unknown_producer(tmp_path: Path) -> None:
+    # Given a registered producer and a request for a different one
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    before = _digest(db_path)
+
+    # When
+    result = _cli(
+        "intake-revoke-producer",
+        "--db",
+        str(db_path),
+        "--owner-id",
+        OWNER_ID,
+        "--producer-id",
+        "other-app",
+    )
+
+    # Then
+    assert result.exit_code == 1
+    assert "nothing was revoked" in result.stderr
+    assert _digest(db_path) == before
+
+
+def test_intake_revoke_producer_cli_refuses_a_second_revocation(tmp_path: Path) -> None:
+    # Given an already revoked producer
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    first = _revoke_producer(db_path)
+    assert first.exit_code == 0, (first.output, first.exception)
+
+    # When
+    second = _revoke_producer(db_path)
+
+    # Then
+    assert second.exit_code == 1
+    assert "already revoked" in second.stderr
+
+
+def test_intake_register_producer_cli_refuses_an_identical_revoked_producer(
+    tmp_path: Path,
+) -> None:
+    # Given a revoked producer
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    revoked = _revoke_producer(db_path)
+    assert revoked.exit_code == 0, (revoked.output, revoked.exception)
+
+    # When
+    result = _cli(*REGISTER_ARGS, "--db", str(db_path))
+
+    # Then
+    assert result.exit_code == 1
+    assert "intake-reactivate-producer" in result.stderr
+    listed = ProducerListPayload.model_validate_json(
+        _cli("intake-list-producers", "--db", str(db_path)).stdout,
+    )
+    assert listed.producers[0]["revoked_at"] is not None
+
+
+def test_intake_reactivate_producer_cli_clears_the_revocation(
+    tmp_path: Path,
+) -> None:
+    # Given a revoked producer
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    revoked = _revoke_producer(db_path)
+    assert revoked.exit_code == 0, (revoked.output, revoked.exception)
+
+    # When
+    result = _reactivate_producer(db_path)
+
+    # Then
+    assert result.exit_code == 0, (result.output, result.exception)
+    payload = ReactivateProducerPayload.model_validate_json(result.stdout)
+    assert payload.status == "reactivated"
+    assert payload.revoked_at is None
+    assert "new" in payload.warning
+    listed = ProducerListPayload.model_validate_json(
+        _cli("intake-list-producers", "--db", str(db_path)).stdout,
+    )
+    assert listed.producers[0]["revoked_at"] is None
+
+
+def test_intake_reactivate_producer_cli_keeps_old_tokens_revoked(
+    tmp_path: Path,
+) -> None:
+    # Given a token issued before the producer was revoked
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    secret_path = tmp_path / "private" / "token.json"
+    created = _issue_to_file(db_path, secret_path)
+    assert created.exit_code == 0, (created.output, created.exception)
+    issued = IssuedTokenPayload.model_validate_json(secret_path.read_text("utf-8"))
+    revoked = _revoke_producer(db_path)
+    assert revoked.exit_code == 0, (revoked.output, revoked.exception)
+
+    # When
+    result = _reactivate_producer(db_path)
+
+    # Then
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert authenticate_intake_token(db_path, issued.token) is None
+    listed = TokenListPayload.model_validate_json(
+        _cli("intake-list-tokens", "--db", str(db_path)).stdout,
+    )
+    assert all(entry.revoked_at for entry in listed.tokens)
+    fresh = _issue_to_file(db_path, tmp_path / "private" / "fresh.json")
+    assert fresh.exit_code == 0, (fresh.output, fresh.exception)
+
+
+def test_intake_reactivate_producer_cli_refuses_an_unknown_producer(
+    tmp_path: Path,
+) -> None:
+    # Given
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    before = _digest(db_path)
+
+    # When
+    result = _reactivate_producer(db_path)
+
+    # Then
+    assert result.exit_code == 1
+    assert "already active" in result.stderr
+    assert _digest(db_path) == before
+
+
+def test_intake_create_token_cli_leaves_no_active_token_when_the_write_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given a producer whose secret destination cannot be written
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    before = _active_token_count(db_path)
+
+    def refuse_write(*_args: object, **_kwargs: object) -> None:
+        raise OSError
+
+    monkeypatch.setattr(
+        "health_bridge.cli_receiver.write_private_text_file",
+        refuse_write,
+    )
+
+    # When
+    result = _issue_to_file(db_path, tmp_path / "private" / "token.json")
+
+    # Then
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert _active_token_count(db_path) == before
+
+
+def test_intake_create_token_cli_discards_a_pending_token_row_on_write_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+
+    def refuse_write(*_args: object, **_kwargs: object) -> None:
+        raise OSError
+
+    monkeypatch.setattr(
+        "health_bridge.cli_receiver.write_private_text_file",
+        refuse_write,
+    )
+
+    # When
+    result = _issue_to_file(db_path, tmp_path / "private" / "token.json")
+
+    # Then the unusable row is gone rather than left behind as debris
+    assert result.exit_code == 1
+    assert _token_rows(db_path) == 0
+
+
+def test_intake_create_token_cli_activates_the_token_only_after_the_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given a token file whose write is observed as it happens
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    secret_path = tmp_path / "private" / "token.json"
+    observed: list[int] = []
+    real_write = private_files.write_private_text_file
+
+    def observing_write(path: Path, text: str) -> None:
+        real_write(path, text)
+        observed.append(_active_token_count(db_path))
+
+    monkeypatch.setattr(cli_receiver, "write_private_text_file", observing_write)
+
+    # When
+    result = _issue_to_file(db_path, secret_path)
+
+    # Then nothing was usable while the secret was being written
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert observed == [0]
+    issued = IssuedTokenPayload.model_validate_json(secret_path.read_text("utf-8"))
+    assert authenticate_intake_token(db_path, issued.token) is not None
+
+
+def test_receiver_start_rejects_an_out_of_range_request_timeout(
+    tmp_path: Path,
+) -> None:
+    # Given
+    db_path = tmp_path / "receiver.sqlite"
+
+    # When
+    for value in ("0", "-1", "301", "abc"):
+        result = _cli(
+            "start",
+            "--db",
+            str(db_path),
+            "--request-timeout",
+            value,
+        )
+
+        # Then
+        assert result.exit_code != 0, value
+
+
+def test_receiver_start_rejects_an_out_of_range_request_timeout_with_a_message(
+    tmp_path: Path,
+) -> None:
+    # Given
+    db_path = tmp_path / "receiver.sqlite"
+
+    # When
+    result = _cli("start", "--db", str(db_path), "--request-timeout", "0")
+
+    # Then
+    assert result.exit_code == 2
+    assert "--request-timeout" in result.stderr
+    assert "300" in result.stderr
+
+
+@contextmanager
+def _served_receiver(db_path: Path, *, intake_enabled: bool) -> Generator[str]:
+    server = build_receiver_server(
+        db_path,
+        "127.0.0.1",
+        0,
+        intake_context_enabled=intake_enabled,
+    )
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server_port(server)}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_intake_smoke_cli_reports_capabilities_for_a_live_token(
+    tmp_path: Path,
+) -> None:
+    # Given a receiver serving the intake routes and a token it accepts
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    secret_path = tmp_path / "private" / "token.json"
+    created = _issue_to_file(db_path, secret_path)
+    assert created.exit_code == 0, (created.output, created.exception)
+    issued = IssuedTokenPayload.model_validate_json(secret_path.read_text("utf-8"))
+
+    with _served_receiver(db_path, intake_enabled=True) as base:
+        # When
+        result = _cli("intake-smoke", "--url", base, "--token-file", str(secret_path))
+
+    # Then
+    assert result.exit_code == 0, (result.output, result.exception)
+    payload = IntakeSmokePayload.model_validate_json(result.stdout)
+    assert payload.http_status == 200
+    assert issued.token not in result.output
+    assert issued.token_prefix not in result.output
+
+
+def test_intake_smoke_cli_fails_for_a_revoked_token(tmp_path: Path) -> None:
+    # Given a token whose producer was revoked
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    secret_path = tmp_path / "private" / "token.json"
+    created = _issue_to_file(db_path, secret_path)
+    assert created.exit_code == 0, (created.output, created.exception)
+    revoked = _revoke_producer(db_path)
+    assert revoked.exit_code == 0, (revoked.output, revoked.exception)
+
+    with _served_receiver(db_path, intake_enabled=True) as base:
+        # When
+        result = _cli("intake-smoke", "--url", base, "--token-file", str(secret_path))
+
+    # Then
+    assert result.exit_code == 1
+    assert "401" in result.stderr
+
+
+def test_intake_smoke_cli_says_the_routes_are_not_enabled(tmp_path: Path) -> None:
+    # Given a receiver started without --enable-intake-context
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    secret_path = tmp_path / "private" / "token.json"
+    created = _issue_to_file(db_path, secret_path)
+    assert created.exit_code == 0, (created.output, created.exception)
+
+    with _served_receiver(db_path, intake_enabled=False) as base:
+        # When
+        result = _cli("intake-smoke", "--url", base, "--token-file", str(secret_path))
+
+    # Then
+    assert result.exit_code == 1
+    assert "not enabled" in result.stderr
+    assert "--enable-intake-context" in result.stderr
+
+
+def test_intake_smoke_cli_refuses_a_non_http_url(tmp_path: Path) -> None:
+    # Given
+    secret_path = tmp_path / "private" / "token.json"
+    secret_path.parent.mkdir(mode=0o700, exist_ok=True)
+    _ = secret_path.write_text(json.dumps({"token": "hri_synthetic"}), encoding="utf-8")
+
+    # When
+    result = _cli(
+        "intake-smoke",
+        "--url",
+        "file:///etc/passwd",
+        "--token-file",
+        str(secret_path),
+    )
+
+    # Then
+    assert result.exit_code == 1
+    assert "http or https" in result.stderr
+
+
+def test_intake_smoke_cli_reports_an_unreadable_token_file(tmp_path: Path) -> None:
+    # Given a token file that holds no intake token
+    secret_path = tmp_path / "private" / "token.json"
+    secret_path.parent.mkdir(mode=0o700, exist_ok=True)
+    _ = secret_path.write_text(json.dumps({"label": "phone"}), encoding="utf-8")
+
+    # When
+    result = _cli(
+        "intake-smoke",
+        "--url",
+        "http://127.0.0.1:8765",
+        "--token-file",
+        str(secret_path),
+    )
+
+    # Then
+    assert result.exit_code == 1
+    assert "--token-file" in result.stderr
+    assert result.stdout == ""

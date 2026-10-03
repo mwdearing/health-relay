@@ -53,6 +53,14 @@ class IntakeProducerConflictError(IntakeContextStorageError):
         self.producer_id: str = producer_id
 
 
+class IntakeProducerRevokedError(IntakeContextStorageError):
+    """The producer exists with identical details but its registration is revoked."""
+
+    def __init__(self, producer_id: str) -> None:
+        super().__init__("intake producer registration is revoked")
+        self.producer_id: str = producer_id
+
+
 class IntakeRevisionConflictError(IntakeContextStorageError):
     def __init__(
         self,
@@ -340,6 +348,21 @@ insert into intake_producers (
     revoked_at
 ) values (?, ?, ?, ?, ?, ?)
 """
+REVOKE_PRODUCER_SQL: Final = """
+update intake_producers
+set revoked_at = ?
+where owner_id = ? and producer_id = ? and revoked_at is null
+"""
+REACTIVATE_PRODUCER_SQL: Final = """
+update intake_producers
+set revoked_at = null
+where owner_id = ? and producer_id = ? and revoked_at is not null
+"""
+REVOKE_PRODUCER_TOKENS_SQL: Final = """
+update intake_context_tokens
+set revoked_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+where owner_id = ? and producer_id = ? and revoked_at is null
+"""
 SELECT_REVISION_SQL: Final = """
 select intake_revision_row_id, owner_id, producer_id, intake_id, revision,
        domain_facts_hash, projection_hash, client_payload_hash,
@@ -571,6 +594,64 @@ def register_producer(
             ),
         )
     return record
+
+
+def revoke_producer(
+    connection: sqlite3.Connection,
+    *,
+    owner_id: str,
+    producer_id: str,
+    revoked_at: str,
+) -> int:
+    """Stamp ``revoked_at`` on an active producer and report whether it changed.
+
+    The caller owns the transaction, so the producer row and the tokens revoked
+    alongside it land together or not at all. A zero count means the producer is
+    unknown or already revoked, which the CLI reports rather than repeating.
+    """
+    with _write_scope(connection, "revoke_producer"):
+        return int(
+            connection.execute(
+                REVOKE_PRODUCER_SQL,
+                (revoked_at, owner_id, producer_id),
+            ).rowcount
+        )
+
+
+def revoke_producer_tokens(
+    connection: sqlite3.Connection,
+    *,
+    owner_id: str,
+    producer_id: str,
+) -> int:
+    """Revoke every active intake token of one producer, in the caller's transaction."""
+    with _write_scope(connection, "revoke_producer_tokens"):
+        return int(
+            connection.execute(
+                REVOKE_PRODUCER_TOKENS_SQL,
+                (owner_id, producer_id),
+            ).rowcount
+        )
+
+
+def reactivate_producer(
+    connection: sqlite3.Connection,
+    *,
+    owner_id: str,
+    producer_id: str,
+) -> int:
+    """Clear ``revoked_at`` on a revoked producer and report whether it changed.
+
+    Only the producer row is touched: tokens revoked together with the
+    revocation stay revoked, so reactivation needs a fresh token.
+    """
+    with _write_scope(connection, "reactivate_producer"):
+        return int(
+            connection.execute(
+                REACTIVATE_PRODUCER_SQL,
+                (owner_id, producer_id),
+            ).rowcount
+        )
 
 
 def list_producers(connection: sqlite3.Connection) -> tuple[ProducerRecord, ...]:

@@ -291,6 +291,63 @@ uv run health-bridge receiver intake-revoke-token \
 revoking twice, or revoking a prefix that was never issued, is visible rather
 than silently accepted.
 
+To retire a whole producer, revoke it and every active token it owns in one
+SQLite transaction:
+
+```bash
+uv run health-bridge receiver intake-revoke-producer \
+  --db .tmp/receiver.sqlite \
+  --owner-id <owner> \
+  --producer-id nutrition-app
+```
+
+The command exits 1 when the producer is unknown or already revoked, and echoes
+the producer record together with `revoked_token_count`. A later
+`intake-create-token` for that producer is refused while it stays revoked.
+
+Restore a revoked producer without a fresh registration:
+
+```bash
+uv run health-bridge receiver intake-reactivate-producer \
+  --db .tmp/receiver.sqlite \
+  --owner-id <owner> \
+  --producer-id nutrition-app
+```
+
+`intake-reactivate-producer` clears `revoked_at` and exits 1 when the producer is
+unknown or already active. Tokens revoked together with the producer stay
+revoked: reactivation restores the producer identity, not the credentials, so
+issue a new token with `intake-create-token`. Re-registering a revoked producer
+with identical details also fails, with a message naming
+`intake-reactivate-producer`, so a silently dead producer is never reported as a
+successful registration.
+
+Check that a receiver actually serves the intake routes with a token you hold,
+without printing the token:
+
+```bash
+uv run health-bridge receiver intake-smoke \
+  --url http://127.0.0.1:8765 \
+  --token-file .private/intake-token.json
+```
+
+`intake-smoke` reads the bearer token from a file written by
+`intake-create-token`, requests `/v1/intake-context/capabilities`, and prints
+one JSON line with the HTTP status and the capability fields. It exits 0 on 200
+and 1 otherwise; a 404 says the intake routes are not enabled, so restart the
+receiver with `--enable-intake-context`. The token and its hash are never
+printed. The URL must use `http` or `https`.
+
+The receiver also bounds how long a single HTTP request may take. The default is
+30 seconds; lower it for a stricter local receiver:
+
+```bash
+uv run health-bridge receiver start --db .tmp/receiver.sqlite --request-timeout 10
+```
+
+`--request-timeout` takes a number of seconds greater than 0 and at most 300. A
+value outside that range is rejected before the port is bound.
+
 ## Legacy v1 compatibility
 
 Already paired devices and existing `/v1/batches` bearer credentials continue to work. The iOS parser accepts v1 pairing material during the migration window.

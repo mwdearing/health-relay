@@ -5,6 +5,7 @@ import re
 import secrets
 import sqlite3
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, TypeAlias, cast
 
@@ -25,8 +26,8 @@ def _sql(*parts: str) -> str:
 
 INSERT_INTAKE_TOKEN_SQL: Final = _sql(
     "insert into intake_context_tokens",
-    "(owner_id, producer_id, label, token_hash, token_prefix)",
-    "values (?, ?, ?, ?, ?)",
+    "(owner_id, producer_id, label, token_hash, token_prefix, revoked_at)",
+    "values (?, ?, ?, ?, ?, ?)",
 )
 SELECT_ACTIVE_INTAKE_TOKENS_SQL: Final = _sql(
     "select token_hash, owner_id, producer_id from intake_context_tokens",
@@ -36,6 +37,15 @@ REVOKE_INTAKE_TOKEN_SQL: Final = _sql(
     "update intake_context_tokens",
     "set revoked_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
     "where token_prefix = ? and revoked_at is null",
+)
+ACTIVATE_INTAKE_TOKEN_SQL: Final = _sql(
+    "update intake_context_tokens",
+    "set revoked_at = null",
+    "where token_prefix = ? and revoked_at is not null",
+)
+DELETE_INTAKE_TOKEN_SQL: Final = _sql(
+    "delete from intake_context_tokens",
+    "where token_prefix = ? and revoked_at is not null",
 )
 SELECT_INTAKE_TOKENS_SQL: Final = _sql(
     "select token_prefix, owner_id, producer_id, label, created_at, revoked_at",
@@ -104,7 +114,14 @@ def create_intake_token(
     with connect_database(db_path) as connection:
         cursor = connection.execute(
             INSERT_INTAKE_TOKEN_SQL,
-            (owner_id, producer_id, label, hash_receiver_token(token), token_prefix),
+            (
+                owner_id,
+                producer_id,
+                label,
+                hash_receiver_token(token),
+                token_prefix,
+                None,
+            ),
         )
         token_id = cursor.lastrowid
     if token_id is None:
@@ -163,6 +180,80 @@ def create_intake_token_for_active_producer(
     )
 
 
+def create_pending_intake_token(
+    db_path: Path,
+    *,
+    owner_id: str,
+    producer_id: str,
+    label: str,
+) -> IssuedIntakeToken:
+    """Issue a token row that cannot authenticate until it is activated.
+
+    The row is written already revoked, so a secret nobody managed to store
+    never authenticates. The caller activates it with
+    :func:`activate_intake_token` only once the secret is safely written, which
+    keeps a failed write from leaving an active credential behind even when the
+    database cannot be reached to revoke one afterwards.
+    """
+    _validate_identity(owner_id=owner_id, producer_id=producer_id, label=label)
+    initialize_database(db_path)
+    token = f"{INTAKE_TOKEN_PREFIX}{secrets.token_urlsafe(GENERATED_TOKEN_BYTES)}"
+    token_prefix = token[:INTAKE_TOKEN_PREFIX_LENGTH]
+    with connect_database(db_path) as connection:
+        _ = connection.execute("begin immediate")
+        try:
+            inserted_id = _insert_token_for_active_producer(
+                connection,
+                owner_id=owner_id,
+                producer_id=producer_id,
+                label=label,
+                token=token,
+                token_prefix=token_prefix,
+                revoked=True,
+            )
+        except BaseException:
+            connection.rollback()
+            raise
+        connection.commit()
+    token_id = inserted_id
+    if token_id is None:
+        message = "Intake token insert did not return a row id."
+        raise sqlite3.IntegrityError(message)
+    return IssuedIntakeToken(
+        token_id=token_id,
+        label=label,
+        token=token,
+        token_prefix=token_prefix,
+    )
+
+
+def activate_intake_token(db_path: Path, token_prefix: str) -> int:
+    """Make a pending token usable and report how many rows changed.
+
+    Only a row this module inserted as pending (already revoked) can change
+    here, so an activation can never revive a token revoked on purpose.
+    """
+    initialize_database(db_path)
+    with connect_database(db_path) as connection:
+        return int(
+            connection.execute(
+                ACTIVATE_INTAKE_TOKEN_SQL,
+                (token_prefix,),
+            ).rowcount
+        )
+
+
+def discard_pending_intake_token(db_path: Path, token_prefix: str) -> None:
+    """Remove a pending token whose secret was never written.
+
+    The row cannot authenticate either way, so dropping it keeps the token list
+    free of credentials nobody holds.
+    """
+    initialize_database(db_path)
+    with connect_database(db_path) as connection:
+        _ = connection.execute(DELETE_INTAKE_TOKEN_SQL, (token_prefix,))
+
+
 def _insert_token_for_active_producer(  # noqa: PLR0913 -- one bound pair per insert column.
     connection: sqlite3.Connection,
     *,
@@ -171,21 +262,33 @@ def _insert_token_for_active_producer(  # noqa: PLR0913 -- one bound pair per in
     label: str,
     token: str,
     token_prefix: str,
+    revoked: bool = False,
 ) -> int | None:
     """Check the producer and insert the token row inside the caller's transaction."""
-    revoked_at = PRODUCER_REVOKED_ROW_ADAPTER.validate_python(
+    producer_revoked_at = PRODUCER_REVOKED_ROW_ADAPTER.validate_python(
         connection.execute(
             SELECT_ACTIVE_PRODUCER_SQL,
             (owner_id, producer_id),
         ).fetchone(),
     )
-    if revoked_at is None or revoked_at[0] is not None:
+    if producer_revoked_at is None or producer_revoked_at[0] is not None:
         raise IntakeProducerInactiveError(producer_id)
     cursor = connection.execute(
         INSERT_INTAKE_TOKEN_SQL,
-        (owner_id, producer_id, label, hash_receiver_token(token), token_prefix),
+        (
+            owner_id,
+            producer_id,
+            label,
+            hash_receiver_token(token),
+            token_prefix,
+            _utc_now() if revoked else None,
+        ),
     )
     return cursor.lastrowid
+
+
+def _utc_now() -> str:
+    return datetime.now(tz=UTC).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _validate_identity(*, owner_id: str, producer_id: str, label: str) -> None:

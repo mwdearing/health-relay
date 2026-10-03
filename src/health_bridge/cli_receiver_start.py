@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Final, Protocol
 import typer
 
 from health_bridge.launchd import LaunchdServiceError
+from health_bridge.receiver.server import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from health_bridge.receiver.transports import ReceiverTransport
 
 if TYPE_CHECKING:
@@ -42,6 +43,7 @@ class ReceiverServer(Protocol):
         mailbox_connection_store: MailboxConnectionStore | None,
         mailbox_root: Path | None,
         intake_context_enabled: bool,
+        request_timeout_seconds: float,
     ) -> None: ...
 
 
@@ -54,6 +56,7 @@ class ReceiverStartOptions:
     icloud_container_identifier: str | None
     service_config: Path | None
     intake_context_enabled: bool = False
+    request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +136,7 @@ def run_receiver_start(
             mailbox_connection_store=mailbox_connection_store,
             mailbox_root=mailbox_root,
             intake_context_enabled=options.intake_context_enabled,
+            request_timeout_seconds=options.request_timeout_seconds,
         )
     except KeyboardInterrupt:
         raise typer.Exit(code=0) from None

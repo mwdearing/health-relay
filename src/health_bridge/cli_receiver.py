@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 import secrets
@@ -6,6 +7,7 @@ import sqlite3
 import stat
 from collections.abc import Callable, Mapping
 from contextlib import suppress
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Final, Literal, TypeAlias, cast
@@ -34,13 +36,16 @@ from health_bridge.private_files import (
     write_private_text_file,
 )
 from health_bridge.receiver.intake_tokens import (
+    INTAKE_TOKEN_PREFIX,
     IntakeProducerInactiveError,
     IntakeTokenRecord,
     IssuedIntakeToken,
+    activate_intake_token,
     create_intake_token_for_active_producer,
+    create_pending_intake_token,
+    discard_pending_intake_token,
     list_intake_tokens_on,
     revoke_active_intake_token,
-    revoke_intake_token,
 )
 from health_bridge.receiver.invitations import (
     ReceiverDeviceSelectionError,
@@ -56,7 +61,11 @@ from health_bridge.receiver.pairing import (
     pairing_deep_link,
 )
 from health_bridge.receiver.pairing_setup_page import render_pairing_setup_page
-from health_bridge.receiver.server import serve_receiver
+from health_bridge.receiver.server import (
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    INTAKE_CONTEXT_CAPABILITIES_PATH,
+    serve_receiver,
+)
 from health_bridge.receiver.tokens import create_receiver_token, revoke_receiver_token
 from health_bridge.receiver.transports import (
     PublicReceiverTransport,
@@ -77,10 +86,14 @@ from health_bridge.storage.database import (
 )
 from health_bridge.storage.intake_context import (
     IntakeProducerConflictError,
+    IntakeProducerRevokedError,
     ProducerRecord,
     list_producers,
+    reactivate_producer,
     read_producer,
     register_producer,
+    revoke_producer,
+    revoke_producer_tokens,
 )
 
 if TYPE_CHECKING:
@@ -120,8 +133,45 @@ INTAKE_MUTUALLY_EXCLUSIVE_OUTPUT_MESSAGE: Final = (
     "Use only one secret destination: --print-secret or --output-secret."
 )
 INTAKE_WRITE_FAILURE_MESSAGE: Final = (
-    "Failed to write private intake token output file; the issued token was "
-    "revoked. Re-run the command with a writable private path."
+    "Failed to write private intake token output file; no token was issued. "
+    "Re-run the command with a writable private path."
+)
+INTAKE_ACTIVATION_FAILURE_MESSAGE: Final = (
+    "Failed to activate the intake token after writing its secret file; no "
+    "token is active. Re-run the command."
+)
+INTAKE_ROUTES_DISABLED_MESSAGE: Final = (
+    "Receiver intake routes are not enabled on this receiver. Restart it with "
+    "--enable-intake-context to serve the intake-context routes."
+)
+INTAKE_SMOKE_URL_MESSAGE: Final = (
+    "Receiver intake smoke failed: URL must use http or https."
+)
+INTAKE_SMOKE_UNREACHABLE_MESSAGE: Final = (
+    "Receiver intake smoke failed: the receiver was not reachable."
+)
+INTAKE_SMOKE_TOKEN_FILE_MESSAGE: Final = (
+    "Receiver intake smoke failed: could not read an intake token from the "  # noqa: S105 -- a message, not a secret.
+    "given --token-file."
+)
+MAX_REQUEST_TIMEOUT_SECONDS: Final = 300.0
+INTAKE_SMOKE_OK_STATUS: Final = 200
+INTAKE_SMOKE_NOT_FOUND_STATUS: Final = 404
+PRODUCER_REVOKED_MESSAGE: Final = (
+    "Intake producer {producer_id} is revoked; run receiver "
+    "intake-reactivate-producer to restore it before registering or issuing "
+    "tokens again."
+)
+INTAKE_REVOKE_PRODUCER_UNKNOWN_MESSAGE: Final = (
+    "Intake producer {producer_id} is not registered for this owner, or its "
+    "registration is already revoked; nothing was revoked."
+)
+INTAKE_REACTIVATE_PRODUCER_UNKNOWN_MESSAGE: Final = (
+    "Intake producer {producer_id} is not registered for this owner, or it is "
+    "already active; nothing was changed."
+)
+REQUEST_TIMEOUT_OUT_OF_RANGE_MESSAGE: Final = (
+    "Receiver start requires --request-timeout greater than 0 and at most 300 seconds."
 )
 INTAKE_STORAGE_UNAVAILABLE_MESSAGE: Final = "Intake producer storage is unavailable."
 INTAKE_TOKEN_STORAGE_UNAVAILABLE_MESSAGE: Final = "Intake token storage is unavailable."  # noqa: S105 - a message, not a secret.
@@ -144,13 +194,36 @@ INTAKE_PRODUCER_CONFLICT_MESSAGE: Final = (
 STORED_WRITER_BUNDLE_MESSAGE: Final = " The stored writer bundle is {writer_bundle_id}."
 SmokeResponseValue: TypeAlias = int | str
 SmokeResponse: TypeAlias = dict[str, SmokeResponseValue]
+INTAKE_CAPABILITY_FIELDS: Final = frozenset(
+    {
+        "authentication",
+        "features",
+        "max_body_bytes",
+        "max_operations",
+        "schema",
+        "supported_versions",
+    }
+)
 PurgeIdentity: TypeAlias = tuple[int, int, int, int, int]
 SMOKE_RESPONSE_ADAPTER: Final[TypeAdapter[SmokeResponse]] = TypeAdapter(SmokeResponse)
+INTAKE_JSON_OBJECT_ADAPTER: Final[TypeAdapter[dict[str, object]]] = TypeAdapter(
+    dict[str, object]
+)
 PURGE_SIDECAR_SUFFIXES: Final = ("", "-journal", "-wal", "-shm")
 PURGE_WARNING: Final = (
     "Stop the receiver before confirming. This removes only the local HealthRelay "
     "SQLite database and its sidecars; it does not delete Apple Health data."
 )
+
+
+def _validate_request_timeout(request_timeout: float) -> None:
+    """Refuse a read timeout the receiver cannot honour, before it binds."""
+    if not math.isfinite(request_timeout):
+        typer.echo(REQUEST_TIMEOUT_OUT_OF_RANGE_MESSAGE, err=True)
+        raise typer.Exit(code=2)
+    if not 0 < request_timeout <= MAX_REQUEST_TIMEOUT_SECONDS:
+        typer.echo(REQUEST_TIMEOUT_OUT_OF_RANGE_MESSAGE, err=True)
+        raise typer.Exit(code=2)
 
 
 def _select_transport_or_exit(
@@ -1030,6 +1103,12 @@ def intake_register_producer(
             writer_bundle_id=writer_bundle_id,
             display_label=label,
         )
+    except IntakeProducerRevokedError as exc:
+        typer.echo(
+            PRODUCER_REVOKED_MESSAGE.format(producer_id=producer_id),
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
     except IntakeProducerConflictError as exc:
         typer.echo(
             _intake_producer_conflict_message(
@@ -1074,6 +1153,101 @@ def intake_list_producers(
     typer.echo(
         json.dumps(
             {"producers": [_intake_producer_payload(record) for record in records]},
+            sort_keys=True,
+        )
+    )
+
+
+@receiver_app.command("intake-revoke-producer")
+def intake_revoke_producer(
+    db: Annotated[
+        Path,
+        typer.Option("--db", help="User-owned SQLite database path."),
+    ],
+    owner_id: Annotated[
+        str,
+        typer.Option("--owner-id", help="Owner identity the tokens are bound to."),
+    ],
+    producer_id: Annotated[
+        str,
+        typer.Option(
+            "--producer-id",
+            help="Registered producer identifier.",
+        ),
+    ],
+) -> None:
+    try:
+        record, revoked_token_count = revoke_intake_producer(
+            db,
+            owner_id=owner_id,
+            producer_id=producer_id,
+        )
+    except IntakeProducerUnavailableError as exc:
+        typer.echo(
+            INTAKE_REVOKE_PRODUCER_UNKNOWN_MESSAGE.format(producer_id=producer_id),
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    except (sqlite3.Error, OSError) as exc:
+        typer.echo(INTAKE_STORAGE_UNAVAILABLE_MESSAGE, err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(
+        json.dumps(
+            {
+                **_intake_producer_payload(record),
+                "revoked_token_count": revoked_token_count,
+                "status": "revoked",
+            },
+            sort_keys=True,
+        )
+    )
+
+
+@receiver_app.command("intake-reactivate-producer")
+def intake_reactivate_producer(
+    db: Annotated[
+        Path,
+        typer.Option("--db", help="User-owned SQLite database path."),
+    ],
+    owner_id: Annotated[
+        str,
+        typer.Option("--owner-id", help="Owner identity the tokens are bound to."),
+    ],
+    producer_id: Annotated[
+        str,
+        typer.Option(
+            "--producer-id",
+            help="Registered producer identifier.",
+        ),
+    ],
+) -> None:
+    try:
+        record = reactivate_intake_producer(
+            db,
+            owner_id=owner_id,
+            producer_id=producer_id,
+        )
+    except IntakeProducerUnavailableError as exc:
+        typer.echo(
+            INTAKE_REACTIVATE_PRODUCER_UNKNOWN_MESSAGE.format(producer_id=producer_id),
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    except (sqlite3.Error, OSError) as exc:
+        typer.echo(INTAKE_STORAGE_UNAVAILABLE_MESSAGE, err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(
+        json.dumps(
+            {
+                **_intake_producer_payload(record),
+                "status": "reactivated",
+                "warning": (
+                    "Tokens revoked with the producer stay revoked; issue a new "
+                    "intake token with intake-create-token."
+                ),
+            },
             sort_keys=True,
         )
     )
@@ -1124,8 +1298,13 @@ def intake_create_token(  # noqa: PLR0913 -- Typer exposes independent token opt
     if output_secret is not None:
         _validate_intake_secret_output_path(output_secret, db=db)
 
+    issue_token = (
+        create_pending_intake_token
+        if output_secret is not None
+        else create_intake_token_for_active_producer
+    )
     try:
-        issued = create_intake_token_for_active_producer(
+        issued = issue_token(
             db,
             owner_id=owner_id,
             producer_id=producer_id,
@@ -1187,14 +1366,32 @@ def _echo_intake_token_file_result(
     output_secret: Path,
     secret_payload: Mapping[str, object],
 ) -> None:
-    """Write the secret privately, or revoke the token nobody can reach."""
+    """Write the secret privately, then activate the token that secret unlocks.
+
+    The token row is inserted already revoked, so nothing can authenticate with
+    it until the file is on disk. A failed write therefore leaves no active
+    credential even if the database cannot be reached to revoke one afterwards;
+    the unusable row is then dropped. Activation happens after the write, so a
+    token is never usable before the secret it belongs to exists.
+    """
     secret_text = json.dumps(secret_payload, sort_keys=True) + "\n"
     try:
         write_private_text_file(output_secret, secret_text)
     except OSError as exc:
-        revoke_intake_token(db, issued.token_prefix)
+        _discard_pending_intake_token_or_warn(db, issued.token_prefix)
         typer.echo(INTAKE_WRITE_FAILURE_MESSAGE, err=True)
         raise typer.Exit(code=1) from exc
+    try:
+        activated = activate_intake_token(db, issued.token_prefix)
+    except (sqlite3.Error, OSError) as exc:
+        _discard_pending_intake_token_or_warn(db, issued.token_prefix)
+        _remove_written_secret_file_or_warn(output_secret)
+        typer.echo(INTAKE_ACTIVATION_FAILURE_MESSAGE, err=True)
+        raise typer.Exit(code=1) from exc
+    if activated != 1:
+        _remove_written_secret_file_or_warn(output_secret)
+        typer.echo(INTAKE_ACTIVATION_FAILURE_MESSAGE, err=True)
+        raise typer.Exit(code=1)
     typer.echo(
         json.dumps(
             {
@@ -1280,6 +1477,27 @@ def intake_revoke_token(
             sort_keys=True,
         )
     )
+
+
+def _discard_pending_intake_token_or_warn(db: Path, token_prefix: str) -> None:
+    """Drop an unusable pending token row; a failure here cannot leave it active."""
+    try:
+        discard_pending_intake_token(db, token_prefix)
+    except (sqlite3.Error, OSError):
+        typer.echo(
+            "A pending intake token row could not be removed; it stays revoked.",
+            err=True,
+        )
+
+
+def _remove_written_secret_file_or_warn(output_secret: Path) -> None:
+    try:
+        output_secret.unlink(missing_ok=True)
+    except OSError:
+        typer.echo(
+            f"Remove the unused secret file yourself: {output_secret}",
+            err=True,
+        )
 
 
 class _MissingIntakeTablesError(Exception):
@@ -1444,6 +1662,10 @@ def _register_producer_in_transaction(
             and existing.writer_bundle_id == writer_bundle_id
             and existing.display_label == display_label
         ):
+            if existing.revoked_at is not None:
+                # Reporting success here would be a dead end: the producer stays
+                # revoked, so every later token is refused with no hint why.
+                raise IntakeProducerRevokedError(producer_id)
             return existing, False
         raise IntakeProducerConflictError(producer_id)
     record = register_producer(
@@ -1457,6 +1679,127 @@ def _register_producer_in_transaction(
         ),
     )
     return record, True
+
+
+class IntakeProducerUnavailableError(Exception):
+    """No producer row matches the requested owner and producer."""
+
+
+def revoke_intake_producer(
+    db: Path,
+    *,
+    owner_id: str,
+    producer_id: str,
+) -> tuple[ProducerRecord, int]:
+    """Revoke a producer and every active token it owns in one transaction.
+
+    The producer row and its tokens move together, so a producer can never be
+    left active with live credentials. Revoking twice, or naming a producer that
+    was never registered, raises ``IntakeProducerUnavailableError`` so the CLI
+    can fail instead of silently claiming success.
+    """
+    initialize_database(db)
+    with connect_database(db) as connection:
+        _ = connection.execute("begin immediate")
+        try:
+            record = _active_producer_or_unavailable(
+                connection,
+                owner_id=owner_id,
+                producer_id=producer_id,
+            )
+            revoked_at = _utc_now()
+            _ = revoke_producer(
+                connection,
+                owner_id=owner_id,
+                producer_id=producer_id,
+                revoked_at=revoked_at,
+            )
+            revoked_token_count = revoke_producer_tokens(
+                connection,
+                owner_id=owner_id,
+                producer_id=producer_id,
+            )
+        except BaseException:
+            connection.rollback()
+            raise
+        connection.commit()
+    return replace(record, revoked_at=revoked_at), revoked_token_count
+
+
+def reactivate_intake_producer(
+    db: Path,
+    *,
+    owner_id: str,
+    producer_id: str,
+) -> ProducerRecord:
+    """Clear a producer's ``revoked_at`` without reviving any of its tokens."""
+    initialize_database(db)
+    with connect_database(db) as connection:
+        _ = connection.execute("begin immediate")
+        try:
+            record = _revoked_producer_or_unavailable(
+                connection,
+                owner_id=owner_id,
+                producer_id=producer_id,
+            )
+            _ = reactivate_producer(
+                connection,
+                owner_id=owner_id,
+                producer_id=producer_id,
+            )
+        except BaseException:
+            connection.rollback()
+            raise
+        connection.commit()
+    return replace(record, revoked_at=None)
+
+
+def _producer_or_unavailable(
+    connection: sqlite3.Connection,
+    *,
+    owner_id: str,
+    producer_id: str,
+) -> ProducerRecord:
+    record = read_producer(
+        connection,
+        owner_id=owner_id,
+        producer_id=producer_id,
+    )
+    if record is None:
+        raise IntakeProducerUnavailableError(producer_id)
+    return record
+
+
+def _active_producer_or_unavailable(
+    connection: sqlite3.Connection,
+    *,
+    owner_id: str,
+    producer_id: str,
+) -> ProducerRecord:
+    record = _producer_or_unavailable(
+        connection,
+        owner_id=owner_id,
+        producer_id=producer_id,
+    )
+    if record.revoked_at is not None:
+        raise IntakeProducerUnavailableError(producer_id)
+    return record
+
+
+def _revoked_producer_or_unavailable(
+    connection: sqlite3.Connection,
+    *,
+    owner_id: str,
+    producer_id: str,
+) -> ProducerRecord:
+    record = _producer_or_unavailable(
+        connection,
+        owner_id=owner_id,
+        producer_id=producer_id,
+    )
+    if record.revoked_at is None:
+        raise IntakeProducerUnavailableError(producer_id)
+    return record
 
 
 @receiver_app.command("start")
@@ -1501,7 +1844,18 @@ def start(  # noqa: PLR0913 -- Typer exposes independent receiver options.
             help="Enable intake-context HTTP routes for this receiver process.",
         ),
     ] = False,
+    request_timeout: Annotated[
+        float,
+        typer.Option(
+            "--request-timeout",
+            help=(
+                "Seconds a single HTTP request may take before the receiver "
+                "closes it. Greater than 0 and at most 300."
+            ),
+        ),
+    ] = DEFAULT_REQUEST_TIMEOUT_SECONDS,
 ) -> None:
+    _validate_request_timeout(request_timeout)
     run_receiver_start(
         ReceiverStartOptions(
             db=db,
@@ -1511,6 +1865,7 @@ def start(  # noqa: PLR0913 -- Typer exposes independent receiver options.
             icloud_container_identifier=icloud_container_identifier,
             service_config=service_config,
             intake_context_enabled=enable_intake_context,
+            request_timeout_seconds=request_timeout,
         ),
         ReceiverStartDependencies(
             load_service_config=load_runnable_launch_agent_request,
@@ -1563,6 +1918,116 @@ def smoke(
         raise typer.Exit(code=1) from exc
     body["http_status"] = status
     typer.echo(json.dumps(body, sort_keys=True))
+
+
+@receiver_app.command("intake-smoke")
+def intake_smoke(
+    token_file: Annotated[
+        Path,
+        typer.Option(
+            "--token-file",
+            help="Private intake token JSON file written by intake-create-token.",
+        ),
+    ],
+    url: Annotated[
+        str,
+        typer.Option(
+            "--url",
+            help="Receiver base URL, e.g. http://127.0.0.1:8765.",
+        ),
+    ] = "http://127.0.0.1:8765",
+) -> None:
+    _validate_intake_smoke_url(url)
+    token = _read_intake_smoke_token(token_file)
+    request = Request(  # noqa: S310 -- URL scheme is validated above.
+        _intake_capabilities_url(url),
+        headers={"Authorization": f"Bearer {token}"},
+        method="GET",
+    )
+    try:
+        # `_validate_intake_smoke_url` above restricts this request to HTTP(S).
+        with cast(
+            "HTTPResponse",
+            urlopen(request, timeout=10),  # noqa: S310  # nosec B310
+        ) as response:
+            status = response.status
+            body = response.read()
+    except HTTPError as exc:
+        # The error carries the open response; close it so the socket is released.
+        with suppress(OSError):
+            exc.close()
+        _echo_intake_smoke_failure(exc.code)
+        raise typer.Exit(code=1) from exc
+    except URLError as exc:
+        typer.echo(INTAKE_SMOKE_UNREACHABLE_MESSAGE, err=True)
+        raise typer.Exit(code=1) from exc
+
+    # The token is never echoed; only the status and the capability fields are.
+    typer.echo(
+        json.dumps(
+            {
+                "http_status": status,
+                **_intake_capabilities_fields(body),
+            },
+            sort_keys=True,
+        )
+    )
+    if status != INTAKE_SMOKE_OK_STATUS:
+        _echo_intake_smoke_failure(status)
+        raise typer.Exit(code=1)
+
+
+def _intake_capabilities_url(base_url: str) -> str:
+    return f"{base_url.rstrip('/')}{INTAKE_CONTEXT_CAPABILITIES_PATH}"
+
+
+def _intake_capabilities_fields(body: bytes) -> dict[str, object]:
+    """The capability fields worth showing, with anything unexpected dropped."""
+    document = _intake_json_object(body)
+    if document is None:
+        return {}
+    return {
+        key: value for key, value in document.items() if key in INTAKE_CAPABILITY_FIELDS
+    }
+
+
+def _intake_json_object(body: bytes) -> dict[str, object] | None:
+    """Parsed JSON when it is an object, otherwise nothing to report."""
+    try:
+        document = cast("object", json.loads(body))
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(document, dict):
+        return None
+    return INTAKE_JSON_OBJECT_ADAPTER.validate_python(document)
+
+
+def _echo_intake_smoke_failure(status: int) -> None:
+    if status == INTAKE_SMOKE_NOT_FOUND_STATUS:
+        typer.echo(INTAKE_ROUTES_DISABLED_MESSAGE, err=True)
+        return
+    typer.echo(f"Receiver intake smoke failed: HTTP {status}.", err=True)
+
+
+def _read_intake_smoke_token(token_file: Path) -> str:
+    """The bearer token from an `intake-create-token` file, never printed."""
+    try:
+        text = token_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        typer.echo(INTAKE_SMOKE_TOKEN_FILE_MESSAGE, err=True)
+        raise typer.Exit(code=1) from exc
+    document = _intake_json_object(text.encode("utf-8"))
+    token = None if document is None else document.get("token")
+    if not isinstance(token, str) or not token.startswith(INTAKE_TOKEN_PREFIX):
+        typer.echo(INTAKE_SMOKE_TOKEN_FILE_MESSAGE, err=True)
+        raise typer.Exit(code=1)
+    return token
+
+
+def _validate_intake_smoke_url(url: str) -> None:
+    if urlparse(url).scheme not in {"http", "https"}:
+        typer.echo(INTAKE_SMOKE_URL_MESSAGE, err=True)
+        raise typer.Exit(code=1)
 
 
 def _validate_receiver_url(url: str) -> None:
