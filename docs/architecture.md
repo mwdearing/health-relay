@@ -133,12 +133,14 @@ transaction and ignores `registered_at`, so a restored backup still matches.
 `intake-create-token` stores only a hash and requires an explicit secret
 destination: `--output-secret` writes the token to a mode-0600 private file and
 prints only the prefix, refuses a destination that resolves to the database or
-one of its sidecars, and revokes the token if the write fails. Its producer check
+one of its sidecars, and drops the token if the write fails. Its producer check
 and the token insert share one transaction, so an unknown or revoked producer
 never receives a token. With `--output-secret` the row is inserted already
-revoked and activated only after the secret is on disk, so a failed write cannot
-leave an active credential behind even when the database cannot be reached to
-revoke one. `intake-list-producers` and `intake-list-tokens` open the
+revoked and activated only after the secret is on disk, with the producer
+rechecked in that same statement, so neither a failed write nor a producer
+revoked mid-write can leave an active credential behind even when the database
+cannot be reached to revoke one; a failed activation restores any secret file it
+replaced. `intake-list-producers` and `intake-list-tokens` open the
 store read-only and never create or migrate it, and `intake-revoke-token` exits
 non-zero when no active token carries the prefix.
 
@@ -149,8 +151,14 @@ producer or one already in the opposite state, and re-registering a revoked
 producer is refused with a message naming `intake-reactivate-producer`.
 `intake-smoke` checks the capabilities route with a token read from a private
 file, prints only the status and capability fields, and reports a 404 as "the
-intake routes are not enabled". `--request-timeout` bounds a single HTTP request
-(greater than 0, at most 300 seconds, default 30). See
+intake routes are not enabled". A redirect is refused rather than followed so the
+bearer token cannot reach another host, and a 200 that is not an intake
+capabilities document (wrong schema, no supported version, or missing capability
+fields) is reported as a failure rather than a passing smoke check.
+`--request-timeout` is a socket-read inactivity timeout in seconds (greater than
+0, at most 300, default 30): it restarts on each blocking read, so it bounds how
+long the receiver waits on a silent connection rather than total request time.
+See
 [Pairing and receiver setup](pairing.md#intake-producers-and-intake-tokens) for
 the full command reference.
 - **Intake-only tokens.** These routes accept only tokens stored in

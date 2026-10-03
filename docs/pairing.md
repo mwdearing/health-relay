@@ -268,10 +268,16 @@ registered, or whose registration is revoked, and writes no token row in either
 case; the check and the insert share one transaction, so a producer revoked
 concurrently cannot slip a token through. Prefer `--output-secret`: stdout then
 carries only the token prefix and the file path, and the file is created with
-mode 0600. If the write fails, the just-issued token is revoked again so nothing
-stays active that nobody holds. The destination is resolved before anything is
-written, and a path that lands on the `--db` file or one of its SQLite sidecars
-is refused rather than overwritten.
+mode 0600. With `--output-secret` the row is inserted already revoked and
+activated only once the secret file is on disk, and that activation rechecks the
+producer in the same statement, so a producer revoked mid-write never receives an
+active credential and a failed write cannot leave one behind even when the
+database cannot be reached. If the write or the activation fails, the command
+removes its own unusable row, restores any secret file it replaced, and exits 1
+with a one-line error, so an existing credential file is never destroyed by a
+failed issuance. The destination is resolved before anything is written, and a
+path that lands on the `--db` file or one of its SQLite sidecars is refused
+rather than overwritten.
 
 List tokens without ever revealing a token or its hash:
 
@@ -333,12 +339,17 @@ uv run health-bridge receiver intake-smoke \
 
 `intake-smoke` reads the bearer token from a file written by
 `intake-create-token`, requests `/v1/intake-context/capabilities`, and prints
-one JSON line with the HTTP status and the capability fields. It exits 0 on 200
-and 1 otherwise; a 404 says the intake routes are not enabled, so restart the
-receiver with `--enable-intake-context`. The token and its hash are never
-printed. The URL must use `http` or `https`.
+one JSON line with the HTTP status and the capability fields. It exits 0 only on
+a 200 that also names the intake-context schema, offers a supported version and
+carries the capability fields, so a wrong service or a proxy fallback page is not
+mistaken for a working receiver; it exits 1 otherwise. A 404 says the intake
+routes are not enabled, so restart the receiver with `--enable-intake-context`.
+A redirect is refused rather than followed, so the bearer token is never
+forwarded to another host, and a stalled or undecodable response is reported as
+the same concise failure as an unreachable receiver. The token and its hash are
+never printed. The URL must use `http` or `https`.
 
-The receiver also bounds how long a single HTTP request may take. The default is
+The receiver also bounds how long it waits on a stalled connection. The default is
 30 seconds; lower it for a stricter local receiver:
 
 ```bash
@@ -346,7 +357,10 @@ uv run health-bridge receiver start --db .tmp/receiver.sqlite --request-timeout 
 ```
 
 `--request-timeout` takes a number of seconds greater than 0 and at most 300. A
-value outside that range is rejected before the port is bound.
+value outside that range is rejected before the port is bound. It is a socket-read
+inactivity timeout, not a cap on total request time: the clock restarts on each
+blocking read, so a client that keeps trickling bytes just under the interval is
+not cut off.
 
 ## Legacy v1 compatibility
 

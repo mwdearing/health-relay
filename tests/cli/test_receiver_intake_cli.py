@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import json
+import socket
 import sqlite3
 import stat
+import time
 from contextlib import contextmanager
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, ClassVar, Final
 
 import pytest
 from pydantic import BaseModel, TypeAdapter
 from typer.testing import CliRunner, Result
+from typing_extensions import override
 
 from health_bridge import cli_receiver, private_files
 from health_bridge.cli import app
@@ -1253,3 +1258,434 @@ def test_intake_smoke_cli_reports_an_unreadable_token_file(tmp_path: Path) -> No
     assert result.exit_code == 1
     assert "--token-file" in result.stderr
     assert result.stdout == ""
+
+
+def test_intake_smoke_cli_reports_a_token_file_that_is_not_utf8(tmp_path: Path) -> None:
+    # Given a token file whose bytes are not valid UTF-8
+    secret_path = tmp_path / "private" / "token.json"
+    secret_path.parent.mkdir(mode=0o700, exist_ok=True)
+    _ = secret_path.write_bytes(b"\xff\xfe\x00hri_synthetic")
+
+    # When
+    result = _cli(
+        "intake-smoke",
+        "--url",
+        "http://127.0.0.1:8765",
+        "--token-file",
+        str(secret_path),
+    )
+
+    # Then the documented message replaces an unhandled decode error
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "--token-file" in result.stderr
+    assert result.stdout == ""
+
+
+class _QuietHandler(BaseHTTPRequestHandler):
+    """A test HTTP handler that keeps the test output free of request logs."""
+
+    @override
+    def log_message(self, format: str, *args: object) -> None:
+        _ = (format, args)
+
+
+class _RedirectHandler(_QuietHandler):
+    """Answers every request with a redirect to another host."""
+
+    target: str = ""
+
+    def do_GET(self) -> None:
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", self.target)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+
+class _RecordingHandler(_QuietHandler):
+    """Records the Authorization header of every request it answers."""
+
+    seen: ClassVar[list[str | None]] = []
+
+    def do_GET(self) -> None:
+        self.seen.append(self.headers.get("Authorization"))
+        body = b"{}"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        _ = self.wfile.write(body)
+
+
+@contextmanager
+def _serve(handler: type[BaseHTTPRequestHandler]) -> Generator[str]:
+    """Serve one handler on a loopback port for the life of the context."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@contextmanager
+def _redirecting_receiver(target: str) -> Generator[str]:
+    """A receiver that answers the capabilities route with a redirect elsewhere."""
+    with _serve(type("BoundRedirect", (_RedirectHandler,), {"target": target})) as base:
+        yield base
+
+
+@contextmanager
+def _recording_receiver() -> Generator[tuple[str, list[str | None]]]:
+    """A server that records the Authorization header of every request it sees."""
+    seen: list[str | None] = []
+    handler = type("BoundRecording", (_RecordingHandler,), {"seen": seen})
+    with _serve(handler) as base:
+        yield base, seen
+
+
+def test_intake_smoke_cli_refuses_a_redirect_instead_of_forwarding_the_token(
+    tmp_path: Path,
+) -> None:
+    # Given a receiver that redirects to another host
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    secret_path = tmp_path / "private" / "token.json"
+    created = _issue_to_file(db_path, secret_path)
+    assert created.exit_code == 0, (created.output, created.exception)
+    issued = IssuedTokenPayload.model_validate_json(secret_path.read_text("utf-8"))
+
+    with _recording_receiver() as (target, seen), _redirecting_receiver(target) as base:
+        # When
+        result = _cli("intake-smoke", "--url", base, "--token-file", str(secret_path))
+
+    # Then the bearer token never reaches the redirect target
+    assert result.exit_code == 1
+    assert seen == []
+    assert issued.token not in result.output
+
+
+def test_intake_create_token_cli_keeps_an_existing_secret_file_when_activation_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given an existing secret file at the requested destination
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    first_path = tmp_path / "private" / "token.json"
+    assert _issue_to_file(db_path, first_path).exit_code == 0
+    original = first_path.read_text("utf-8")
+
+    def fail_activation(*_args: object, **_kwargs: object) -> int:
+        message = "synthetic activation failure"
+        raise sqlite3.OperationalError(message)
+
+    monkeypatch.setattr(cli_receiver, "activate_intake_token", fail_activation)
+
+    # When a second issuance to the same path cannot be activated
+    result = _issue_to_file(db_path, first_path)
+
+    # Then the previous secret is still on disk
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert first_path.read_text("utf-8") == original
+    assert _active_token_count(db_path) == 1
+
+
+def test_intake_create_token_cli_removes_its_own_new_file_when_activation_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given a destination that does not exist yet
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+
+    def fail_activation(*_args: object, **_kwargs: object) -> int:
+        message = "synthetic activation failure"
+        raise sqlite3.OperationalError(message)
+
+    monkeypatch.setattr(cli_receiver, "activate_intake_token", fail_activation)
+
+    # When
+    secret_path = tmp_path / "private" / "token.json"
+    result = _issue_to_file(db_path, secret_path)
+
+    # Then no unusable credential file is left behind
+    assert result.exit_code == 1
+    assert not secret_path.exists()
+    assert _active_token_count(db_path) == 0
+
+
+def test_intake_create_token_cli_refuses_to_activate_a_token_after_producer_revoke(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given a producer revoked between the pending insert and the activation
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    secret_path = tmp_path / "private" / "token.json"
+    real_write = private_files.write_private_text_file
+
+    def revoking_write(path: Path, text: str) -> None:
+        real_write(path, text)
+        assert _revoke_producer(db_path).exit_code == 0
+
+    monkeypatch.setattr(cli_receiver, "write_private_text_file", revoking_write)
+
+    # When
+    result = _issue_to_file(db_path, secret_path)
+
+    # Then no active credential survives the revocation
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert _active_token_count(db_path) == 0
+    assert not secret_path.exists()
+
+
+def test_intake_create_token_cli_keeps_a_secret_when_the_producer_is_revoked_midway(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given an earlier secret file that must survive a later failed issuance
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    first_path = tmp_path / "private" / "token.json"
+    assert _issue_to_file(db_path, first_path).exit_code == 0
+    original = first_path.read_text("utf-8")
+    real_write = private_files.write_private_text_file
+
+    def revoking_write(path: Path, text: str) -> None:
+        real_write(path, text)
+        assert _revoke_producer(db_path).exit_code == 0
+
+    monkeypatch.setattr(cli_receiver, "write_private_text_file", revoking_write)
+
+    # When
+    result = _issue_to_file(db_path, first_path)
+
+    # Then the earlier credential file is left exactly as it was
+    assert result.exit_code == 1
+    assert first_path.read_text("utf-8") == original
+    # The producer revocation revokes the earlier token too, and the failed
+    # issuance adds nothing on top of that.
+    assert _active_token_count(db_path) == 0
+
+
+def test_intake_create_token_cli_refuses_a_secret_file_whose_producer_was_revoked(
+    tmp_path: Path,
+) -> None:
+    # Given a producer with no live tokens and an existing destination
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    assert _revoke_producer(db_path).exit_code == 0
+    secret_path = tmp_path / "private" / "token.json"
+    secret_path.parent.mkdir(mode=0o700, exist_ok=True)
+    _ = secret_path.write_text("{}", encoding="utf-8")
+
+    # When
+    result = _issue_to_file(db_path, secret_path)
+
+    # Then nothing is issued and the destination is untouched
+    assert result.exit_code == 1
+    assert secret_path.read_text("utf-8") == "{}"
+    assert _token_rows(db_path) == 0
+
+
+class _CapabilitiesBody(_QuietHandler):
+    """Answers the capabilities route with a fixed status and body."""
+
+    status: int = HTTPStatus.OK
+    body: bytes = b"{}"
+
+    def do_GET(self) -> None:
+        self.send_response(self.status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(self.body)))
+        self.end_headers()
+        _ = self.wfile.write(self.body)
+
+
+@contextmanager
+def _canned_receiver(status: int, body: bytes) -> Generator[str]:
+    handler = type(
+        "CannedHandler",
+        (_CapabilitiesBody,),
+        {"status": status, "body": body},
+    )
+    with _serve(handler) as base:
+        yield base
+
+
+VALID_CAPABILITIES: Final = json.dumps(
+    {
+        "schema": "healthrelay.intake-context",
+        "supported_versions": ["1.0"],
+        "max_body_bytes": 1048576,
+        "max_operations": 500,
+        "authentication": {
+            "scheme": "bearer",
+            "header": "Authorization",
+            "token_type": "intake",
+        },
+        "features": ["upsert", "delete", "link_projection"],
+    },
+).encode()
+
+
+def _smoke_token_file(tmp_path: Path) -> Path:
+    secret_path = tmp_path / "private" / "token.json"
+    secret_path.parent.mkdir(mode=0o700, exist_ok=True)
+    _ = secret_path.write_text(
+        json.dumps({"token": "hri_synthetic_token"}), encoding="utf-8"
+    )
+    return secret_path
+
+
+def test_intake_smoke_cli_rejects_a_capabilities_body_that_is_not_json(
+    tmp_path: Path,
+) -> None:
+    # Given a 200 response from something that is not a health-bridge receiver
+    secret_path = _smoke_token_file(tmp_path)
+
+    with _canned_receiver(HTTPStatus.OK, b"<html>not a receiver</html>") as base:
+        # When
+        result = _cli("intake-smoke", "--url", base, "--token-file", str(secret_path))
+
+    # Then the false-positive success is refused
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+
+
+def test_intake_smoke_cli_rejects_capabilities_without_a_known_schema(
+    tmp_path: Path,
+) -> None:
+    # Given a 200 response that is JSON but not an intake capabilities document
+    secret_path = _smoke_token_file(tmp_path)
+    body = json.dumps({"status": "ok", "server": "nginx"}).encode()
+
+    with _canned_receiver(HTTPStatus.OK, body) as base:
+        # When
+        result = _cli("intake-smoke", "--url", base, "--token-file", str(secret_path))
+
+    # Then
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+
+
+def test_intake_smoke_cli_rejects_capabilities_without_a_supported_version(
+    tmp_path: Path,
+) -> None:
+    # Given a 200 response advertising no version this CLI understands
+    secret_path = _smoke_token_file(tmp_path)
+    body = json.dumps(
+        {
+            "schema": "healthrelay.intake-context",
+            "supported_versions": ["9.9"],
+            "authentication": {"scheme": "bearer"},
+            "features": [],
+        }
+    ).encode()
+
+    with _canned_receiver(HTTPStatus.OK, body) as base:
+        # When
+        result = _cli("intake-smoke", "--url", base, "--token-file", str(secret_path))
+
+    # Then
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+
+
+def test_intake_smoke_cli_accepts_a_complete_capabilities_document(
+    tmp_path: Path,
+) -> None:
+    # Given a 200 response with the expected schema and capability fields
+    secret_path = _smoke_token_file(tmp_path)
+
+    with _canned_receiver(HTTPStatus.OK, VALID_CAPABILITIES) as base:
+        # When
+        result = _cli("intake-smoke", "--url", base, "--token-file", str(secret_path))
+
+    # Then
+    assert result.exit_code == 0, (result.output, result.exception)
+    payload = IntakeSmokePayload.model_validate_json(result.stdout)
+    assert payload.http_status == 200
+
+
+STALLED_RESPONSE_HEAD: Final = (
+    b"HTTP/1.1 200 OK\r\n"
+    b"Content-Type: application/json\r\n"
+    b"Content-Length: 4096\r\n"
+    b"\r\n{"
+)
+STALL_HOLD_SECONDS: Final = 2.0
+STALL_READ_TIMEOUT_SECONDS: Final = 0.5
+
+
+@contextmanager
+def _stalling_receiver() -> Generator[str]:
+    """A server that sends response headers and then stops delivering the body."""
+
+    def serve(listener: socket.socket) -> None:
+        with listener:
+            try:
+                connection = listener.accept()[0]
+            except OSError:
+                return
+            with connection:
+                try:
+                    _ = connection.recv(4096)
+                    _ = connection.sendall(STALLED_RESPONSE_HEAD)
+                    # Hold the body open just past the client's read timeout.
+                    time.sleep(STALL_HOLD_SECONDS)
+                except OSError:
+                    return
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        thread = Thread(target=serve, args=(listener,), daemon=True)
+        thread.start()
+        try:
+            yield f"http://127.0.0.1:{listener.getsockname()[1]}"
+        finally:
+            listener.close()
+            thread.join(timeout=5)
+
+
+def test_intake_smoke_cli_reports_a_stalled_capabilities_body(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given a receiver that stops mid-body
+    secret_path = _smoke_token_file(tmp_path)
+    monkeypatch.setattr(
+        cli_receiver,
+        "INTAKE_SMOKE_TIMEOUT_SECONDS",
+        STALL_READ_TIMEOUT_SECONDS,
+    )
+
+    with _stalling_receiver() as base:
+        # When
+        result = _cli("intake-smoke", "--url", base, "--token-file", str(secret_path))
+
+    # Then the stall is the documented unreachable diagnostic
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "not reachable" in result.stderr
+
+
+def test_receiver_start_help_describes_the_request_timeout_as_inactivity(
+    tmp_path: Path,
+) -> None:
+    # Given
+    del tmp_path
+
+    # When
+    result = _cli("start", "--help")
+
+    # Then the help text does not promise a total request deadline
+    assert "--request-timeout" in result.output
+    assert "inactivity" in result.output.lower()

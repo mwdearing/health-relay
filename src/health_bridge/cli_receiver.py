@@ -13,10 +13,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Final, Literal, TypeAlias, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import (
+    HTTPRedirectHandler,
+    OpenerDirector,
+    Request,
+    build_opener,
+    urlopen,
+)
 
 import typer
 from pydantic import TypeAdapter
+from typing_extensions import override
 
 from health_bridge.cli_receiver_start import (
     DEFAULT_RECEIVER_HOST,
@@ -28,6 +35,12 @@ from health_bridge.cli_receiver_start import (
 from health_bridge.contract.intake_context_v1 import (
     BUNDLE_ID_PATTERN,
     PRODUCER_ID_PATTERN,
+)
+from health_bridge.contract.intake_context_v1 import (
+    SCHEMA_NAME as INTAKE_SCHEMA_NAME,
+)
+from health_bridge.contract.intake_context_v1 import (
+    SCHEMA_VERSION as INTAKE_SCHEMA_VERSION,
 )
 from health_bridge.launchd import load_runnable_launch_agent_request
 from health_bridge.mailbox.connections import MailboxConnectionStore
@@ -157,6 +170,12 @@ INTAKE_SMOKE_TOKEN_FILE_MESSAGE: Final = (
 MAX_REQUEST_TIMEOUT_SECONDS: Final = 300.0
 INTAKE_SMOKE_OK_STATUS: Final = 200
 INTAKE_SMOKE_NOT_FOUND_STATUS: Final = 404
+INTAKE_SMOKE_TIMEOUT_SECONDS: Final = 10
+INTAKE_SMOKE_UNUSABLE_CAPABILITIES_MESSAGE: Final = (
+    "Receiver intake smoke failed: the capabilities response is not a usable "
+    "intake receiver ({reason}). Check that --url points at a health-bridge "
+    "receiver started with --enable-intake-context."
+)
 PRODUCER_REVOKED_MESSAGE: Final = (
     "Intake producer {producer_id} is revoked; run receiver "
     "intake-reactivate-producer to restore it before registering or issuing "
@@ -202,6 +221,15 @@ INTAKE_CAPABILITY_FIELDS: Final = frozenset(
         "max_operations",
         "schema",
         "supported_versions",
+    }
+)
+# What a 200 capabilities response must carry before intake-smoke calls it usable.
+REQUIRED_INTAKE_CAPABILITY_FIELDS: Final = frozenset(
+    {
+        "authentication",
+        "features",
+        "max_body_bytes",
+        "max_operations",
     }
 )
 PurgeIdentity: TypeAlias = tuple[int, int, int, int, int]
@@ -1337,6 +1365,8 @@ def intake_create_token(  # noqa: PLR0913 -- Typer exposes independent token opt
         _echo_intake_token_file_result(
             db,
             issued=issued,
+            owner_id=owner_id,
+            producer_id=producer_id,
             output_secret=output_secret,
             secret_payload=secret_payload,
         )
@@ -1359,10 +1389,12 @@ def _validate_intake_secret_output_path(output_secret: Path, *, db: Path) -> Non
         raise typer.Exit(code=1) from exc
 
 
-def _echo_intake_token_file_result(
+def _echo_intake_token_file_result(  # noqa: PLR0913 -- one identity per issuance step.
     db: Path,
     *,
     issued: IssuedIntakeToken,
+    owner_id: str,
+    producer_id: str,
     output_secret: Path,
     secret_payload: Mapping[str, object],
 ) -> None:
@@ -1372,9 +1404,14 @@ def _echo_intake_token_file_result(
     it until the file is on disk. A failed write therefore leaves no active
     credential even if the database cannot be reached to revoke one afterwards;
     the unusable row is then dropped. Activation happens after the write, so a
-    token is never usable before the secret it belongs to exists.
+    token is never usable before the secret it belongs to exists, and activation
+    rechecks the producer in the same statement so a producer revoked in between
+    cannot receive one. When activation fails, any file this command replaced is
+    put back, so an existing credential file is never destroyed by a failed
+    issuance.
     """
     secret_text = json.dumps(secret_payload, sort_keys=True) + "\n"
+    replaced_secret = _existing_secret_text(output_secret)
     try:
         write_private_text_file(output_secret, secret_text)
     except OSError as exc:
@@ -1382,14 +1419,20 @@ def _echo_intake_token_file_result(
         typer.echo(INTAKE_WRITE_FAILURE_MESSAGE, err=True)
         raise typer.Exit(code=1) from exc
     try:
-        activated = activate_intake_token(db, issued.token_prefix)
+        activated = activate_intake_token(
+            db,
+            owner_id=owner_id,
+            producer_id=producer_id,
+            token_prefix=issued.token_prefix,
+        )
     except (sqlite3.Error, OSError) as exc:
         _discard_pending_intake_token_or_warn(db, issued.token_prefix)
-        _remove_written_secret_file_or_warn(output_secret)
+        _restore_secret_file_or_warn(output_secret, replaced_secret)
         typer.echo(INTAKE_ACTIVATION_FAILURE_MESSAGE, err=True)
         raise typer.Exit(code=1) from exc
     if activated != 1:
-        _remove_written_secret_file_or_warn(output_secret)
+        _discard_pending_intake_token_or_warn(db, issued.token_prefix)
+        _restore_secret_file_or_warn(output_secret, replaced_secret)
         typer.echo(INTAKE_ACTIVATION_FAILURE_MESSAGE, err=True)
         raise typer.Exit(code=1)
     typer.echo(
@@ -1490,14 +1533,48 @@ def _discard_pending_intake_token_or_warn(db: Path, token_prefix: str) -> None:
         )
 
 
-def _remove_written_secret_file_or_warn(output_secret: Path) -> None:
+def _existing_secret_text(output_secret: Path) -> str | None:
+    """The file this issuance is about to replace, so a failure can put it back."""
     try:
-        output_secret.unlink(missing_ok=True)
-    except OSError:
+        return output_secret.read_text("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _restore_secret_file_or_warn(output_secret: Path, replaced: str | None) -> None:
+    """Undo this issuance's write: restore the previous secret, or remove ours.
+
+    The write replaces its destination atomically, so a failure after it would
+    otherwise delete a credential file that was there before. A previous file we
+    could not read back is left in place with a warning instead of being removed.
+    """
+    if replaced is None and _is_unreadable_regular_file(output_secret):
         typer.echo(
             f"Remove the unused secret file yourself: {output_secret}",
             err=True,
         )
+        return
+    try:
+        if replaced is None:
+            output_secret.unlink(missing_ok=True)
+        else:
+            write_private_text_file(output_secret, replaced)
+    except OSError:
+        typer.echo(
+            f"Restore the previous secret file yourself: {output_secret}",
+            err=True,
+        )
+
+
+def _is_unreadable_regular_file(path: Path) -> bool:
+    """True when the path holds bytes this command cannot read back or rewrite."""
+    try:
+        if not path.is_file():
+            return False
+        _ = path.read_text("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return True
+    return False
 
 
 class _MissingIntakeTablesError(Exception):
@@ -1849,8 +1926,10 @@ def start(  # noqa: PLR0913 -- Typer exposes independent receiver options.
         typer.Option(
             "--request-timeout",
             help=(
-                "Seconds a single HTTP request may take before the receiver "
-                "closes it. Greater than 0 and at most 300."
+                "Seconds a single socket read may block before the receiver "
+                "gives up on a stalled request. This is an inactivity timeout, "
+                "so a client that keeps sending bytes resets it. "
+                "Greater than 0 and at most 300."
             ),
         ),
     ] = DEFAULT_REQUEST_TIMEOUT_SECONDS,
@@ -1945,10 +2024,15 @@ def intake_smoke(
         method="GET",
     )
     try:
-        # `_validate_intake_smoke_url` above restricts this request to HTTP(S).
+        # `_validate_intake_smoke_url` above restricts this request to HTTP(S),
+        # and the opener refuses redirects so the bearer token cannot be
+        # forwarded to another host or downgraded from https to http.
         with cast(
             "HTTPResponse",
-            urlopen(request, timeout=10),  # noqa: S310  # nosec B310
+            _intake_smoke_opener().open(
+                request,
+                timeout=INTAKE_SMOKE_TIMEOUT_SECONDS,
+            ),
         ) as response:
             status = response.status
             body = response.read()
@@ -1958,7 +2042,8 @@ def intake_smoke(
             exc.close()
         _echo_intake_smoke_failure(exc.code)
         raise typer.Exit(code=1) from exc
-    except URLError as exc:
+    except (URLError, TimeoutError, OSError) as exc:
+        # A read that stalls after the headers raise TimeoutError directly.
         typer.echo(INTAKE_SMOKE_UNREACHABLE_MESSAGE, err=True)
         raise typer.Exit(code=1) from exc
 
@@ -1975,6 +2060,28 @@ def intake_smoke(
     if status != INTAKE_SMOKE_OK_STATUS:
         _echo_intake_smoke_failure(status)
         raise typer.Exit(code=1)
+    unusable = _intake_capabilities_unusable_reason(body)
+    if unusable is not None:
+        typer.echo(
+            INTAKE_SMOKE_UNUSABLE_CAPABILITIES_MESSAGE.format(reason=unusable), err=True
+        )
+        raise typer.Exit(code=1)
+
+
+def _intake_smoke_opener() -> OpenerDirector:
+    """An opener that refuses redirects instead of replaying the bearer token.
+
+    ``urllib`` copies the original headers onto every redirect it follows, so an
+    automatic redirect would hand the intake token to whatever host the response
+    names, including an https-to-http downgrade.
+    """
+
+    class _RefuseRedirect(HTTPRedirectHandler):
+        @override
+        def redirect_request(self, *_args: object, **_kwargs: object) -> None:
+            """Refuse the redirect: urllib reads this handler's ``None`` as no."""
+
+    return build_opener(_RefuseRedirect)
 
 
 def _intake_capabilities_url(base_url: str) -> str:
@@ -1989,6 +2096,29 @@ def _intake_capabilities_fields(body: bytes) -> dict[str, object]:
     return {
         key: value for key, value in document.items() if key in INTAKE_CAPABILITY_FIELDS
     }
+
+
+def _intake_capabilities_unusable_reason(body: bytes) -> str | None:
+    """Why a 200 response cannot be trusted as an intake receiver, or nothing.
+
+    A wrong service, a reverse-proxy fallback page or an incompatible receiver
+    can answer this path with 200. Status alone would call that a passing smoke
+    check even though intake uploads cannot use the endpoint, so the document has
+    to name the intake schema, offer a version this CLI speaks, and carry the
+    capability fields an uploader reads.
+    """
+    document = _intake_json_object(body)
+    if document is None:
+        return "the response is not a JSON object"
+    if document.get("schema") != INTAKE_SCHEMA_NAME:
+        return f"schema is {document.get('schema')!r}, not {INTAKE_SCHEMA_NAME!r}"
+    versions = document.get("supported_versions")
+    if not isinstance(versions, list) or INTAKE_SCHEMA_VERSION not in versions:
+        return f"supported versions are {versions!r}, without {INTAKE_SCHEMA_VERSION!r}"
+    missing = sorted(REQUIRED_INTAKE_CAPABILITY_FIELDS - document.keys())
+    if missing:
+        return f"capability fields are missing: {', '.join(missing)}"
+    return None
 
 
 def _intake_json_object(body: bytes) -> dict[str, object] | None:
@@ -2013,7 +2143,8 @@ def _read_intake_smoke_token(token_file: Path) -> str:
     """The bearer token from an `intake-create-token` file, never printed."""
     try:
         text = token_file.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
+        # A truncated or wrongly encoded file is a user error, not a crash.
         typer.echo(INTAKE_SMOKE_TOKEN_FILE_MESSAGE, err=True)
         raise typer.Exit(code=1) from exc
     document = _intake_json_object(text.encode("utf-8"))

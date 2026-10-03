@@ -41,7 +41,15 @@ REVOKE_INTAKE_TOKEN_SQL: Final = _sql(
 ACTIVATE_INTAKE_TOKEN_SQL: Final = _sql(
     "update intake_context_tokens",
     "set revoked_at = null",
-    "where token_prefix = ? and revoked_at is not null",
+    # The producer is rechecked inside the same statement: a producer revoked
+    # after this row was inserted pending would otherwise be handed an active
+    # token, and stay usable once it is reactivated.
+    "where token_prefix = ? and owner_id = ? and producer_id = ?",
+    "and revoked_at is not null",
+    "and exists (select 1 from intake_producers",
+    "where owner_id = intake_context_tokens.owner_id",
+    "and producer_id = intake_context_tokens.producer_id",
+    "and revoked_at is null)",
 )
 DELETE_INTAKE_TOKEN_SQL: Final = _sql(
     "delete from intake_context_tokens",
@@ -227,18 +235,29 @@ def create_pending_intake_token(
     )
 
 
-def activate_intake_token(db_path: Path, token_prefix: str) -> int:
+def activate_intake_token(
+    db_path: Path,
+    *,
+    owner_id: str,
+    producer_id: str,
+    token_prefix: str,
+) -> int:
     """Make a pending token usable and report how many rows changed.
 
     Only a row this module inserted as pending (already revoked) can change
-    here, so an activation can never revive a token revoked on purpose.
+    here, so an activation can never revive a token revoked on purpose. The
+    producer check is part of the same statement rather than a separate read:
+    ``intake-revoke-producer`` leaves a still-pending row alone, so a producer
+    revoked between the pending insert and this call would otherwise receive an
+    active credential. A zero count means the row is gone, already active, or
+    its producer is no longer active.
     """
     initialize_database(db_path)
     with connect_database(db_path) as connection:
         return int(
             connection.execute(
                 ACTIVATE_INTAKE_TOKEN_SQL,
-                (token_prefix,),
+                (token_prefix, owner_id, producer_id),
             ).rowcount
         )
 

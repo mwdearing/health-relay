@@ -5,15 +5,23 @@ from typing import cast
 import pytest
 
 from health_bridge.receiver.intake_tokens import (
+    activate_intake_token,
     authenticate_intake_token,
     create_intake_token,
+    create_pending_intake_token,
     revoke_intake_token,
 )
 from health_bridge.receiver.tokens import (
     authenticate_receiver_token,
     create_receiver_token,
 )
-from health_bridge.storage.database import initialize_database
+from health_bridge.storage.database import connect_database, initialize_database
+from health_bridge.storage.intake_context import (
+    ProducerRecord,
+    register_producer,
+    revoke_producer,
+    revoke_producer_tokens,
+)
 
 
 def test_issued_token_authenticates_to_its_owner_and_producer(tmp_path: Path) -> None:
@@ -110,3 +118,103 @@ def test_valid_pair_still_works(tmp_path: Path) -> None:
         db, owner_id="local", producer_id="nutrition-app", label="l"
     )
     assert _token_rows(db) == 1
+
+
+def _registered_db(tmp_path: Path) -> Path:
+    db = tmp_path / "t.sqlite"
+    initialize_database(db)
+    with connect_database(db) as connection:
+        _ = connection.execute("begin immediate")
+        _ = register_producer(
+            connection,
+            ProducerRecord(
+                owner_id="owner-1",
+                producer_id="nutrition-app",
+                writer_bundle_id="dev.example.nutrition",
+                display_label="Nutrition app",
+                registered_at="2026-01-01T00:00:00Z",
+                revoked_at=None,
+            ),
+        )
+        connection.commit()
+    return db
+
+
+def _revoke(db: Path) -> None:
+    with connect_database(db) as connection:
+        _ = connection.execute("begin immediate")
+        _ = revoke_producer(
+            connection,
+            owner_id="owner-1",
+            producer_id="nutrition-app",
+            revoked_at="2026-01-02T00:00:00Z",
+        )
+        _ = revoke_producer_tokens(
+            connection,
+            owner_id="owner-1",
+            producer_id="nutrition-app",
+        )
+        connection.commit()
+
+
+def test_pending_token_activates_for_an_active_producer(tmp_path: Path) -> None:
+    # Given
+    db = _registered_db(tmp_path)
+    issued = create_pending_intake_token(
+        db, owner_id="owner-1", producer_id="nutrition-app", label="l"
+    )
+
+    # When
+    activated = activate_intake_token(
+        db,
+        owner_id="owner-1",
+        producer_id="nutrition-app",
+        token_prefix=issued.token_prefix,
+    )
+
+    # Then
+    assert activated == 1
+    assert authenticate_intake_token(db, issued.token) is not None
+
+
+def test_activation_refuses_a_producer_revoked_after_the_pending_insert(
+    tmp_path: Path,
+) -> None:
+    # Given a pending token whose producer is revoked before activation
+    db = _registered_db(tmp_path)
+    issued = create_pending_intake_token(
+        db, owner_id="owner-1", producer_id="nutrition-app", label="l"
+    )
+    _revoke(db)
+
+    # When
+    activated = activate_intake_token(
+        db,
+        owner_id="owner-1",
+        producer_id="nutrition-app",
+        token_prefix=issued.token_prefix,
+    )
+
+    # Then the credential stays unusable
+    assert activated == 0
+    assert authenticate_intake_token(db, issued.token) is None
+
+
+def test_activation_refuses_a_pending_row_for_another_owner(tmp_path: Path) -> None:
+    # Given a pending token issued for one owner
+    db = _registered_db(tmp_path)
+    issued = create_pending_intake_token(
+        db, owner_id="owner-1", producer_id="nutrition-app", label="l"
+    )
+
+    # When activation is asked for a different owner
+    activated = activate_intake_token(
+        db,
+        owner_id="owner-2",
+        producer_id="nutrition-app",
+        token_prefix=issued.token_prefix,
+    )
+
+    # Then only the owning producer can activate it
+    assert activated == 0
+    assert authenticate_intake_token(db, issued.token) is None
