@@ -380,3 +380,13 @@ def test_failure_before_headers_are_sent_returns_only_internal_error(
     assert headers.count(b"http/1.0") == 1
     assert b"connection: close" in headers
     assert body == {"error": "internal_error"}
+
+
+def test_partial_request_line_timeout_answers_408(tmp_path: Path) -> None:
+    db = tmp_path / "r.sqlite"
+    with served(db) as port:
+        response = socket_request(port, b"GET /hea")
+    status, headers, body = response_parts(response)
+    assert status == 408
+    assert body == {"error": "request_timeout"}
+    assert b"connection: close" in headers

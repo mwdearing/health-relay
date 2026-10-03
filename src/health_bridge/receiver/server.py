@@ -238,6 +238,7 @@ class MailboxTransportUnavailableError(Exception):
 
 class ReceiverRequestHandler(BaseHTTPRequestHandler):
     _response_started: bool = False
+    _request_started: bool = False
     raw_requestline: bytes = b""
 
     @override
@@ -254,6 +255,7 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
     @override
     def handle_one_request(self) -> None:
         self._response_started = False
+        self._request_started = False
         # A timeout may occur before the request line has been parsed.
         self.requestline: str = ""
         self.request_version: str = self.default_request_version
@@ -272,6 +274,14 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
 
     def _read_and_dispatch_request(self) -> None:
         """Keep stdlib HTTP parsing and dispatch, with our error boundary outside."""
+        # Wait for the first byte separately: a timeout before it is an idle
+        # keep-alive connection, a timeout after it is a stalled request.
+        peek = cast("Callable[[int], bytes] | None", getattr(self.rfile, "peek", None))
+        if peek is not None:
+            if not peek(1):
+                self.close_connection = True
+                return
+            self._request_started = True
         self.raw_requestline = self.rfile.readline(_MAX_REQUEST_LINE_BYTES + 1)
         if len(self.raw_requestline) > _MAX_REQUEST_LINE_BYTES:
             self.request_version = ""
@@ -295,8 +305,13 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
 
     def _finish_failed_request(self, status: HTTPStatus, error: str) -> None:
         self.close_connection = True
-        if self._response_started or not self.raw_requestline:
+        if self._response_started or not (
+            self.raw_requestline or self._request_started
+        ):
             return
+        if self.request_version == "HTTP/0.9":
+            # The request line was never parsed; answer with a real status line.
+            self.request_version = "HTTP/1.0"
         # Discard an unfinished response before replacing it with the fixed error.
         pending_headers = cast(
             "list[bytes] | None", getattr(self, "_headers_buffer", None)
