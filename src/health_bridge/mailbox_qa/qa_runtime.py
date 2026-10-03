@@ -30,6 +30,7 @@ from health_bridge.receiver.invitations import (
 )
 from health_bridge.receiver.mailbox_keys import MailboxKeyStore, MailboxKeyStoreError
 from health_bridge.receiver.server import (
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
     MAX_PAIRING_REDEEM_BYTES,
     PairingRedeemRateLimiter,
     ReceiverHTTPServer,
@@ -75,6 +76,7 @@ class QAReceiverHTTPServer(ReceiverHTTPServer):
         self.mailbox_connection_store = None
         self.mailbox_worker = None
         self.pairing_redeem_limiter = PairingRedeemRateLimiter()
+        self.request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS
         ThreadingHTTPServer.__init__(self, (host, port), QAReceiverRequestHandler)
 
 

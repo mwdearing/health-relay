@@ -2,7 +2,7 @@ import json
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
-from http.client import HTTPResponse, RemoteDisconnected
+from http.client import HTTPResponse
 from pathlib import Path
 from threading import Thread
 from typing import ClassVar, cast
@@ -741,8 +741,8 @@ def test_receiver_suppresses_default_socketserver_traceback_for_unexpected_error
         "authenticate_receiver_token_principal",
         fail_unexpectedly,
     )
-    with running_receiver(db_path) as origin, pytest.raises(RemoteDisconnected):
-        _ = open_http_response(
+    with running_receiver(db_path) as origin:
+        error = open_http_error(
             Request(
                 f"{origin}/v1/batches",
                 data=b"{}",
@@ -750,7 +750,11 @@ def test_receiver_suppresses_default_socketserver_traceback_for_unexpected_error
                 method="POST",
             )
         )
+        body = error.read()
 
+    assert error.code == 500
+    assert json.loads(body) == {"error": "internal_error"}
+    assert error_message.encode() not in body
     captured = capsys.readouterr()
     assert "synthetic unexpected handler failure" not in captured.err
     assert "Traceback" not in captured.err

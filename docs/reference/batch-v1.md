@@ -183,10 +183,20 @@ See `fixtures/health_bridge_batch_v1.intake_metadata.synthetic.json`.
 
 Intake context also has its own batch contract, served on separate routes; see
 [intake-context-v1.md](intake-context-v1.md). Those routes are off by default.
-There is currently no CLI option or environment variable that turns them on:
-`health-bridge receiver start` never enables them, so under the stock entry
-point both routes return 404. Only the `intake_context_enabled` argument of the
-lower-level `build_receiver_server` enables them.
+Use `health-bridge receiver start --db .tmp/device.sqlite --enable-intake-context`
+to enable them for a receiver process. Without the switch, both routes return
+404. The switch also works with `--service-config` or mailbox options; it enables
+the intake HTTP routes without changing mailbox delivery. The lower-level
+`build_receiver_server` and `serve_receiver` APIs accept
+`intake_context_enabled=True` for the same behavior.
+
+HTTP connections have a 30-second socket read timeout. A stalled request returns
+408 `request_timeout` and closes when a response can be sent; an idle connection
+without a request closes silently. The Python server APIs accept
+`request_timeout_seconds` to adjust it. Unexpected exceptions return 500
+`internal_error` and close the connection, with only the exception type logged.
+Existing route-specific errors are preserved. See [architecture](../architecture.md)
+for connection and response handling details.
 
 The top-level batch model rejects unknown fields, and so does the JSON Schema.
 A receiver that predates `electrocardiograms`, `medication_dose_events` or
@@ -202,7 +212,7 @@ family.
 | Base batch (`1.x`) | `/v1/batches` | `health_bridge.batch.v1` with a receiver (batch) token | Unknown major versions are rejected; an intake-only token gets 403 |
 | Optional arrays (`electrocardiograms`, `medication_dose_events`, `lab_results`) | `/v1/batches` | Arrays present in the batch | A receiver that predates an array rejects the whole batch |
 | Intake metadata keys | `/v1/batches` | Valid `intake_id`, `intake_component_id`, `sync_identifier`, `sync_version` on samples | Malformed values and other `intake_*` keys are rejected |
-| Intake-context batch (`1.0`) | `/v1/intake-context/batches`, `/v1/intake-context/capabilities` | `healthrelay.intake-context` with an intake-only token, when the flag is on (not reachable from the stock entry point) | With the flag off the routes return 404; a batch token gets 403 |
+| Intake-context batch (`1.0`) | `/v1/intake-context/batches`, `/v1/intake-context/capabilities` | `healthrelay.intake-context` with an intake-only token, when `--enable-intake-context` is on | With the flag off the routes return 404; a batch token gets 403 |
 
 An app that sends only the base batch works against every receiver; one that
 uses intake context should read the capabilities route first.

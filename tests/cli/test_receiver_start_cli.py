@@ -31,6 +31,7 @@ def test_receiver_start_help_preserves_supported_options() -> None:
         "--mailbox-root",
         "--icloud-container-identifier",
         "--service-config",
+        "--enable-intake-context",
     ):
         assert option in plain
 
@@ -66,6 +67,7 @@ def test_receiver_start_preserves_direct_defaults_and_skips_mailbox_stores(
         mailbox_key_store: MailboxKeyStore | None,
         mailbox_connection_store: MailboxConnectionStore | None,
         mailbox_root: Path | None,
+        intake_context_enabled: bool,
     ) -> None:
         captured.update(
             db_path=db_path,
@@ -74,6 +76,7 @@ def test_receiver_start_preserves_direct_defaults_and_skips_mailbox_stores(
             mailbox_key_store=mailbox_key_store,
             mailbox_connection_store=mailbox_connection_store,
             mailbox_root=mailbox_root,
+            intake_context_enabled=intake_context_enabled,
         )
 
     monkeypatch.setattr(
@@ -100,6 +103,7 @@ def test_receiver_start_preserves_direct_defaults_and_skips_mailbox_stores(
         "mailbox_key_store": None,
         "mailbox_connection_store": None,
         "mailbox_root": None,
+        "intake_context_enabled": False,
     }
 
 
@@ -209,5 +213,49 @@ def test_receiver_start_maps_keyboard_interrupt_to_clean_exit(
 
     assert result.exit_code == 0, (result.output, result.exception)
     assert result.stderr.strip() == (
-        "health-bridge receiver listening on http://127.0.0.1:8765"
+        "health-bridge receiver listening on http://127.0.0.1:8765\n"
+        "Intake-context routes: disabled"
     )
+
+
+def test_receiver_start_enables_intake_context_explicitly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def serve(**kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(cli_receiver_module, "serve_receiver", serve)
+    result = CliRunner().invoke(
+        app,
+        [
+            "receiver",
+            "start",
+            "--db",
+            str(tmp_path / "r.sqlite"),
+            "--enable-intake-context",
+        ],
+    )
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert captured["intake_context_enabled"] is True
+    assert "Intake-context routes: enabled" in result.stderr
+
+
+def test_receiver_start_leaves_intake_context_disabled_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def serve(**kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(cli_receiver_module, "serve_receiver", serve)
+    result = CliRunner().invoke(
+        app, ["receiver", "start", "--db", str(tmp_path / "r.sqlite")]
+    )
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert captured["intake_context_enabled"] is False
+    assert "Intake-context routes: disabled" in result.stderr

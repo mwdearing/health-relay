@@ -52,6 +52,22 @@ The current receiver is a **single-user store**. Every active paired device cred
 
 ## Delivery and recovery
 
+The HTTP receiver gives each connection a 30-second socket read timeout for
+the request line, headers, and body. A stalled request ends with HTTP 408
+`{"error":"request_timeout"}` and closes the connection when a response can
+be sent; an idle connection without a request is closed silently. The Python
+`build_receiver_server` and `serve_receiver` APIs accept
+`request_timeout_seconds` to adjust this timeout. It bounds stalled socket
+reads, rather than total request processing time. Normal successful responses
+retain their existing connection behavior; idle keep-alive reads also time out.
+
+Unexpected request-handling exceptions return HTTP 500
+`{"error":"internal_error"}` with `Connection: close`. Logs contain only the
+exception type, without its message, traceback, credentials, or request data.
+If a response has already started or the peer cannot receive it, the connection
+closes without a second response. Existing validation, authentication, and
+storage error mappings remain in place, and other connections keep serving.
+
 Uploads enter a private ordered outbox. Direct is the default transport. Encrypted iCloud Mailbox is an explicit opt-in, Mac-only Beta, and a Direct failure never causes an automatic transport fallback.
 
 For Direct, a successful HTTP response is required before the corresponding committed progress advances. For mailbox delivery, the app applies application-layer encryption and a sender signature before publishing to the user's iCloud container. The user-owned receiver decrypts and commits accepted batches before publishing an encrypted, receiver-signed ACK; the app advances committed progress only after validating a committed ACK. Failed or interrupted deliveries remain queued and retry in order on their selected transport.
@@ -77,8 +93,13 @@ Trust boundaries:
 
 - **Routes behind a flag.** `GET /v1/intake-context/capabilities` and
   `POST /v1/intake-context/batches` exist only when the receiver is built with
-  `intake_context_enabled`. The flag is off by default; when off, both paths
-  answer 404 like any unknown path.
+  `intake_context_enabled`. Start with
+  `health-bridge receiver start --db .tmp/device.sqlite --enable-intake-context`
+  to enable them for that process. The flag is off by default; when off, both
+  paths answer 404 like any unknown path. It also applies with
+  `--service-config` or mailbox options, enabling the HTTP routes without
+  changing mailbox delivery. Each CLI start reports whether the routes are
+  enabled. Generated mailbox service commands keep the default off.
 - **Intake-only tokens.** These routes accept only tokens stored in
   `intake_context_tokens` (prefix `hri_`, bound to an owner and a producer).
   Such a token cannot use `/v1/batches` (403 `wrong_token_type`), and a normal
