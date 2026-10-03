@@ -233,15 +233,23 @@ uv run health-bridge receiver intake-register-producer \
 ```
 
 Registering the identical producer again succeeds and echoes the stored
-registration unchanged, including its original `registered_at`. Registering the
-same `producer_id` with a different writer bundle or label fails with exit code
-1 and changes nothing; a producer's writer bundle is not editable.
+registration unchanged, including its original `registered_at`; only the owner,
+producer, writer bundle and label are compared, so a producer restored from an
+earlier backup is still recognised as the same producer. Registering the same
+`producer_id` with a different writer bundle or label fails with exit code 1 and
+changes nothing; a producer's writer bundle is not editable.
 
 List what is registered, including revocations:
 
 ```bash
 uv run health-bridge receiver intake-list-producers --db .tmp/receiver.sqlite
 ```
+
+Both listing commands are strictly read-only. They open an existing database
+read-only and never create or migrate one: a missing `--db` path fails without
+creating the file or its folder, and a database from a receiver too old to have
+migrations 013 and 014 fails with a message asking for those migrations, leaving
+the file byte-identical.
 
 Issue an intake token. Like `create-token`, the secret is shown once and only a
 hash is stored, so exactly one secret destination is required:
@@ -257,9 +265,13 @@ uv run health-bridge receiver intake-create-token \
 
 `intake-create-token` refuses to issue a token for a producer that is not
 registered, or whose registration is revoked, and writes no token row in either
-case. Prefer `--output-secret`: stdout then carries only the token prefix and
-the file path, and the file is created with mode 0600. If the write fails, the
-just-issued token is revoked again so nothing stays active that nobody holds.
+case; the check and the insert share one transaction, so a producer revoked
+concurrently cannot slip a token through. Prefer `--output-secret`: stdout then
+carries only the token prefix and the file path, and the file is created with
+mode 0600. If the write fails, the just-issued token is revoked again so nothing
+stays active that nobody holds. The destination is resolved before anything is
+written, and a path that lands on the `--db` file or one of its SQLite sidecars
+is refused rather than overwritten.
 
 List tokens without ever revealing a token or its hash:
 

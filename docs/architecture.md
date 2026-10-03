@@ -123,12 +123,16 @@ health-bridge receiver start --db .tmp/device.sqlite --enable-intake-context
 
 `intake-register-producer` is idempotent for identical details and fails closed
 on a different writer bundle or label, so the producer identity a token is bound
-to cannot drift after onboarding. `intake-create-token` stores only a hash and
-requires an explicit secret destination: `--output-secret` writes the token to a
-mode-0600 private file and prints only the prefix, and a failed write revokes the
-token it just issued. `intake-list-producers` and `intake-list-tokens` audit the
-setup without exposing any secret, and `intake-revoke-token` exits non-zero when
-no active token carries the prefix. See
+to cannot drift after onboarding; the comparison runs inside the write
+transaction and ignores `registered_at`, so a restored backup still matches.
+`intake-create-token` stores only a hash and requires an explicit secret
+destination: `--output-secret` writes the token to a mode-0600 private file and
+prints only the prefix, refuses a destination that resolves to the database or
+one of its sidecars, and revokes the token if the write fails. Its producer check
+and the token insert share one transaction, so an unknown or revoked producer
+never receives a token. `intake-list-producers` and `intake-list-tokens` open the
+store read-only and never create or migrate it, and `intake-revoke-token` exits
+non-zero when no active token carries the prefix. See
 [Pairing and receiver setup](pairing.md#intake-producers-and-intake-tokens) for
 the full command reference.
 - **Intake-only tokens.** These routes accept only tokens stored in

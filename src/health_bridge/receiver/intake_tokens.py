@@ -42,9 +42,17 @@ SELECT_INTAKE_TOKENS_SQL: Final = _sql(
     "from intake_context_tokens",
     "order by intake_token_id",
 )
+SELECT_ACTIVE_PRODUCER_SQL: Final = _sql(
+    "select revoked_at from intake_producers",
+    "where owner_id = ? and producer_id = ?",
+)
 IntakeTokenRow: TypeAlias = tuple[str, str, str, str, str, str | None]
 INTAKE_TOKEN_ROWS_ADAPTER: Final[TypeAdapter[list[IntakeTokenRow]]] = TypeAdapter(
     list[IntakeTokenRow]
+)
+ProducerRevokedRow: TypeAlias = tuple[str | None] | None
+PRODUCER_REVOKED_ROW_ADAPTER: Final[TypeAdapter[ProducerRevokedRow]] = TypeAdapter(
+    ProducerRevokedRow
 )
 
 
@@ -74,6 +82,14 @@ class IntakeTokenPrincipal:
     producer_id: str
 
 
+class IntakeProducerInactiveError(Exception):
+    """The producer is not registered for this owner, or its registration is revoked."""
+
+    def __init__(self, producer_id: str) -> None:
+        super().__init__("intake producer is not registered or is revoked")
+        self.producer_id: str = producer_id
+
+
 def create_intake_token(
     db_path: Path,
     *,
@@ -100,6 +116,76 @@ def create_intake_token(
         token=token,
         token_prefix=token_prefix,
     )
+
+
+def create_intake_token_for_active_producer(
+    db_path: Path,
+    *,
+    owner_id: str,
+    producer_id: str,
+    label: str,
+) -> IssuedIntakeToken:
+    """Issue an intake token only if the producer is registered and active.
+
+    The producer check and the token insert share one immediate transaction, so
+    a producer revoked between a separate pre-check and this call cannot receive
+    a token: either the row is inserted while the producer is still active, or
+    nothing is written at all.
+    """
+    _validate_identity(owner_id=owner_id, producer_id=producer_id, label=label)
+    initialize_database(db_path)
+    token = f"{INTAKE_TOKEN_PREFIX}{secrets.token_urlsafe(GENERATED_TOKEN_BYTES)}"
+    token_prefix = token[:INTAKE_TOKEN_PREFIX_LENGTH]
+    with connect_database(db_path) as connection:
+        _ = connection.execute("begin immediate")
+        try:
+            inserted_id = _insert_token_for_active_producer(
+                connection,
+                owner_id=owner_id,
+                producer_id=producer_id,
+                label=label,
+                token=token,
+                token_prefix=token_prefix,
+            )
+        except BaseException:
+            connection.rollback()
+            raise
+        connection.commit()
+    token_id = inserted_id
+    if token_id is None:
+        message = "Intake token insert did not return a row id."
+        raise sqlite3.IntegrityError(message)
+    return IssuedIntakeToken(
+        token_id=token_id,
+        label=label,
+        token=token,
+        token_prefix=token_prefix,
+    )
+
+
+def _insert_token_for_active_producer(  # noqa: PLR0913 -- one bound pair per insert column.
+    connection: sqlite3.Connection,
+    *,
+    owner_id: str,
+    producer_id: str,
+    label: str,
+    token: str,
+    token_prefix: str,
+) -> int | None:
+    """Check the producer and insert the token row inside the caller's transaction."""
+    revoked_at = PRODUCER_REVOKED_ROW_ADAPTER.validate_python(
+        connection.execute(
+            SELECT_ACTIVE_PRODUCER_SQL,
+            (owner_id, producer_id),
+        ).fetchone(),
+    )
+    if revoked_at is None or revoked_at[0] is not None:
+        raise IntakeProducerInactiveError(producer_id)
+    cursor = connection.execute(
+        INSERT_INTAKE_TOKEN_SQL,
+        (owner_id, producer_id, label, hash_receiver_token(token), token_prefix),
+    )
+    return cursor.lastrowid
 
 
 def _validate_identity(*, owner_id: str, producer_id: str, label: str) -> None:
@@ -137,13 +223,18 @@ def revoke_active_intake_token(db_path: Path, token_prefix: str) -> int:
         )
 
 
-def list_intake_tokens(db_path: Path) -> tuple[IntakeTokenRecord, ...]:
-    """Every intake token row, oldest first, never the token or its hash."""
-    initialize_database(db_path)
-    with connect_database(db_path) as connection:
-        rows = INTAKE_TOKEN_ROWS_ADAPTER.validate_python(
-            connection.execute(SELECT_INTAKE_TOKENS_SQL).fetchall(),
-        )
+def list_intake_tokens_on(
+    connection: sqlite3.Connection,
+) -> tuple[IntakeTokenRecord, ...]:
+    """Every intake token row on an existing connection, read-only.
+
+    A listing command opens the store read-only and never initialises it, so this
+    takes the connection instead of a path. The hash column is not selected, so
+    no caller can leak it by accident.
+    """
+    rows = INTAKE_TOKEN_ROWS_ADAPTER.validate_python(
+        connection.execute(SELECT_INTAKE_TOKENS_SQL).fetchall(),
+    )
     return tuple(
         IntakeTokenRecord(
             token_prefix=row[0],

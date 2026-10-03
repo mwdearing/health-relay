@@ -4,16 +4,19 @@ import sqlite3
 import stat
 from typing import TYPE_CHECKING, Final
 
+import pytest
 from pydantic import BaseModel, TypeAdapter
 from typer.testing import CliRunner, Result
 
 from health_bridge.cli import app
-from health_bridge.receiver.intake_tokens import authenticate_intake_token
+from health_bridge.receiver.intake_tokens import (
+    IntakeProducerInactiveError,
+    authenticate_intake_token,
+    create_intake_token_for_active_producer,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 COUNT_ROWS_ADAPTER: TypeAdapter[list[tuple[int]]] = TypeAdapter(list[tuple[int]])
 TEXT_ROWS_ADAPTER: TypeAdapter[list[tuple[str]]] = TypeAdapter(list[tuple[str]])
@@ -119,6 +122,18 @@ def _token_rows(db_path: Path) -> int:
     return counts[0][0]
 
 
+def _readable_receiver_token_rows(db_path: Path) -> int:
+    """Read the batch-token count, or -1 when the file is no longer SQLite."""
+    try:
+        with sqlite3.connect(db_path) as connection:
+            rows = COUNT_ROWS_ADAPTER.validate_python(
+                connection.execute("select count(*) from receiver_tokens").fetchall(),
+            )
+    except sqlite3.Error:
+        return -1
+    return rows[0][0]
+
+
 def _token_hashes(db_path: Path) -> list[str]:
     return _single_column(db_path, "select token_hash from intake_context_tokens")
 
@@ -154,6 +169,32 @@ def _issue_to_file(db_path: Path, secret_path: Path) -> Result:
 def _raise_sqlite_error(*_args: object, **_kwargs: object) -> None:
     message = "synthetic storage failure"
     raise sqlite3.OperationalError(message)
+
+
+def _readable_token_rows(db_path: Path) -> int:
+    """Read the token count, or -1 when the file is no longer a SQLite database."""
+    try:
+        return _token_rows(db_path)
+    except sqlite3.Error:
+        return -1
+
+
+def _digest(db_path: Path) -> bytes:
+    return db_path.read_bytes()
+
+
+def _write_legacy_database(db_path: Path) -> None:
+    """A pre-intake receiver database: migrations recorded, no intake tables."""
+    legacy_schema = (
+        "create table schema_migrations (migration_id text primary key, "
+        "applied_at text)"
+    )
+    with sqlite3.connect(db_path) as connection:
+        _ = connection.execute(legacy_schema)
+        _ = connection.execute(
+            "insert into schema_migrations values (?, ?)",
+            ("012_lab_results", "2026-01-01T00:00:00Z"),
+        )
 
 
 def test_intake_register_producer_cli_reports_the_stored_producer(
@@ -514,3 +555,249 @@ def test_intake_register_producer_cli_creates_missing_database(
     assert db_path.is_file()
     assert stat.S_IMODE(db_path.stat().st_mode) == 0o600
     assert db_path.parent.is_dir()
+
+
+@pytest.mark.parametrize("suffix", ["", "-wal", "-shm", "-journal"])
+def test_intake_create_token_cli_never_writes_over_its_own_database(
+    tmp_path: Path,
+    suffix: str,
+) -> None:
+    # Given
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    before = _digest(db_path)
+
+    # When
+    result = _cli(
+        *CREATE_TOKEN_ARGS,
+        "--db",
+        str(db_path),
+        "--output-secret",
+        f"{db_path}{suffix}",
+    )
+
+    # Then
+    assert result.exit_code == 1
+    assert "Refusing to write the secret over the receiver database" in result.stderr
+    assert _readable_token_rows(db_path) == 0
+    assert _digest(db_path) == before
+
+
+def test_intake_create_token_cli_refuses_the_database_reached_through_parent_segments(
+    tmp_path: Path,
+) -> None:
+    # Given
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    before = _digest(db_path)
+
+    # When
+    result = _cli(
+        *CREATE_TOKEN_ARGS,
+        "--db",
+        str(db_path),
+        "--output-secret",
+        str(tmp_path / "sub" / ".." / "receiver.sqlite"),
+    )
+
+    # Then
+    assert result.exit_code == 1
+    assert "Refusing to write the secret over the receiver database" in result.stderr
+    assert _readable_token_rows(db_path) == 0
+    assert _digest(db_path) == before
+
+
+@pytest.mark.parametrize("suffix", ["", "-wal", "-shm", "-journal"])
+def test_receiver_create_token_cli_never_writes_over_its_own_database(
+    tmp_path: Path,
+    suffix: str,
+) -> None:
+    # Given the existing batch-token command writes through the same helper
+    db_path = tmp_path / "receiver.sqlite"
+    issued = _cli(
+        "create-token",
+        "--db",
+        str(db_path),
+        "--label",
+        "ios-companion",
+        "--output-secret",
+        str(tmp_path / "private" / "receiver-token.json"),
+    )
+    assert issued.exit_code == 0, (issued.output, issued.exception)
+    before = _digest(db_path)
+
+    # When
+    result = _cli(
+        "create-token",
+        "--db",
+        str(db_path),
+        "--label",
+        "ios-companion",
+        "--output-secret",
+        f"{db_path}{suffix}",
+    )
+
+    # Then
+    assert result.exit_code == 1
+    assert "Refusing to write the secret over the receiver database" in result.stderr
+    assert _readable_receiver_token_rows(db_path) == 1
+    assert _digest(db_path) == before
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["intake-list-producers", "intake-list-tokens"],
+)
+def test_intake_list_commands_refuse_a_missing_database_without_creating_it(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    # Given
+    db_path = tmp_path / "absent" / "receiver.sqlite"
+
+    # When
+    result = _cli(command, "--db", str(db_path))
+
+    # Then
+    assert result.exit_code == 1
+    assert not db_path.exists()
+    assert not db_path.parent.exists()
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["intake-list-producers", "intake-list-tokens"],
+)
+def test_intake_list_commands_refuse_an_older_database_without_modifying_it(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    # Given
+    db_path = tmp_path / "legacy.sqlite"
+    _write_legacy_database(db_path)
+    before = _digest(db_path)
+
+    # When
+    result = _cli(command, "--db", str(db_path))
+
+    # Then
+    assert result.exit_code == 1
+    assert "013" in result.stderr
+    assert "014" in result.stderr
+    assert _digest(db_path) == before
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["intake-list-producers", "intake-list-tokens"],
+)
+def test_intake_list_commands_do_not_modify_a_current_database(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    # Given
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    issued = _cli(*CREATE_TOKEN_ARGS, "--db", str(db_path), "--print-secret")
+    assert issued.exit_code == 0, (issued.output, issued.exception)
+    before = _digest(db_path)
+
+    # When
+    result = _cli(command, "--db", str(db_path))
+
+    # Then
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert _digest(db_path) == before
+
+
+def test_intake_register_producer_cli_ignores_an_earlier_registered_at(
+    tmp_path: Path,
+) -> None:
+    # Given a producer registered earlier, as a restored backup would report
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    with sqlite3.connect(db_path) as connection:
+        _ = connection.execute(
+            "update intake_producers set registered_at = ? where producer_id = ?",
+            ("2020-01-01T00:00:00Z", PRODUCER_ID),
+        )
+
+    # When
+    result = _cli(*REGISTER_ARGS, "--db", str(db_path))
+
+    # Then
+    assert result.exit_code == 0, (result.output, result.exception)
+    reloaded = ProducerPayload.model_validate_json(result.stdout)
+    assert reloaded.status == "already-registered"
+    assert reloaded.registered_at == "2020-01-01T00:00:00Z"
+
+    listed = ProducerListPayload.model_validate_json(
+        _cli("intake-list-producers", "--db", str(db_path)).stdout,
+    )
+    assert listed.producers[0]["registered_at"] == "2020-01-01T00:00:00Z"
+
+
+def test_intake_create_token_cli_refuses_a_producer_revoked_after_registration(
+    tmp_path: Path,
+) -> None:
+    # Given a producer revoked between registration and the token request
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    with sqlite3.connect(db_path) as connection:
+        _ = connection.execute(
+            "update intake_producers set revoked_at = ? where producer_id = ?",
+            ("2026-01-01T00:00:00Z", PRODUCER_ID),
+        )
+
+    # When
+    result = _cli(*CREATE_TOKEN_ARGS, "--db", str(db_path), "--print-secret")
+
+    # Then
+    assert result.exit_code == 1
+    assert "revoked" in result.stderr
+    assert _token_rows(db_path) == 0
+
+
+def test_create_intake_token_for_active_producer_refuses_without_inserting_a_row(
+    tmp_path: Path,
+) -> None:
+    # Given the transactional insert helper called directly on a revoked producer
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+    with sqlite3.connect(db_path) as connection:
+        _ = connection.execute(
+            "update intake_producers set revoked_at = ? where producer_id = ?",
+            ("2026-01-01T00:00:00Z", PRODUCER_ID),
+        )
+
+    # When
+    with pytest.raises(IntakeProducerInactiveError):
+        _ = create_intake_token_for_active_producer(
+            db_path,
+            owner_id=OWNER_ID,
+            producer_id=PRODUCER_ID,
+            label="phone",
+        )
+
+    # Then
+    assert _token_rows(db_path) == 0
+
+
+def test_create_intake_token_for_active_producer_issues_a_working_token(
+    tmp_path: Path,
+) -> None:
+    # Given
+    db_path = tmp_path / "receiver.sqlite"
+    _register_producer(db_path)
+
+    # When
+    issued = create_intake_token_for_active_producer(
+        db_path,
+        owner_id=OWNER_ID,
+        producer_id=PRODUCER_ID,
+        label="phone",
+    )
+
+    # Then
+    assert issued.token.startswith("hri_")
+    assert authenticate_intake_token(db_path, issued.token) is not None
