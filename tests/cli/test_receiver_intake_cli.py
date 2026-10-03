@@ -324,7 +324,7 @@ def test_intake_create_token_cli_refuses_symlink_output_without_leaving_a_token(
     db_path = tmp_path / "receiver.sqlite"
     _register_producer(db_path)
     target = tmp_path / "elsewhere.json"
-    target.write_text("", encoding="utf-8")
+    _ = target.write_text("", encoding="utf-8")
     secret_path = tmp_path / "private" / "intake-token.json"
     secret_path.parent.mkdir(mode=0o700)
     secret_path.symlink_to(target)
