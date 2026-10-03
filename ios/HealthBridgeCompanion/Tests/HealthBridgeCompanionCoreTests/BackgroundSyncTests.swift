@@ -345,7 +345,7 @@ final class BackgroundSyncTests: XCTestCase {
     func testBackgroundDeliveryTracksValidatedForegroundLanesIncludingSleep() {
         XCTAssertEqual(
             HealthBridgeBackgroundSync.observedHealthTypes.map(\.typeCode),
-            ["steps", "workout", "sleep_analysis", "medication_dose_event"]
+            ["steps", "workout", "sleep_analysis"]
         )
     }
 
@@ -359,7 +359,7 @@ final class BackgroundSyncTests: XCTestCase {
                 ]
             ).map(\.typeCode),
             [
-                "steps", "workout", "sleep_analysis", "medication_dose_event",
+                "steps", "workout", "sleep_analysis",
                 "energy", "heart_rate", "oxygen_saturation",
             ]
         )
@@ -392,7 +392,7 @@ final class BackgroundSyncTests: XCTestCase {
         XCTAssertEqual(
             plan.observedHealthTypes.map(\.typeCode),
             [
-                "steps", "workout", "sleep_analysis", "medication_dose_event",
+                "steps", "workout", "sleep_analysis",
                 "heart_rate", "oxygen_saturation", "weight",
             ]
         )
@@ -751,23 +751,40 @@ final class BackgroundSyncTests: XCTestCase {
 
         XCTAssertTrue(unified.contains("electrocardiogram"))
         XCTAssertFalse(lanes.contains("electrocardiogram"))
-        XCTAssertTrue(lanes.contains("medication_dose_event"))
+        XCTAssertFalse(lanes.contains("medication_dose_event"))
         for code in ["steps", "workout", "sleep_analysis", "heart_rate", "dietary_zinc"] {
             XCTAssertTrue(lanes.contains(code), code)
         }
-        XCTAssertEqual(Set(lanes).subtracting(unified), ["medication_dose_event"])
+        XCTAssertEqual(Set(lanes).subtracting(unified), [])
     }
 
-    func testMedicationLaneIsSchedulableInTheBackgroundButNeverPartOfReadAuthorization() {
+    func testMedicationLaneIsForegroundOnlyAndNeverPartOfReadAuthorization() {
+        // 1.2.29 bisect: automatic medication sync (observer + lane) is off; Sync Now still syncs doses.
         // The unified read set feeds requestAuthorization, which throws for per-object types.
         XCTAssertFalse(
             HealthBridgeBackgroundSync.supportedUnifiedReadTypeCodes.contains("medication_dose_event")
         )
         XCTAssertFalse(HealthBridgeHealthType.dedicatedSyncTypes.contains(.medicationDoseEvents))
-        XCTAssertTrue(
+        XCTAssertFalse(
             HealthBridgeBackgroundSync.supportedAutomaticLaneTypeCodes.contains("medication_dose_event")
         )
-        XCTAssertTrue(HealthKitTypeCatalog.entry(for: "medication_dose_event")?.backgroundEligible ?? false)
+        XCTAssertFalse(HealthKitTypeCatalog.entry(for: "medication_dose_event")?.backgroundEligible ?? true)
+    }
+
+    func testRetiredMedicationRegistrationIsStillDisabled() {
+        // A background-delivery registration made by 1.2.28 survives the update; it must be turned
+        // off explicitly, both when observers start and when automatic sync is switched off.
+        XCTAssertEqual(
+            HealthBridgeBackgroundSync.retiredBackgroundDeliveryHealthTypes.map(\.typeCode),
+            ["medication_dose_event"]
+        )
+        XCTAssertFalse(
+            HealthBridgeBackgroundSync.observedHealthTypes.map(\.typeCode).contains("medication_dose_event")
+        )
+        XCTAssertTrue(
+            HealthBridgeBackgroundSync.allKnownBackgroundDeliveryHealthTypes.map(\.typeCode)
+                .contains("medication_dose_event")
+        )
     }
 
     func testMedicationDiagnosticLaneIsDistinctAndNamed() {
