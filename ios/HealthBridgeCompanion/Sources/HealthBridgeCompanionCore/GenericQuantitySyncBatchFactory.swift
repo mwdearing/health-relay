@@ -150,6 +150,12 @@ public enum IntakeMetadataAllowlist {
         #if canImport(Darwin)
         if CFGetTypeID(number) == CFBooleanGetTypeID() { return nil }
         #endif
+        // NSDecimalNumber reports objCType "d", so it would otherwise travel through
+        // doubleValue, which cannot represent exact Int64.max and silently rounds
+        // integers above 2^53. Resolve decimals exactly first.
+        if let decimalNumber = raw as? NSDecimalNumber {
+            return exactSyncVersion(from: decimalNumber)
+        }
         switch String(cString: number.objCType) {
         case "f", "d":
             let double = number.doubleValue
@@ -165,6 +171,25 @@ public enum IntakeMetadataAllowlist {
             let signed = number.int64Value
             return signed >= 1 ? signed : nil
         }
+    }
+
+    /// Resolves an `NSDecimalNumber` sync version without any `Double` round trip.
+    ///
+    /// `Decimal` is base-10, so integrality and range checks are exact for every value
+    /// the wire format can carry. NaN, fractional values, values below 1 and values
+    /// above `Int64.max` are rejected; anything accepted keeps every digit.
+    private static func exactSyncVersion(from decimalNumber: NSDecimalNumber) -> Int64? {
+        let decimal = decimalNumber.decimalValue
+        guard !decimal.isNaN else { return nil }
+        var source = decimal
+        var integral = Decimal()
+        // Plain rounding to scale zero pins the text form to plain digits.
+        NSDecimalRound(&integral, &source, 0, .plain)
+        // Decimal comparison is exact, so a fractional input never equals its own rounding.
+        guard integral == decimal else { return nil }
+        guard integral >= 1, integral <= Decimal(Int64.max) else { return nil }
+        guard let version = Int64(NSDecimalNumber(decimal: integral).stringValue) else { return nil }
+        return version
     }
 }
 
