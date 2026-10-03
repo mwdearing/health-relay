@@ -557,7 +557,9 @@ def test_intake_register_producer_cli_creates_missing_database(
     assert db_path.parent.is_dir()
 
 
-@pytest.mark.parametrize("suffix", ["", "-wal", "-shm", "-journal"])
+@pytest.mark.parametrize(
+    "suffix", ["", "-wal", "-shm", "-journal", ".lifecycle.lock", ".access.lock"]
+)
 def test_intake_create_token_cli_never_writes_over_its_own_database(
     tmp_path: Path,
     suffix: str,
@@ -607,7 +609,9 @@ def test_intake_create_token_cli_refuses_the_database_reached_through_parent_seg
     assert _digest(db_path) == before
 
 
-@pytest.mark.parametrize("suffix", ["", "-wal", "-shm", "-journal"])
+@pytest.mark.parametrize(
+    "suffix", ["", "-wal", "-shm", "-journal", ".lifecycle.lock", ".access.lock"]
+)
 def test_receiver_create_token_cli_never_writes_over_its_own_database(
     tmp_path: Path,
     suffix: str,

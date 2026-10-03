@@ -64,6 +64,10 @@ from health_bridge.receiver.transports import (
     ReceiverTransportSelectionError,
     select_receiver_transport,
 )
+from health_bridge.storage._database_locks import (
+    DATABASE_ACCESS_LOCK_SUFFIX,
+    DATABASE_LIFECYCLE_LOCK_SUFFIX,
+)
 from health_bridge.storage.database import (
     connect_database,
     connect_readonly_database,
@@ -719,7 +723,7 @@ def _validate_private_secret_output_path(path: Path, *, db: Path) -> None:
 
 
 def _refuse_receiver_database_destination(path: Path, *, db: Path) -> None:
-    """Refuse a secret destination that would replace the database or a sidecar.
+    """Refuse a secret destination that would replace the database, a sidecar or a lock.
 
     ``write_private_text_file`` replaces its destination atomically, so a
     destination that resolves to the receiver database would destroy the store
@@ -730,7 +734,11 @@ def _refuse_receiver_database_destination(path: Path, *, db: Path) -> None:
     destination = _resolved_or_absolute(path)
     protected = {
         _resolved_or_absolute(Path(f"{db}{suffix}"))
-        for suffix in PURGE_SIDECAR_SUFFIXES
+        for suffix in (
+            *PURGE_SIDECAR_SUFFIXES,
+            DATABASE_LIFECYCLE_LOCK_SUFFIX,
+            DATABASE_ACCESS_LOCK_SUFFIX,
+        )
     }
     if destination in protected:
         raise ReceiverDatabaseOutputError
