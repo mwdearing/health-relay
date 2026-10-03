@@ -6,7 +6,9 @@ import secrets
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, cast
+from typing import Final, TypeAlias, cast
+
+from pydantic import TypeAdapter
 
 from health_bridge.contract.intake_context_v1 import PRODUCER_ID_PATTERN
 from health_bridge.receiver.tokens import hash_receiver_token
@@ -35,6 +37,27 @@ REVOKE_INTAKE_TOKEN_SQL: Final = _sql(
     "set revoked_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
     "where token_prefix = ? and revoked_at is null",
 )
+SELECT_INTAKE_TOKENS_SQL: Final = _sql(
+    "select token_prefix, owner_id, producer_id, label, created_at, revoked_at",
+    "from intake_context_tokens",
+    "order by intake_token_id",
+)
+IntakeTokenRow: TypeAlias = tuple[str, str, str, str, str, str | None]
+INTAKE_TOKEN_ROWS_ADAPTER: Final[TypeAdapter[list[IntakeTokenRow]]] = TypeAdapter(
+    list[IntakeTokenRow]
+)
+
+
+@dataclass(frozen=True)
+class IntakeTokenRecord:
+    """One intake token row without the token itself or its hash."""
+
+    token_prefix: str
+    owner_id: str
+    producer_id: str
+    label: str
+    created_at: str
+    revoked_at: str | None
 
 
 @dataclass(frozen=True)
@@ -95,6 +118,43 @@ def revoke_intake_token(db_path: Path, token_prefix: str) -> None:
     initialize_database(db_path)
     with connect_database(db_path) as connection:
         _ = connection.execute(REVOKE_INTAKE_TOKEN_SQL, (token_prefix,))
+
+
+def revoke_active_intake_token(db_path: Path, token_prefix: str) -> int:
+    """Revoke every active token with this prefix and report how many changed.
+
+    ``revoke_intake_token`` stays the fire-and-forget form used elsewhere. A
+    caller that must fail when the prefix matched nothing needs the affected row
+    count, which an already-revoked or unknown prefix reports as zero.
+    """
+    initialize_database(db_path)
+    with connect_database(db_path) as connection:
+        return int(
+            connection.execute(
+                REVOKE_INTAKE_TOKEN_SQL,
+                (token_prefix,),
+            ).rowcount
+        )
+
+
+def list_intake_tokens(db_path: Path) -> tuple[IntakeTokenRecord, ...]:
+    """Every intake token row, oldest first, never the token or its hash."""
+    initialize_database(db_path)
+    with connect_database(db_path) as connection:
+        rows = INTAKE_TOKEN_ROWS_ADAPTER.validate_python(
+            connection.execute(SELECT_INTAKE_TOKENS_SQL).fetchall(),
+        )
+    return tuple(
+        IntakeTokenRecord(
+            token_prefix=row[0],
+            owner_id=row[1],
+            producer_id=row[2],
+            label=row[3],
+            created_at=row[4],
+            revoked_at=row[5],
+        )
+        for row in rows
+    )
 
 
 def authenticate_intake_token(

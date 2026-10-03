@@ -100,6 +100,37 @@ Trust boundaries:
   `--service-config` or mailbox options, enabling the HTTP routes without
   changing mailbox delivery. Each CLI start reports whether the routes are
   enabled. Generated mailbox service commands keep the default off.
+
+### Enabling intake context
+
+Three steps: register the producer, issue its intake token, then start the
+receiver with the routes enabled. Order matters — a token can only be issued for
+a producer that is already registered.
+
+```bash
+health-bridge receiver intake-register-producer \
+  --db .tmp/device.sqlite \
+  --owner-id <owner> --producer-id nutrition-app \
+  --writer-bundle-id dev.example.nutrition --label "Nutrition app"
+
+health-bridge receiver intake-create-token \
+  --db .tmp/device.sqlite \
+  --owner-id <owner> --producer-id nutrition-app --label phone \
+  --output-secret .private/intake-token.json
+
+health-bridge receiver start --db .tmp/device.sqlite --enable-intake-context
+```
+
+`intake-register-producer` is idempotent for identical details and fails closed
+on a different writer bundle or label, so the producer identity a token is bound
+to cannot drift after onboarding. `intake-create-token` stores only a hash and
+requires an explicit secret destination: `--output-secret` writes the token to a
+mode-0600 private file and prints only the prefix, and a failed write revokes the
+token it just issued. `intake-list-producers` and `intake-list-tokens` audit the
+setup without exposing any secret, and `intake-revoke-token` exits non-zero when
+no active token carries the prefix. See
+[Pairing and receiver setup](pairing.md#intake-producers-and-intake-tokens) for
+the full command reference.
 - **Intake-only tokens.** These routes accept only tokens stored in
   `intake_context_tokens` (prefix `hri_`, bound to an owner and a producer).
   Such a token cannot use `/v1/batches` (403 `wrong_token_type`), and a normal

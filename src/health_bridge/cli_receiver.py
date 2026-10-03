@@ -1,9 +1,11 @@
 import json
 import os
+import re
 import secrets
 import sqlite3
 import stat
 from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Final, Literal, TypeAlias, cast
 from urllib.error import HTTPError, URLError
@@ -20,11 +22,21 @@ from health_bridge.cli_receiver_start import (
     ReceiverStartOptions,
     run_receiver_start,
 )
+from health_bridge.contract.intake_context_v1 import (
+    BUNDLE_ID_PATTERN,
+    PRODUCER_ID_PATTERN,
+)
 from health_bridge.launchd import load_runnable_launch_agent_request
 from health_bridge.mailbox.connections import MailboxConnectionStore
 from health_bridge.private_files import (
     ensure_private_directory,
     write_private_text_file,
+)
+from health_bridge.receiver.intake_tokens import (
+    create_intake_token,
+    list_intake_tokens,
+    revoke_active_intake_token,
+    revoke_intake_token,
 )
 from health_bridge.receiver.invitations import (
     ReceiverDeviceSelectionError,
@@ -48,7 +60,19 @@ from health_bridge.receiver.transports import (
     ReceiverTransportSelectionError,
     select_receiver_transport,
 )
-from health_bridge.storage.database import database_access_lock, database_lifecycle_lock
+from health_bridge.storage.database import (
+    connect_database,
+    database_access_lock,
+    database_lifecycle_lock,
+    initialize_database,
+)
+from health_bridge.storage.intake_context import (
+    IntakeProducerConflictError,
+    ProducerRecord,
+    list_producers,
+    read_producer,
+    register_producer,
+)
 
 if TYPE_CHECKING:
     from http.client import HTTPResponse
@@ -78,6 +102,32 @@ SETUP_PAGE_WRITE_FAILURE_MESSAGE: Final = (
     "Failed to write private pairing setup page; the issued token was revoked. "
     "Re-run the command with a writable private path."
 )
+INTAKE_REFUSE_STDOUT_MESSAGE: Final = (
+    "Refusing to print intake token to stdout by default. "
+    "Re-run with --print-secret to print it once, or --output-secret <path> "
+    "to write the secret JSON to a private file."
+)
+INTAKE_MUTUALLY_EXCLUSIVE_OUTPUT_MESSAGE: Final = (
+    "Use only one secret destination: --print-secret or --output-secret."
+)
+INTAKE_WRITE_FAILURE_MESSAGE: Final = (
+    "Failed to write private intake token output file; the issued token was "
+    "revoked. Re-run the command with a writable private path."
+)
+INTAKE_STORAGE_UNAVAILABLE_MESSAGE: Final = "Intake producer storage is unavailable."
+INTAKE_TOKEN_STORAGE_UNAVAILABLE_MESSAGE: Final = "Intake token storage is unavailable."  # noqa: S105 - a message, not a secret.
+UNREGISTERED_INTAKE_PRODUCER_MESSAGE: Final = (
+    "Intake producer {producer_id} is not registered for this owner; "
+    "run receiver intake-register-producer first."
+)
+REVOKED_INTAKE_PRODUCER_MESSAGE: Final = (
+    "Intake producer {producer_id} is revoked; issue no new tokens for it."
+)
+INTAKE_PRODUCER_CONFLICT_MESSAGE: Final = (
+    "Intake producer {producer_id} is already registered with a different writer "
+    "bundle or label and was left unchanged."
+)
+STORED_WRITER_BUNDLE_MESSAGE: Final = " The stored writer bundle is {writer_bundle_id}."
 SmokeResponseValue: TypeAlias = int | str
 SmokeResponse: TypeAlias = dict[str, SmokeResponseValue]
 PurgeIdentity: TypeAlias = tuple[int, int, int, int, int]
@@ -875,6 +925,418 @@ def revoke_token(
 ) -> None:
     revoke_receiver_token(db, token_prefix)
     typer.echo(json.dumps({"revoked_token_prefix": token_prefix}, sort_keys=True))
+
+
+@receiver_app.command("intake-register-producer")
+def intake_register_producer(
+    db: Annotated[
+        Path,
+        typer.Option("--db", help="User-owned SQLite database path."),
+    ],
+    owner_id: Annotated[
+        str,
+        typer.Option("--owner-id", help="Owner identity the tokens are bound to."),
+    ],
+    producer_id: Annotated[
+        str,
+        typer.Option(
+            "--producer-id",
+            help="Stable producer identifier, e.g. an app slug.",
+        ),
+    ],
+    writer_bundle_id: Annotated[
+        str,
+        typer.Option(
+            "--writer-bundle-id",
+            help="Bundle identifier that writes this producer.",
+        ),
+    ],
+    label: Annotated[
+        str,
+        typer.Option("--label", help="Human-readable producer label."),
+    ],
+) -> None:
+    invalid = _intake_producer_input_error(
+        owner_id=owner_id,
+        producer_id=producer_id,
+        writer_bundle_id=writer_bundle_id,
+        label=label,
+    )
+    if invalid is not None:
+        typer.echo(invalid, err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        record, created = register_intake_producer(
+            db,
+            owner_id=owner_id,
+            producer_id=producer_id,
+            writer_bundle_id=writer_bundle_id,
+            display_label=label,
+        )
+    except IntakeProducerConflictError as exc:
+        typer.echo(
+            _intake_producer_conflict_message(
+                db,
+                owner_id=owner_id,
+                producer_id=producer_id,
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    except (sqlite3.Error, OSError) as exc:
+        typer.echo(INTAKE_STORAGE_UNAVAILABLE_MESSAGE, err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(
+        json.dumps(
+            {
+                **_intake_producer_payload(record),
+                "status": "registered" if created else "already-registered",
+            },
+            sort_keys=True,
+        )
+    )
+
+
+@receiver_app.command("intake-list-producers")
+def intake_list_producers(
+    db: Annotated[
+        Path,
+        typer.Option("--db", help="User-owned SQLite database path."),
+    ],
+) -> None:
+    try:
+        initialize_database(db)
+        with connect_database(db) as connection:
+            records = list_producers(connection)
+    except (sqlite3.Error, OSError) as exc:
+        typer.echo(INTAKE_STORAGE_UNAVAILABLE_MESSAGE, err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(
+        json.dumps(
+            {"producers": [_intake_producer_payload(record) for record in records]},
+            sort_keys=True,
+        )
+    )
+
+
+@receiver_app.command("intake-create-token")
+def intake_create_token(  # noqa: PLR0913 -- Typer exposes independent token options.
+    db: Annotated[
+        Path,
+        typer.Option("--db", help="User-owned SQLite database path."),
+    ],
+    owner_id: Annotated[
+        str,
+        typer.Option("--owner-id", help="Owner identity the token authenticates as."),
+    ],
+    producer_id: Annotated[
+        str,
+        typer.Option(
+            "--producer-id",
+            help="Registered producer identifier.",
+        ),
+    ],
+    label: Annotated[
+        str,
+        typer.Option("--label", help="Human-readable device or client label."),
+    ],
+    print_secret: Annotated[
+        bool,
+        typer.Option(
+            "--print-secret", help="Print the one-time intake token to stdout."
+        ),
+    ] = False,
+    output_secret: Annotated[
+        Path | None,
+        typer.Option(
+            "--output-secret",
+            help="Write one-time intake token JSON to this private file.",
+        ),
+    ] = None,
+) -> None:
+    if print_secret and output_secret is not None:
+        typer.echo(INTAKE_MUTUALLY_EXCLUSIVE_OUTPUT_MESSAGE, err=True)
+        raise typer.Exit(code=1)
+    if not print_secret and output_secret is None:
+        typer.echo(INTAKE_REFUSE_STDOUT_MESSAGE, err=True)
+        raise typer.Exit(code=1)
+
+    if output_secret is not None:
+        try:
+            _validate_private_secret_output_path(output_secret)
+        except OSError as exc:
+            typer.echo(
+                f"Failed to open private token output file: {exc.strerror}",
+                err=True,
+            )
+            raise typer.Exit(code=1) from exc
+
+    _require_active_intake_producer(db, owner_id=owner_id, producer_id=producer_id)
+
+    try:
+        issued = create_intake_token(
+            db,
+            owner_id=owner_id,
+            producer_id=producer_id,
+            label=label,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except (sqlite3.Error, OSError) as exc:
+        typer.echo(INTAKE_TOKEN_STORAGE_UNAVAILABLE_MESSAGE, err=True)
+        raise typer.Exit(code=1) from exc
+
+    secret_payload = {
+        "label": issued.label,
+        "owner_id": owner_id,
+        "producer_id": producer_id,
+        "token": issued.token,
+        "token_prefix": issued.token_prefix,
+        "warning": (
+            "Store this token now; it is shown once and only a hash is kept locally."
+        ),
+    }
+    if output_secret is not None:
+        secret_text = json.dumps(secret_payload, sort_keys=True) + "\n"
+        try:
+            write_private_text_file(output_secret, secret_text)
+        except OSError as exc:
+            revoke_intake_token(db, issued.token_prefix)
+            typer.echo(INTAKE_WRITE_FAILURE_MESSAGE, err=True)
+            raise typer.Exit(code=1) from exc
+        typer.echo(
+            json.dumps(
+                {
+                    "label": issued.label,
+                    "owner_id": owner_id,
+                    "producer_id": producer_id,
+                    "secret_file": str(output_secret),
+                    "token_prefix": issued.token_prefix,
+                    "warning": (
+                        "Secret intake token JSON was written to the requested "
+                        "private file. Keep it out of chat, Git, wiki, and logs."
+                    ),
+                },
+                sort_keys=True,
+            ),
+        )
+        return
+
+    typer.echo(json.dumps(secret_payload, sort_keys=True))
+
+
+@receiver_app.command("intake-list-tokens")
+def intake_list_tokens(
+    db: Annotated[
+        Path,
+        typer.Option("--db", help="User-owned SQLite database path."),
+    ],
+) -> None:
+    try:
+        tokens = list_intake_tokens(db)
+    except (sqlite3.Error, OSError) as exc:
+        typer.echo(INTAKE_TOKEN_STORAGE_UNAVAILABLE_MESSAGE, err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(
+        json.dumps(
+            {
+                "tokens": [
+                    {
+                        "token_prefix": token.token_prefix,
+                        "owner_id": token.owner_id,
+                        "producer_id": token.producer_id,
+                        "label": token.label,
+                        "created_at": token.created_at,
+                        "revoked_at": token.revoked_at,
+                    }
+                    for token in tokens
+                ]
+            },
+            sort_keys=True,
+        )
+    )
+
+
+@receiver_app.command("intake-revoke-token")
+def intake_revoke_token(
+    db: Annotated[
+        Path,
+        typer.Option("--db", help="User-owned SQLite database path."),
+    ],
+    token_prefix: Annotated[
+        str,
+        typer.Option("--token-prefix", help="Prefix returned by intake-create-token."),
+    ],
+) -> None:
+    try:
+        revoked_count = revoke_active_intake_token(db, token_prefix)
+    except (sqlite3.Error, OSError) as exc:
+        typer.echo(INTAKE_TOKEN_STORAGE_UNAVAILABLE_MESSAGE, err=True)
+        raise typer.Exit(code=1) from exc
+    if revoked_count == 0:
+        typer.echo(
+            "No active intake token matches that prefix; nothing was revoked.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    typer.echo(
+        json.dumps(
+            {
+                "revoked_token_prefix": token_prefix,
+                "revoked_token_count": revoked_count,
+            },
+            sort_keys=True,
+        )
+    )
+
+
+def _intake_producer_payload(record: ProducerRecord) -> dict[str, object]:
+    return {
+        "owner_id": record.owner_id,
+        "producer_id": record.producer_id,
+        "writer_bundle_id": record.writer_bundle_id,
+        "label": record.display_label,
+        "registered_at": record.registered_at,
+        "revoked_at": record.revoked_at,
+    }
+
+
+def _intake_producer_conflict_message(
+    db: Path,
+    *,
+    owner_id: str,
+    producer_id: str,
+) -> str:
+    """Name the stored writer bundle so the operator can see what differs."""
+    stored = ""
+    try:
+        initialize_database(db)
+        with connect_database(db) as connection:
+            record = read_producer(
+                connection,
+                owner_id=owner_id,
+                producer_id=producer_id,
+            )
+        if record is not None:
+            stored = STORED_WRITER_BUNDLE_MESSAGE.format(
+                writer_bundle_id=record.writer_bundle_id,
+            )
+    except (sqlite3.Error, OSError):
+        stored = ""
+    return (
+        INTAKE_PRODUCER_CONFLICT_MESSAGE.format(
+            producer_id=producer_id,
+        )
+        + stored
+    )
+
+
+def _utc_now() -> str:
+    return datetime.now(tz=UTC).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _intake_producer_input_error(
+    *,
+    owner_id: str,
+    producer_id: str,
+    writer_bundle_id: str,
+    label: str,
+) -> str | None:
+    """The one-line reason these producer details are unusable, if any."""
+    if owner_id.strip() == "":
+        return "Refusing to register a producer with an empty --owner-id."
+    if re.match(PRODUCER_ID_PATTERN, producer_id) is None:
+        return "Refusing to register a producer with an invalid --producer-id."
+    if re.match(BUNDLE_ID_PATTERN, writer_bundle_id) is None:
+        return "Refusing to register a producer with an invalid --writer-bundle-id."
+    if label.strip() == "":
+        return "Refusing to register a producer with an empty --label."
+    return None
+
+
+def register_intake_producer(
+    db: Path,
+    *,
+    owner_id: str,
+    producer_id: str,
+    writer_bundle_id: str,
+    display_label: str,
+) -> tuple[ProducerRecord, bool]:
+    """Register a producer, or return the identical registration already stored.
+
+    ``register_producer`` compares the whole record, including ``registered_at``,
+    so a fresh timestamp would make an identical re-registration look like a
+    conflict. The existing row is therefore read first and returned unchanged
+    when its writer bundle and label still match.
+    """
+    initialize_database(db)
+    with connect_database(db) as connection:
+        existing = read_producer(
+            connection,
+            owner_id=owner_id,
+            producer_id=producer_id,
+        )
+        if existing is not None:
+            if (
+                existing.writer_bundle_id == writer_bundle_id
+                and existing.display_label == display_label
+            ):
+                return existing, False
+            raise IntakeProducerConflictError(producer_id)
+        _ = connection.execute("begin immediate")
+        try:
+            record = register_producer(
+                connection,
+                ProducerRecord(
+                    owner_id=owner_id,
+                    producer_id=producer_id,
+                    writer_bundle_id=writer_bundle_id,
+                    display_label=display_label,
+                    registered_at=_utc_now(),
+                ),
+            )
+        except BaseException:
+            connection.rollback()
+            raise
+        connection.commit()
+        return record, True
+
+
+def _require_active_intake_producer(
+    db: Path,
+    *,
+    owner_id: str,
+    producer_id: str,
+) -> None:
+    """Refuse unless the producer is registered for this owner and not revoked."""
+    try:
+        initialize_database(db)
+        with connect_database(db) as connection:
+            record = read_producer(
+                connection,
+                owner_id=owner_id,
+                producer_id=producer_id,
+            )
+    except (sqlite3.Error, OSError) as exc:
+        typer.echo(INTAKE_STORAGE_UNAVAILABLE_MESSAGE, err=True)
+        raise typer.Exit(code=1) from exc
+    if record is None:
+        typer.echo(
+            UNREGISTERED_INTAKE_PRODUCER_MESSAGE.format(producer_id=producer_id),
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if record.revoked_at is not None:
+        typer.echo(
+            REVOKED_INTAKE_PRODUCER_MESSAGE.format(producer_id=producer_id),
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
 
 @receiver_app.command("start")
