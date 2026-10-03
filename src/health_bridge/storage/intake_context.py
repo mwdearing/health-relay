@@ -296,6 +296,9 @@ TombstoneRow: TypeAlias = tuple[str, str, str, str, int, str, str]
 PRODUCER_ROW_ADAPTER: Final[TypeAdapter[ProducerRow | None]] = TypeAdapter(
     ProducerRow | None
 )
+PRODUCER_ROWS_ADAPTER: Final[TypeAdapter[list[ProducerRow]]] = TypeAdapter(
+    list[ProducerRow]
+)
 REVISION_ROW_ADAPTER: Final[TypeAdapter[RevisionRow | None]] = TypeAdapter(
     RevisionRow | None
 )
@@ -324,6 +327,12 @@ select owner_id, producer_id, writer_bundle_id, display_label, registered_at,
        revoked_at
 from intake_producers
 where owner_id = ? and producer_id = ?
+"""
+SELECT_PRODUCERS_SQL: Final = """
+select owner_id, producer_id, writer_bundle_id, display_label, registered_at,
+       revoked_at
+from intake_producers
+order by owner_id, producer_id
 """
 INSERT_PRODUCER_SQL: Final = """
 insert into intake_producers (
@@ -562,6 +571,16 @@ def register_producer(
             ),
         )
     return record
+
+
+def list_producers(connection: sqlite3.Connection) -> tuple[ProducerRecord, ...]:
+    """Every registered producer, ordered by owner then producer."""
+    return tuple(
+        _producer_from_row(row)
+        for row in PRODUCER_ROWS_ADAPTER.validate_python(
+            connection.execute(SELECT_PRODUCERS_SQL).fetchall()
+        )
+    )
 
 
 def _select_revision_row(
@@ -1227,6 +1246,7 @@ __all__ = [
     "insert_revision",
     "list_links_by_component_id",
     "list_links_by_sample_uuid",
+    "list_producers",
     "read_intake_state",
     "read_operation_receipt",
     "read_producer",

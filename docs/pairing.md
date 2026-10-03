@@ -215,6 +215,82 @@ uv run health-bridge receiver revoke-device \
 
 `revoke-device` fails closed if the reference is malformed, absent, already revoked, or not unique. It never requires or prints the bearer credential, installation ID, installation hash, or token hash. Legacy v1 credentials that have no device mapping continue to use `receiver revoke-token --token-prefix ...`.
 
+## Intake producers and intake tokens
+
+The intake-context routes authenticate with their own tokens (prefix `hri_`), not
+with `/v1/batches` bearer credentials. A token is bound to one owner and one
+registered producer, so a producer must exist before it can be given a token.
+
+Register a producer once, with the bundle identifier that writes on its behalf:
+
+```bash
+uv run health-bridge receiver intake-register-producer \
+  --db .tmp/receiver.sqlite \
+  --owner-id <owner> \
+  --producer-id nutrition-app \
+  --writer-bundle-id dev.example.nutrition \
+  --label "Nutrition app"
+```
+
+Registering the identical producer again succeeds and echoes the stored
+registration unchanged, including its original `registered_at`; only the owner,
+producer, writer bundle and label are compared, so a producer restored from an
+earlier backup is still recognised as the same producer. Registering the same
+`producer_id` with a different writer bundle or label fails with exit code 1 and
+changes nothing; a producer's writer bundle is not editable.
+
+List what is registered, including revocations:
+
+```bash
+uv run health-bridge receiver intake-list-producers --db .tmp/receiver.sqlite
+```
+
+Both listing commands are strictly read-only. They open an existing database
+read-only and never create or migrate one: a missing `--db` path fails without
+creating the file or its folder, and a database from a receiver too old to have
+migrations 013 and 014 fails with a message asking for those migrations, leaving
+the file byte-identical.
+
+Issue an intake token. Like `create-token`, the secret is shown once and only a
+hash is stored, so exactly one secret destination is required:
+
+```bash
+uv run health-bridge receiver intake-create-token \
+  --db .tmp/receiver.sqlite \
+  --owner-id <owner> \
+  --producer-id nutrition-app \
+  --label phone \
+  --output-secret .private/intake-token.json
+```
+
+`intake-create-token` refuses to issue a token for a producer that is not
+registered, or whose registration is revoked, and writes no token row in either
+case; the check and the insert share one transaction, so a producer revoked
+concurrently cannot slip a token through. Prefer `--output-secret`: stdout then
+carries only the token prefix and the file path, and the file is created with
+mode 0600. If the write fails, the just-issued token is revoked again so nothing
+stays active that nobody holds. The destination is resolved before anything is
+written, and a path that lands on the `--db` file or one of its SQLite sidecars
+is refused rather than overwritten.
+
+List tokens without ever revealing a token or its hash:
+
+```bash
+uv run health-bridge receiver intake-list-tokens --db .tmp/receiver.sqlite
+```
+
+Revoke by the prefix `intake-create-token` reported:
+
+```bash
+uv run health-bridge receiver intake-revoke-token \
+  --db .tmp/receiver.sqlite \
+  --token-prefix <prefix-from-intake-create-token>
+```
+
+`intake-revoke-token` exits 1 when no active token carries that prefix, so
+revoking twice, or revoking a prefix that was never issued, is visible rather
+than silently accepted.
+
 ## Legacy v1 compatibility
 
 Already paired devices and existing `/v1/batches` bearer credentials continue to work. The iOS parser accepts v1 pairing material during the migration window.
