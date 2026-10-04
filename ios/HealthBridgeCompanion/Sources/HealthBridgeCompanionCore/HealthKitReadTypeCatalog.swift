@@ -286,7 +286,7 @@ public final class HealthKitBackgroundDeliveryCoordinator {
                                 _ = await eventHandler(healthType.typeCode, runID)
                                 return diagnostic
                             },
-                            acknowledge: completion.call,
+                            acknowledge: { _ = completion.call() },
                             persistDiagnostic: observerCompletionHandler
                         )
                     }
@@ -306,7 +306,7 @@ public final class HealthKitBackgroundDeliveryCoordinator {
                         eventHandler: {
                             await eventHandler(healthType.typeCode, runID)
                         },
-                        acknowledge: completion.call,
+                        acknowledge: { _ = completion.call() },
                         persistDiagnostic: observerCompletionHandler
                     )
                 }
