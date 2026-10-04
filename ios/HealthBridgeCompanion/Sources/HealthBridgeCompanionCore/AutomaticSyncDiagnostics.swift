@@ -210,6 +210,11 @@ public enum AutomaticSyncObserverEventAdmission {
 final class AutomaticSyncObserverAcknowledgementOutcome {
     /// True only when the deadline, not the finished admission, delivered the completion handler.
     private(set) var acknowledgedAtDeadline = false
+
+    /// Records that the deadline wait, not a finished admission, acknowledged HealthKit.
+    func noteDeadlineAcknowledgement() {
+        acknowledgedAtDeadline = true
+    }
 }
 
 /// Injected into the observer lifecycle so tests can acknowledge instantly instead of waiting out
@@ -241,7 +246,7 @@ enum AutomaticSyncObserverEventLifecycle {
             await sleep(acknowledgementDeadline)
             guard !Task.isCancelled else { return }
             if acknowledgement.call() {
-                outcome.acknowledgedAtDeadline = true
+                outcome.noteDeadlineAcknowledgement()
             }
         }
         let admission = await admissionHandler()

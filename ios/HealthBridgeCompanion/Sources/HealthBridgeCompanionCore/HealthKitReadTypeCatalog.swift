@@ -338,10 +338,30 @@ public final class HealthKitBackgroundDeliveryCoordinator {
         }
     }
 
+    public func stop(
+        healthTypes: [HealthBridgeHealthType] = HealthBridgeBackgroundSync.observedHealthTypes
+    ) {
+        callbackGeneration &+= 1
+        isCurrent = { false }
+        registrationTypes = [:]
+        guard HKHealthStore.isHealthDataAvailable() else {
+            activeObserverQueries.removeAll()
+            return
+        }
+        stopActiveObserverQueries()
+
+        let sampleTypes = HealthKitReadTypeCatalog.observerSampleTypes(for: healthTypes)
+        for sampleType in sampleTypes {
+            healthStore.disableBackgroundDelivery(for: sampleType) { _, _ in }
+        }
+    }
+
     /// Re-registers background delivery for the observed types without touching the observer
     /// queries: HealthKit can stop launching the app after long gaps or after missed
-    /// acknowledgements, and a disable/enable pair restores the registration. Each type's
-    /// re-enable result is reported through `registrationHandler` with the type code.
+    /// acknowledgements, and a disable/enable pair restores the registration. Each type is
+    /// re-armed in order, and its enable call only follows the disable completion for that type, so
+    /// a re-arm never races the registration path in `start()`. Each result is reported through
+    /// `registrationHandler` with the type code.
     public func rearmBackgroundDelivery(
         healthTypes: [HealthBridgeHealthType] = HealthBridgeBackgroundSync.observedHealthTypes,
         registrationHandler: @escaping @MainActor (_ typeCode: String, _ succeeded: Bool) -> Void = { _, _ in }
@@ -368,24 +388,6 @@ public final class HealthKitBackgroundDeliveryCoordinator {
                     }
                 }
             }
-        }
-    }
-
-    public func stop(
-        healthTypes: [HealthBridgeHealthType] = HealthBridgeBackgroundSync.observedHealthTypes
-    ) {
-        callbackGeneration &+= 1
-        isCurrent = { false }
-        registrationTypes = [:]
-        guard HKHealthStore.isHealthDataAvailable() else {
-            activeObserverQueries.removeAll()
-            return
-        }
-        stopActiveObserverQueries()
-
-        let sampleTypes = HealthKitReadTypeCatalog.observerSampleTypes(for: healthTypes)
-        for sampleType in sampleTypes {
-            healthStore.disableBackgroundDelivery(for: sampleType) { _, _ in }
         }
     }
 
