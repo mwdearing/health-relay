@@ -114,7 +114,9 @@ health-bridge receiver intake-setup \
   --db .tmp/device.sqlite \
   --owner-id <owner> --producer-id nutrition-app \
   --writer-bundle-id dev.example.nutrition --label "Nutrition app" \
-  --output-secret .private/intake-token.json
+  --output-secret .private/intake-token.json \
+  --url http://127.0.0.1:8765 \
+  --start-option=--request-timeout=30
 
 health-bridge receiver start --db .tmp/device.sqlite --enable-intake-context \
   --request-timeout 30
@@ -124,12 +126,22 @@ health-bridge receiver intake-smoke \
   --token-file .private/intake-token.json
 ```
 
+The printed next steps quote their paths and carry the endpoint this run was
+given, so the commands work for a path with spaces and for a receiver that does
+not answer on the default host and port. `--url` supplies that endpoint and
+`--start-option` repeats a receiver start option in the printed restart
+command; without `--url` the smoke command prints `<receiver URL>` to fill in
+rather than assuming one.
+
 `intake-setup` refuses an existing `--output-secret` file and leaves it
 untouched, because overwriting it would destroy a working credential the caller
-cannot re-derive; `--rotate` is the explicit way to replace it, issuing a new
+cannot re-derive; the destination is claimed with an exclusive create, so two
+concurrent runs cannot both be told the path is free and then overwrite each
+other's secret. `--rotate` is the explicit way to replace it, issuing a new
 token into the file and revoking the token the file held so only one credential
-for the producer stays usable. `rotated` is reported only when a previous token
-was really retired.
+for the producer stays usable; a rotation whose old token cannot be identified
+from the file is refused rather than leaving that credential usable. `rotated`
+is reported only when a previous token was really retired.
 
 The same work by hand, one command per step:
 

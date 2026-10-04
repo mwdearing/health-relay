@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import shlex
 import stat
+import threading
 from typing import TYPE_CHECKING, Final
 
+import pytest
+import typer
 from pydantic import BaseModel
 from typer.testing import CliRunner, Result
 
+from health_bridge import cli_receiver
 from health_bridge.cli import app
+from health_bridge.private_files import ensure_private_directory
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -297,3 +303,171 @@ def test_intake_setup_cli_rotate_on_a_missing_secret_file_issues_a_token(
     assert payload.revoked_token_prefix is None
     assert _secret_token(secret_path).startswith("hri_")
     assert _active_token_prefixes(db_path) == [payload.token_prefix]
+
+
+@pytest.mark.parametrize(
+    "unusable_secret",
+    [
+        pytest.param("not json at all\n", id="invalid-json"),
+        pytest.param('{"token": "hri_nope"}', id="missing-token-prefix"),
+        pytest.param('{"token_prefix": 7}', id="token-prefix-not-a-string"),
+        pytest.param('{"token_prefix": ""}', id="empty-token-prefix"),
+        pytest.param('{"token_prefix": "hri_notaprefix"}', id="malformed-token-prefix"),
+        pytest.param('{"token_prefix": "hri_unknown1"}', id="unknown-token-prefix"),
+    ],
+)
+def test_intake_setup_cli_rotate_refuses_when_the_old_token_cannot_be_identified(
+    tmp_path: Path,
+    unusable_secret: str,
+) -> None:
+    # Given
+    db_path = tmp_path / "receiver.sqlite"
+    secret_path = tmp_path / "private" / "intake-token.json"
+    first = _setup(db_path, secret_path)
+    _ = secret_path.write_text(unusable_secret, encoding="utf-8")
+    unusable = secret_path.read_bytes()
+
+    # When
+    result = _run_setup(db_path, secret_path, "--rotate")
+
+    # Then
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert secret_path.read_bytes() == unusable
+    assert _active_token_prefixes(db_path) == [first.token_prefix]
+    assert "intake-revoke-token" in result.output
+
+
+def test_intake_setup_cli_claims_the_secret_path_before_touching_the_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    db_path = tmp_path / "receiver.sqlite"
+    secret_path = tmp_path / "private" / "intake-token.json"
+    claimed_while_registering: list[bool] = []
+
+    def _stop_at_registration(*_args: object, **_kwargs: object) -> None:
+        claimed_while_registering.append(secret_path.exists())
+        raise typer.Exit(code=1)
+
+    monkeypatch.setattr(
+        cli_receiver,
+        "_register_intake_producer_or_exit",
+        _stop_at_registration,
+    )
+
+    # When
+    result = _run_setup(db_path, secret_path)
+
+    # Then
+    assert result.exit_code == 1
+    assert claimed_while_registering == [True]
+    # The claim is not a credential, so a failed run leaves the path usable.
+    assert not secret_path.exists()
+
+
+def test_intake_setup_cli_secret_path_claim_is_atomic_under_concurrency(
+    tmp_path: Path,
+) -> None:
+    # Given: two runs that reach the destination claim at the same instant
+    secret_path = tmp_path / "private" / "intake-token.json"
+    ensure_private_directory(secret_path.parent)
+    runners = 4
+    start = threading.Barrier(runners)
+    claims: list[bool] = []
+    claims_lock = threading.Lock()
+
+    def _claim() -> None:
+        _ = start.wait(timeout=60)
+        # The claim is the exclusive create both runs race on.
+        claimed = cli_receiver._reserve_secret_output_path(  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+            secret_path,
+        )
+        with claims_lock:
+            claims.append(claimed)
+
+    # When
+    threads = [threading.Thread(target=_claim) for _ in range(runners)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    # Then
+    assert not any(thread.is_alive() for thread in threads)
+    assert claims.count(True) == 1
+    assert claims.count(False) == runners - 1
+    assert stat.S_IMODE(secret_path.stat().st_mode) == 0o600
+
+
+def _command_arguments(step: str) -> list[str]:
+    return shlex.split(step[step.index("health-bridge") :])
+
+
+def test_intake_setup_cli_shell_quotes_the_paths_it_prints(tmp_path: Path) -> None:
+    # Given
+    db_path = tmp_path / "private dir" / "receiver db; echo pwned.sqlite"
+    secret_path = tmp_path / "private dir" / "intake token.json"
+
+    # When
+    payload = _setup(db_path, secret_path)
+
+    # Then
+    restart = payload.next_steps[0]
+    smoke = payload.next_steps[2]
+    assert shlex.quote(str(db_path)) in restart
+    assert str(db_path) in _command_arguments(restart)
+    assert str(secret_path) in _command_arguments(smoke)
+    assert shlex.quote(str(secret_path)) in smoke
+
+
+def test_intake_setup_cli_prints_the_requested_receiver_url(tmp_path: Path) -> None:
+    # Given
+    db_path = tmp_path / "receiver.sqlite"
+    secret_path = tmp_path / "private" / "intake-token.json"
+
+    # When
+    payload = _setup(
+        db_path,
+        secret_path,
+        "--url",
+        "https://receiver.example:8443/intake",
+        "--start-option=--service-config=/etc/receiver.json",
+    )
+
+    # Then
+    steps = payload.next_steps
+    smoke_arguments = _command_arguments(steps[2])
+    assert "https://receiver.example:8443/intake" in smoke_arguments
+    assert "--service-config=/etc/receiver.json" in _command_arguments(steps[0])
+    assert "127.0.0.1" not in "\n".join(steps)
+
+
+def test_intake_setup_cli_next_steps_placeholder_the_receiver_url(
+    tmp_path: Path,
+) -> None:
+    # Given
+    db_path = tmp_path / "receiver.sqlite"
+    secret_path = tmp_path / "private" / "intake-token.json"
+
+    # When
+    payload = _setup(db_path, secret_path)
+
+    # Then
+    steps = "\n".join(payload.next_steps)
+    assert "<receiver URL>" in steps
+    assert "127.0.0.1:8765" not in steps
+
+
+def test_intake_setup_cli_rejects_an_empty_url(tmp_path: Path) -> None:
+    # Given
+    secret_path = tmp_path / "private" / "intake-token.json"
+
+    # When
+    result = _run_setup(tmp_path / "receiver.sqlite", secret_path, "--url", "   ")
+
+    # Then
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert not secret_path.exists()

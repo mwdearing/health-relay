@@ -3,6 +3,7 @@ import math
 import os
 import re
 import secrets
+import shlex
 import sqlite3
 import stat
 from collections.abc import Callable, Mapping
@@ -47,6 +48,8 @@ from health_bridge.contract.intake_context_v1 import (
 from health_bridge.launchd import load_runnable_launch_agent_request
 from health_bridge.mailbox.connections import MailboxConnectionStore
 from health_bridge.private_files import (
+    PRIVATE_FILE_MODE,
+    apply_private_file_mode,
     ensure_private_directory,
     write_private_text_file,
 )
@@ -149,6 +152,18 @@ INTAKE_SETUP_SECRET_EXISTS_MESSAGE: Final = (
     "Refusing to replace the existing intake secret file {path}; nothing was "  # noqa: S105 -- a message, not a secret.
     "changed. Re-run with --rotate to issue a new token into it and revoke the "
     "token it held, or choose another --output-secret path."
+)
+INTAKE_SETUP_ROTATE_UNIDENTIFIABLE_MESSAGE: Final = (
+    "Refusing to rotate the intake secret file {path}: it does not name an "
+    "intake token this receiver knows, so the token it held could not be "
+    "revoked and would stay usable; nothing was changed. Revoke it yourself "
+    "with receiver intake-revoke-token after receiver intake-list-tokens, then "
+    "re-run, or move the file aside."
+)
+INTAKE_SETUP_URL_PLACEHOLDER: Final = "<receiver URL>"
+INTAKE_SETUP_URL_MESSAGE: Final = (
+    "Refusing to print next steps for an unusable --url; give the http or "
+    "https URL the receiver actually listens on."
 )
 INTAKE_WRITE_FAILURE_MESSAGE: Final = (
     "Failed to write private intake token output file; no token was issued. "
@@ -1594,7 +1609,29 @@ def intake_setup(  # noqa: PLR0913 -- Typer exposes independent setup options.
             ),
         ),
     ] = False,
-) -> None:
+    url: Annotated[
+        str | None,
+        typer.Option(
+            "--url",
+            help=(
+                "Receiver endpoint the next steps should smoke-test, e.g. "
+                "https://receiver.example:8765. Omit it to have the next steps "
+                "print a placeholder to fill in."
+            ),
+        ),
+    ] = None,
+    start_option: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--start-option",
+            help=(
+                "Receiver start option to repeat in the printed restart command, "
+                "e.g. --start-option=--service-config=receiver.json. May be "
+                "given more than once."
+            ),
+        ),
+    ] = None,
+) -> dict[str, object]:
     """Register the producer, issue its intake token, and print the rest.
 
     Intake context takes several commands in a fixed order, and the order is the
@@ -1610,9 +1647,19 @@ def intake_setup(  # noqa: PLR0913 -- Typer exposes independent setup options.
     sequence, which leaves no active credential if the write fails. The token
     itself is never printed. An existing ``--output-secret`` file is refused
     untouched, because overwriting it would destroy a working credential the
-    caller cannot re-derive; ``--rotate`` is the explicit way to replace it, and
-    it revokes the token the file held so only one credential for this producer
-    stays usable.
+    caller cannot re-derive; the file is claimed with an exclusive create, so
+    two concurrent runs cannot both be told the path is free and then race to
+    replace each other's secret. ``--rotate`` is the explicit way to replace it,
+    and it revokes the token the file held so only one credential for this
+    producer stays usable: a rotation whose old token cannot be identified from
+    the file is refused rather than leaving that credential usable.
+
+    The printed commands carry the paths and the receiver endpoint this run was
+    given, shell-quoted, instead of a built-in endpoint that a non-default host,
+    port or service config would silently contradict.
+
+    Returns the printed payload so callers and tests can read it without
+    re-parsing stdout.
     """
     invalid = _intake_producer_input_error(
         owner_id=owner_id,
@@ -1624,22 +1671,160 @@ def intake_setup(  # noqa: PLR0913 -- Typer exposes independent setup options.
         typer.echo(invalid, err=True)
         raise typer.Exit(code=1)
 
-    # Checked before anything is written, so a refused run leaves the database
-    # and the existing credential file exactly as they were.
-    if output_secret.exists() and not rotate:
+    receiver_url = _intake_setup_receiver_url_or_exit(url)
+    extra_start_options = tuple(start_option or ())
+
+    # Checked before any claim, so a symlinked, non-directory or database-shaped
+    # destination is refused before anything is created or read.
+    _validate_intake_secret_output_path(output_secret, db=db)
+
+    # Read before the write, so the token being replaced is known even though its
+    # file is gone afterwards. A file that cannot be named is refused: a rotation
+    # that cannot revoke what it replaces would leave that credential usable.
+    replaced_prefix = _rotation_prefix_or_exit(db, output_secret) if rotate else None
+
+    # Claimed exclusively, not merely checked, so a second run that starts while
+    # this one is still writing is refused instead of replacing the secret this
+    # run is about to write and stranding the first token.
+    if not rotate and not _reserve_secret_output_path(output_secret):
         typer.echo(
             INTAKE_SETUP_SECRET_EXISTS_MESSAGE.format(path=output_secret),
             err=True,
         )
         raise typer.Exit(code=1)
 
-    # Read before the write, so the token being replaced is known even though its
-    # file is gone afterwards. A file that cannot be parsed simply has no token
-    # this command can revoke, and rotation still issues the new one.
-    replaced_prefix = _existing_secret_token_prefix(output_secret) if rotate else None
+    try:
+        payload = _intake_setup_after_claim(
+            db,
+            owner_id=owner_id,
+            producer_id=producer_id,
+            writer_bundle_id=writer_bundle_id,
+            label=label,
+            output_secret=output_secret,
+            replaced_prefix=replaced_prefix,
+            url=receiver_url,
+            extra_start_options=extra_start_options,
+        )
+    except BaseException:
+        # The claim is not a credential, so a failed run must not leave one
+        # behind that blocks the retry.
+        _release_secret_output_claim(output_secret, rotate=rotate)
+        raise
 
-    _validate_intake_secret_output_path(output_secret, db=db)
+    typer.echo(json.dumps(payload, sort_keys=True))
+    return payload
 
+
+def _rotation_prefix_or_exit(db: Path, output_secret: Path) -> str | None:
+    """The prefix ``--rotate`` must retire, refusing when it cannot be recovered.
+
+    A missing file has nothing to rotate, so a fresh token is simply issued. An
+    existing file whose prefix cannot be read, or whose prefix names no token
+    this receiver knows, is refused: the write would destroy the only record of
+    a credential the rotation promised to revoke.
+    """
+    if not output_secret.exists():
+        return None
+    prefix = _existing_secret_token_prefix(output_secret)
+    if prefix is None or not _intake_token_prefix_is_known(db, prefix):
+        typer.echo(
+            INTAKE_SETUP_ROTATE_UNIDENTIFIABLE_MESSAGE.format(path=output_secret),
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    return prefix
+
+
+def _intake_token_prefix_is_known(db: Path, prefix: str) -> bool:
+    """True when the prefix has the intake shape and is a token this store holds.
+
+    A read-only listing decides it, so checking a rotation's old token creates
+    nothing and revokes nothing. An unreadable store is treated as unknown,
+    which refuses the rotation rather than guessing.
+    """
+    if not prefix.startswith(INTAKE_TOKEN_PREFIX):
+        return False
+    try:
+        return prefix in {token.token_prefix for token in _read_intake_tokens(db)}
+    except (sqlite3.Error, OSError, _MissingIntakeTablesError):
+        return False
+
+
+def _reserve_secret_output_path(output_secret: Path) -> bool:
+    """Claim the destination for this run, or report that it is already taken.
+
+    ``O_CREAT | O_EXCL`` is the claim: the kernel resolves existence and
+    creation in one step, so two concurrent runs cannot both pass. The parent
+    directory is created first, because the exclusive create cannot create one.
+    """
+    ensure_private_directory(output_secret.parent)
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    try:
+        descriptor = os.open(output_secret, flags, PRIVATE_FILE_MODE)
+    except FileExistsError:
+        return False
+    except OSError as exc:
+        typer.echo(
+            f"Failed to open private token output file: {exc.strerror}",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    try:
+        # The create mode is masked by the umask, so the owner-only mode is set
+        # on the descriptor rather than trusted from the call.
+        apply_private_file_mode(descriptor, output_secret)
+    finally:
+        os.close(descriptor)
+    return True
+
+
+def _release_secret_output_claim(output_secret: Path, *, rotate: bool) -> None:
+    """Drop this run's claim so a failed run can be retried on the same path."""
+    if rotate:
+        return
+    try:
+        output_secret.unlink(missing_ok=True)
+    except OSError:
+        typer.echo(
+            f"Remove the unused secret file yourself: {output_secret}",
+            err=True,
+        )
+
+
+def _intake_setup_receiver_url_or_exit(url: str | None) -> str | None:
+    """The endpoint the printed smoke check should use, or a refusal.
+
+    ``None`` becomes a printed placeholder rather than a built-in endpoint: a
+    receiver on another host, port or TLS setup would otherwise be smoke-tested
+    on the wrong port, against a process that is not the receiver at all.
+    """
+    if url is None:
+        return None
+    if url.strip() == "":
+        typer.echo(INTAKE_SETUP_URL_MESSAGE, err=True)
+        raise typer.Exit(code=1)
+    return url.strip()
+
+
+def _intake_setup_after_claim(  # noqa: PLR0913 -- one identity per setup step.
+    db: Path,
+    *,
+    owner_id: str,
+    producer_id: str,
+    writer_bundle_id: str,
+    label: str,
+    output_secret: Path,
+    replaced_prefix: str | None,
+    url: str | None,
+    extra_start_options: tuple[str, ...],
+) -> dict[str, object]:
+    """The database and secret-file half of setup, run once the path is claimed."""
     record, created = _register_intake_producer_or_exit(
         db,
         owner_id=owner_id,
@@ -1675,22 +1860,22 @@ def intake_setup(  # noqa: PLR0913 -- Typer exposes independent setup options.
     )
     revoked_prefix = _revoke_replaced_intake_token(db, replaced_prefix)
 
-    typer.echo(
-        json.dumps(
-            {
-                **_intake_producer_payload(record),
-                "secret_file": written["secret_file"],
-                "status": "registered" if created else "already-registered",
-                "token_prefix": written["token_prefix"],
-                # True only when a previous token was actually retired, so it is
-                # never reported as a rotation that replaced nothing.
-                "rotated": revoked_prefix is not None,
-                "revoked_token_prefix": revoked_prefix,
-                "next_steps": _intake_setup_next_steps(db, output_secret),
-            },
-            sort_keys=True,
+    return {
+        **_intake_producer_payload(record),
+        "secret_file": written["secret_file"],
+        "status": "registered" if created else "already-registered",
+        "token_prefix": written["token_prefix"],
+        # True only when a previous token was actually retired, so it is
+        # never reported as a rotation that replaced nothing.
+        "rotated": revoked_prefix is not None,
+        "revoked_token_prefix": revoked_prefix,
+        "next_steps": _intake_setup_next_steps(
+            db,
+            output_secret,
+            url=url,
+            start_options=extra_start_options,
         ),
-    )
+    }
 
 
 def _register_intake_producer_or_exit(
@@ -1815,23 +2000,55 @@ def _revoke_replaced_intake_token(db: Path, replaced_prefix: str | None) -> str 
     return replaced_prefix
 
 
-def _intake_setup_next_steps(db: Path, output_secret: Path) -> list[str]:
+def _intake_setup_next_steps(
+    db: Path,
+    output_secret: Path,
+    *,
+    url: str | None,
+    start_options: tuple[str, ...],
+) -> list[str]:
     """What is left to do by hand, in the order it has to happen.
 
     The routes are off until the receiver is restarted with the flag, so the
     smoke check is printed after the restart rather than as if it worked now.
+
+    Every path is shell-quoted and the endpoint is the one this run was given,
+    because these lines are meant to be pasted: an unquoted path with a space
+    splits into two arguments, and a built-in endpoint would silently smoke-test
+    the wrong port or the wrong process.
     """
+    restart_command = " ".join(
+        [
+            "health-bridge receiver start",
+            f"--db {shlex.quote(str(db))}",
+            "--enable-intake-context",
+            *(shlex.quote(option) for option in start_options),
+        ],
+    )
     restart_step = (
-        "Restart the receiver with the intake routes enabled: health-bridge "
-        "receiver start --db {db} --enable-intake-context"
+        f"Restart the receiver with the intake routes enabled: {restart_command}"
     )
     routes_off_step = (
         "Intake routes stay off until that flag is passed, so a receiver "
         "started without it answers 404 for them."
     )
-    smoke_step = (
-        "Check the receiver serves them: health-bridge receiver intake-smoke "
-        "--url http://127.0.0.1:8765 --token-file {secret_file}"
+    smoke_endpoint = url if url is not None else INTAKE_SETUP_URL_PLACEHOLDER
+    smoke_command = " ".join(
+        [
+            "health-bridge receiver intake-smoke",
+            f"--url {shlex.quote(smoke_endpoint)}",
+            f"--token-file {shlex.quote(str(output_secret))}",
+        ],
+    )
+    smoke_step = f"Check the receiver serves them: {smoke_command}"
+    url_step = (
+        f"These steps assume the receiver answers on {url}."
+        if url is not None
+        else (
+            f"Replace {INTAKE_SETUP_URL_PLACEHOLDER} with the URL this receiver "
+            "actually answers on, including its scheme, host and port, or re-run "
+            "intake-setup with --url to have these steps print it for you."
+        )
     )
     move_into_app_step = (
         "Move the token from {secret_file} into the app that uploads intake "
@@ -1839,9 +2056,10 @@ def _intake_setup_next_steps(db: Path, output_secret: Path) -> list[str]:
         "or a log."
     )
     return [
-        restart_step.format(db=db),
+        restart_step,
         routes_off_step,
-        smoke_step.format(secret_file=output_secret),
+        smoke_step,
+        url_step,
         move_into_app_step.format(secret_file=output_secret),
     ]
 

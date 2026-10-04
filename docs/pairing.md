@@ -234,7 +234,8 @@ uv run health-bridge receiver intake-setup \
   --producer-id nutrition-app \
   --writer-bundle-id dev.example.nutrition \
   --label "Nutrition app" \
-  --output-secret .private/intake-token.json
+  --output-secret .private/intake-token.json \
+  --url http://127.0.0.1:8765
 ```
 
 The token itself is never printed. The JSON on stdout carries the producer
@@ -247,9 +248,34 @@ identity, the new `token_prefix`, the `secret_file` path, whether the producer w
 3. move the token from that file into the app that uploads intake context, then
    delete the file, and never paste it into chat.
 
+The printed commands shell-quote every path and use the endpoint you passed, so
+they work for a path with spaces in it and for a receiver on a non-default host,
+port or TLS setup. Give `--url` the URL the receiver actually answers on; each
+`--start-option` is repeated verbatim in the printed restart command, so a
+receiver that needs `--host`, `--port` or `--service-config` keeps that
+configuration:
+
+```bash
+uv run health-bridge receiver intake-setup \
+  --db .tmp/receiver.sqlite \
+  --owner-id <owner> \
+  --producer-id nutrition-app \
+  --writer-bundle-id dev.example.nutrition \
+  --label "Nutrition app" \
+  --output-secret .private/intake-token.json \
+  --url https://receiver.example:8765 \
+  --start-option=--service-config=.private/receiver.json
+```
+
+Without `--url` the smoke command prints `<receiver URL>` and a line telling you
+to replace it, rather than assuming the default endpoint.
+
 An existing `--output-secret` file is refused and left untouched, because
 overwriting it would destroy a working credential that cannot be re-derived from
-the database (only a hash is stored). To replace it deliberately:
+the database (only a hash is stored). The destination is claimed with an
+exclusive create before anything else is written, so two runs started at the same
+time cannot both pass the check and then overwrite each other's secret. To
+replace the file deliberately:
 
 ```bash
 uv run health-bridge receiver intake-setup \
@@ -268,8 +294,16 @@ reported as `revoked_token_prefix` and `rotated` is true only when a previous
 token was really retired. The rotation, the mode-0600 write, the write-then-activate
 ordering and the producer rules are the same ones `intake-register-producer` and
 `intake-create-token --output-secret` already enforce — `intake-setup` never has a
-weaker rule than the commands it replaces. An existing file that cannot be parsed
-has no prefix to revoke, which is reported rather than guessed at.
+weaker rule than the commands it replaces.
+
+A rotation only runs when the existing file still names the token it held: a file
+that is not valid JSON, that has no usable `token_prefix`, or whose prefix names
+no token this receiver knows, is refused with exit code 1 and left untouched.
+Retiring a leaked credential is exactly when a silent gap is worst — the write
+would destroy the only record of a token nothing could revoke afterwards. Revoke
+it yourself with `receiver intake-revoke-token` after
+`receiver intake-list-tokens`, then re-run; `--rotate` on a path that does not
+exist yet just issues a fresh token.
 
 ### The individual commands
 
