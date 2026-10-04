@@ -145,6 +145,11 @@ INTAKE_REFUSE_STDOUT_MESSAGE: Final = (
 INTAKE_MUTUALLY_EXCLUSIVE_OUTPUT_MESSAGE: Final = (
     "Use only one secret destination: --print-secret or --output-secret."
 )
+INTAKE_SETUP_SECRET_EXISTS_MESSAGE: Final = (
+    "Refusing to replace the existing intake secret file {path}; nothing was "  # noqa: S105 -- a message, not a secret.
+    "changed. Re-run with --rotate to issue a new token into it and revoke the "
+    "token it held, or choose another --output-secret path."
+)
 INTAKE_WRITE_FAILURE_MESSAGE: Final = (
     "Failed to write private intake token output file; no token was issued. "
     "Re-run the command with a writable private path."
@@ -1139,33 +1144,13 @@ def intake_register_producer(
         typer.echo(invalid, err=True)
         raise typer.Exit(code=1)
 
-    try:
-        record, created = register_intake_producer(
-            db,
-            owner_id=owner_id,
-            producer_id=producer_id,
-            writer_bundle_id=writer_bundle_id,
-            display_label=label,
-        )
-    except IntakeProducerRevokedError as exc:
-        typer.echo(
-            PRODUCER_REVOKED_MESSAGE.format(producer_id=producer_id),
-            err=True,
-        )
-        raise typer.Exit(code=1) from exc
-    except IntakeProducerConflictError as exc:
-        typer.echo(
-            _intake_producer_conflict_message(
-                db,
-                owner_id=owner_id,
-                producer_id=producer_id,
-            ),
-            err=True,
-        )
-        raise typer.Exit(code=1) from exc
-    except (sqlite3.Error, OSError) as exc:
-        typer.echo(INTAKE_STORAGE_UNAVAILABLE_MESSAGE, err=True)
-        raise typer.Exit(code=1) from exc
+    record, created = _register_intake_producer_or_exit(
+        db,
+        owner_id=owner_id,
+        producer_id=producer_id,
+        writer_bundle_id=writer_bundle_id,
+        label=label,
+    )
 
     typer.echo(
         json.dumps(
@@ -1342,30 +1327,13 @@ def intake_create_token(  # noqa: PLR0913 -- Typer exposes independent token opt
     if output_secret is not None:
         _validate_intake_secret_output_path(output_secret, db=db)
 
-    issue_token = (
-        create_pending_intake_token
-        if output_secret is not None
-        else create_intake_token_for_active_producer
+    issued = _issue_intake_token_or_exit(
+        db,
+        owner_id=owner_id,
+        producer_id=producer_id,
+        label=label,
+        pending=output_secret is not None,
     )
-    try:
-        issued = issue_token(
-            db,
-            owner_id=owner_id,
-            producer_id=producer_id,
-            label=label,
-        )
-    except IntakeProducerInactiveError as exc:
-        typer.echo(
-            INTAKE_PRODUCER_NOT_ACTIVE_MESSAGE.format(producer_id=producer_id),
-            err=True,
-        )
-        raise typer.Exit(code=1) from exc
-    except ValueError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(code=1) from exc
-    except (sqlite3.Error, OSError) as exc:
-        typer.echo(INTAKE_TOKEN_STORAGE_UNAVAILABLE_MESSAGE, err=True)
-        raise typer.Exit(code=1) from exc
 
     secret_payload = {
         "label": issued.label,
@@ -1414,6 +1382,26 @@ def _echo_intake_token_file_result(  # noqa: PLR0913 -- one identity per issuanc
     output_secret: Path,
     secret_payload: Mapping[str, object],
 ) -> None:
+    summary = _write_and_activate_intake_token(
+        db,
+        issued=issued,
+        owner_id=owner_id,
+        producer_id=producer_id,
+        output_secret=output_secret,
+        secret_payload=secret_payload,
+    )
+    typer.echo(json.dumps(summary, sort_keys=True))
+
+
+def _write_and_activate_intake_token(  # noqa: PLR0913 -- one identity per issuance step.
+    db: Path,
+    *,
+    issued: IssuedIntakeToken,
+    owner_id: str,
+    producer_id: str,
+    output_secret: Path,
+    secret_payload: Mapping[str, object],
+) -> dict[str, object]:
     """Write the secret privately, then activate the token that secret unlocks.
 
     The token row is inserted pending, a state of its own, so nothing can
@@ -1467,22 +1455,17 @@ def _echo_intake_token_file_result(  # noqa: PLR0913 -- one identity per issuanc
         _restore_secret_file_or_warn(output_secret, replaced_secret)
         typer.echo(INTAKE_ACTIVATION_FAILURE_MESSAGE, err=True)
         raise typer.Exit(code=1)
-    typer.echo(
-        json.dumps(
-            {
-                "label": issued.label,
-                "owner_id": secret_payload["owner_id"],
-                "producer_id": secret_payload["producer_id"],
-                "secret_file": str(output_secret),
-                "token_prefix": issued.token_prefix,
-                "warning": (
-                    "Secret intake token JSON was written to the requested "
-                    "private file. Keep it out of chat, Git, wiki, and logs."
-                ),
-            },
-            sort_keys=True,
+    return {
+        "label": issued.label,
+        "owner_id": secret_payload["owner_id"],
+        "producer_id": secret_payload["producer_id"],
+        "secret_file": str(output_secret),
+        "token_prefix": issued.token_prefix,
+        "warning": (
+            "Secret intake token JSON was written to the requested "
+            "private file. Keep it out of chat, Git, wiki, and logs."
         ),
-    )
+    }
 
 
 @receiver_app.command("intake-list-tokens")
@@ -1564,6 +1547,303 @@ def _discard_pending_intake_token_or_warn(db: Path, token_prefix: str) -> None:
             "A pending intake token row could not be removed; it stays revoked.",
             err=True,
         )
+
+
+@receiver_app.command("intake-setup")
+def intake_setup(  # noqa: PLR0913 -- Typer exposes independent setup options.
+    db: Annotated[
+        Path,
+        typer.Option("--db", help="User-owned SQLite database path."),
+    ],
+    owner_id: Annotated[
+        str,
+        typer.Option("--owner-id", help="Owner identity the tokens are bound to."),
+    ],
+    producer_id: Annotated[
+        str,
+        typer.Option(
+            "--producer-id",
+            help="Stable producer identifier, e.g. an app slug.",
+        ),
+    ],
+    writer_bundle_id: Annotated[
+        str,
+        typer.Option(
+            "--writer-bundle-id",
+            help="Bundle identifier that writes this producer.",
+        ),
+    ],
+    label: Annotated[
+        str,
+        typer.Option("--label", help="Human-readable producer and device label."),
+    ],
+    output_secret: Annotated[
+        Path,
+        typer.Option(
+            "--output-secret",
+            help="Private file the one-time intake token JSON is written to.",
+        ),
+    ],
+    rotate: Annotated[
+        bool,
+        typer.Option(
+            "--rotate",
+            help=(
+                "Replace an existing secret file with a fresh token and revoke "
+                "the token it held."
+            ),
+        ),
+    ] = False,
+) -> None:
+    """Register the producer, issue its intake token, and print the rest.
+
+    Intake context takes several commands in a fixed order, and the order is the
+    hard part: a token can only be issued for a producer that is already
+    registered, and the token has to reach a private file before it can be
+    activated. This command does the database half in that order and prints what
+    is left, so the one unsafe mistake (a token pasted into a terminal, a chat or
+    a log) is not needed to get set up.
+
+    Every step reuses the single-command paths, so this command never has a
+    weaker rule than the commands it replaces: the producer registration is the
+    idempotent one, and the token goes through the same write-then-activate
+    sequence, which leaves no active credential if the write fails. The token
+    itself is never printed. An existing ``--output-secret`` file is refused
+    untouched, because overwriting it would destroy a working credential the
+    caller cannot re-derive; ``--rotate`` is the explicit way to replace it, and
+    it revokes the token the file held so only one credential for this producer
+    stays usable.
+    """
+    invalid = _intake_producer_input_error(
+        owner_id=owner_id,
+        producer_id=producer_id,
+        writer_bundle_id=writer_bundle_id,
+        label=label,
+    )
+    if invalid is not None:
+        typer.echo(invalid, err=True)
+        raise typer.Exit(code=1)
+
+    # Checked before anything is written, so a refused run leaves the database
+    # and the existing credential file exactly as they were.
+    if output_secret.exists() and not rotate:
+        typer.echo(
+            INTAKE_SETUP_SECRET_EXISTS_MESSAGE.format(path=output_secret),
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # Read before the write, so the token being replaced is known even though its
+    # file is gone afterwards. A file that cannot be parsed simply has no token
+    # this command can revoke, and rotation still issues the new one.
+    replaced_prefix = _existing_secret_token_prefix(output_secret) if rotate else None
+
+    _validate_intake_secret_output_path(output_secret, db=db)
+
+    record, created = _register_intake_producer_or_exit(
+        db,
+        owner_id=owner_id,
+        producer_id=producer_id,
+        writer_bundle_id=writer_bundle_id,
+        label=label,
+    )
+
+    issued = _issue_intake_token_or_exit(
+        db,
+        owner_id=owner_id,
+        producer_id=producer_id,
+        label=label,
+        pending=True,
+    )
+    written = _write_and_activate_intake_token(
+        db,
+        issued=issued,
+        owner_id=owner_id,
+        producer_id=producer_id,
+        output_secret=output_secret,
+        secret_payload={
+            "label": issued.label,
+            "owner_id": owner_id,
+            "producer_id": producer_id,
+            "token": issued.token,
+            "token_prefix": issued.token_prefix,
+            "warning": (
+                "Store this token now; it is shown once and only a hash is kept "
+                "locally."
+            ),
+        },
+    )
+    revoked_prefix = _revoke_replaced_intake_token(db, replaced_prefix)
+
+    typer.echo(
+        json.dumps(
+            {
+                **_intake_producer_payload(record),
+                "secret_file": written["secret_file"],
+                "status": "registered" if created else "already-registered",
+                "token_prefix": written["token_prefix"],
+                # True only when a previous token was actually retired, so it is
+                # never reported as a rotation that replaced nothing.
+                "rotated": revoked_prefix is not None,
+                "revoked_token_prefix": revoked_prefix,
+                "next_steps": _intake_setup_next_steps(db, output_secret),
+            },
+            sort_keys=True,
+        ),
+    )
+
+
+def _register_intake_producer_or_exit(
+    db: Path,
+    *,
+    owner_id: str,
+    producer_id: str,
+    writer_bundle_id: str,
+    label: str,
+) -> tuple[ProducerRecord, bool]:
+    """The `intake-register-producer` path, shared with `intake-setup`."""
+    try:
+        return register_intake_producer(
+            db,
+            owner_id=owner_id,
+            producer_id=producer_id,
+            writer_bundle_id=writer_bundle_id,
+            display_label=label,
+        )
+    except IntakeProducerRevokedError as exc:
+        typer.echo(
+            PRODUCER_REVOKED_MESSAGE.format(producer_id=producer_id),
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    except IntakeProducerConflictError as exc:
+        typer.echo(
+            _intake_producer_conflict_message(
+                db,
+                owner_id=owner_id,
+                producer_id=producer_id,
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    except (sqlite3.Error, OSError) as exc:
+        typer.echo(INTAKE_STORAGE_UNAVAILABLE_MESSAGE, err=True)
+        raise typer.Exit(code=1) from exc
+
+
+def _issue_intake_token_or_exit(
+    db: Path,
+    *,
+    owner_id: str,
+    producer_id: str,
+    label: str,
+    pending: bool,
+) -> IssuedIntakeToken:
+    """The `intake-create-token` issuance, shared with `intake-setup`.
+
+    ``pending`` selects the state the row is inserted in: a token written to a
+    private file is inserted pending and activated only once the secret is on
+    disk, while a token the operator asked to print is active immediately because
+    there is no file to wait for.
+    """
+    issue_token = (
+        create_pending_intake_token
+        if pending
+        else create_intake_token_for_active_producer
+    )
+    try:
+        return issue_token(
+            db,
+            owner_id=owner_id,
+            producer_id=producer_id,
+            label=label,
+        )
+    except IntakeProducerInactiveError as exc:
+        typer.echo(
+            INTAKE_PRODUCER_NOT_ACTIVE_MESSAGE.format(producer_id=producer_id),
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except (sqlite3.Error, OSError) as exc:
+        typer.echo(INTAKE_TOKEN_STORAGE_UNAVAILABLE_MESSAGE, err=True)
+        raise typer.Exit(code=1) from exc
+
+
+def _existing_secret_token_prefix(output_secret: Path) -> str | None:
+    """The token prefix a rotation is about to replace, when the file names one.
+
+    Only a prefix is read, never the token, and only to revoke the credential
+    the file held. A file this command cannot parse simply has no prefix to
+    revoke, which is reported rather than guessed at.
+    """
+    text = _existing_secret_text(output_secret)
+    if text is None:
+        return None
+    document = _intake_json_object(text.encode("utf-8"))
+    prefix = None if document is None else document.get("token_prefix")
+    return prefix if isinstance(prefix, str) and prefix != "" else None
+
+
+def _revoke_replaced_intake_token(db: Path, replaced_prefix: str | None) -> str | None:
+    """Retire the token a rotated file held, reporting the prefix when it did.
+
+    A revocation that fails is reported as a warning and leaves the prefix out of
+    the result: the new token is already active and written, so failing the whole
+    command would report a setup that did succeed as broken.
+    """
+    if replaced_prefix is None:
+        return None
+    revoke_failed_message = (
+        "Could not revoke the intake token this file held ({prefix}); revoke it "
+        "with receiver intake-revoke-token."
+    )
+    already_revoked_message = (
+        "The intake token this file held ({prefix}) was already revoked; "
+        "nothing was revoked."
+    )
+    try:
+        revoked_count = revoke_active_intake_token(db, replaced_prefix)
+    except (sqlite3.Error, OSError):
+        typer.echo(revoke_failed_message.format(prefix=replaced_prefix), err=True)
+        return None
+    if revoked_count == 0:
+        typer.echo(already_revoked_message.format(prefix=replaced_prefix), err=True)
+        return None
+    return replaced_prefix
+
+
+def _intake_setup_next_steps(db: Path, output_secret: Path) -> list[str]:
+    """What is left to do by hand, in the order it has to happen.
+
+    The routes are off until the receiver is restarted with the flag, so the
+    smoke check is printed after the restart rather than as if it worked now.
+    """
+    restart_step = (
+        "Restart the receiver with the intake routes enabled: health-bridge "
+        "receiver start --db {db} --enable-intake-context"
+    )
+    routes_off_step = (
+        "Intake routes stay off until that flag is passed, so a receiver "
+        "started without it answers 404 for them."
+    )
+    smoke_step = (
+        "Check the receiver serves them: health-bridge receiver intake-smoke "
+        "--url http://127.0.0.1:8765 --token-file {secret_file}"
+    )
+    move_into_app_step = (
+        "Move the token from {secret_file} into the app that uploads intake "
+        "context, then delete the file. Never paste it into chat, Git, a wiki "
+        "or a log."
+    )
+    return [
+        restart_step.format(db=db),
+        routes_off_step,
+        smoke_step.format(secret_file=output_secret),
+        move_into_app_step.format(secret_file=output_secret),
+    ]
 
 
 def _existing_secret_text(output_secret: Path) -> str | None:
