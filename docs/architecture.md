@@ -103,9 +103,35 @@ Trust boundaries:
 
 ### Enabling intake context
 
-Three steps: register the producer, issue its intake token, then start the
-receiver with the routes enabled. Order matters — a token can only be issued for
-a producer that is already registered.
+`health-bridge receiver intake-setup` does the database half of this in one
+idempotent command and prints the rest: it registers the producer, issues its
+intake token into a mode-0600 private file (never printed), and prints the
+restart, smoke-check and secret-handling steps in order. Order matters — a token
+can only be issued for a producer that is already registered.
+
+```bash
+health-bridge receiver intake-setup \
+  --db .tmp/device.sqlite \
+  --owner-id <owner> --producer-id nutrition-app \
+  --writer-bundle-id dev.example.nutrition --label "Nutrition app" \
+  --output-secret .private/intake-token.json
+
+health-bridge receiver start --db .tmp/device.sqlite --enable-intake-context \
+  --request-timeout 30
+
+health-bridge receiver intake-smoke \
+  --url http://127.0.0.1:8765 \
+  --token-file .private/intake-token.json
+```
+
+`intake-setup` refuses an existing `--output-secret` file and leaves it
+untouched, because overwriting it would destroy a working credential the caller
+cannot re-derive; `--rotate` is the explicit way to replace it, issuing a new
+token into the file and revoking the token the file held so only one credential
+for the producer stays usable. `rotated` is reported only when a previous token
+was really retired.
+
+The same work by hand, one command per step:
 
 ```bash
 health-bridge receiver intake-register-producer \

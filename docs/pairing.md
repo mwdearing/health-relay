@@ -221,6 +221,58 @@ The intake-context routes authenticate with their own tokens (prefix `hri_`), no
 with `/v1/batches` bearer credentials. A token is bound to one owner and one
 registered producer, so a producer must exist before it can be given a token.
 
+### Guided setup: `intake-setup`
+
+`receiver intake-setup` is the whole database half of intake setup in one safe,
+idempotent command. It registers the producer, issues its intake token into a
+private file, and prints what is left:
+
+```bash
+uv run health-bridge receiver intake-setup \
+  --db .tmp/receiver.sqlite \
+  --owner-id <owner> \
+  --producer-id nutrition-app \
+  --writer-bundle-id dev.example.nutrition \
+  --label "Nutrition app" \
+  --output-secret .private/intake-token.json
+```
+
+The token itself is never printed. The JSON on stdout carries the producer
+identity, the new `token_prefix`, the `secret_file` path, whether the producer was
+`registered` or `already-registered`, and `next_steps`:
+
+1. restart the receiver with `--enable-intake-context` (the intake routes answer
+   404 until that flag is passed);
+2. run `receiver intake-smoke --url <receiver URL> --token-file <the secret file>`;
+3. move the token from that file into the app that uploads intake context, then
+   delete the file, and never paste it into chat.
+
+An existing `--output-secret` file is refused and left untouched, because
+overwriting it would destroy a working credential that cannot be re-derived from
+the database (only a hash is stored). To replace it deliberately:
+
+```bash
+uv run health-bridge receiver intake-setup \
+  --db .tmp/receiver.sqlite \
+  --owner-id <owner> \
+  --producer-id nutrition-app \
+  --writer-bundle-id dev.example.nutrition \
+  --label "Nutrition app" \
+  --output-secret .private/intake-token.json \
+  --rotate
+```
+
+`--rotate` issues a new token into the file and revokes the token the file held,
+so only one credential for the producer stays usable; the revoked prefix is
+reported as `revoked_token_prefix` and `rotated` is true only when a previous
+token was really retired. The rotation, the mode-0600 write, the write-then-activate
+ordering and the producer rules are the same ones `intake-register-producer` and
+`intake-create-token --output-secret` already enforce — `intake-setup` never has a
+weaker rule than the commands it replaces. An existing file that cannot be parsed
+has no prefix to revoke, which is reported rather than guessed at.
+
+### The individual commands
+
 Register a producer once, with the bundle identifier that writes on its behalf:
 
 ```bash
