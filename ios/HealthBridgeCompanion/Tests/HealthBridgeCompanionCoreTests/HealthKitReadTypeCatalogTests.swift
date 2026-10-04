@@ -61,7 +61,7 @@ private final class RecordingDeliveryClient: BackgroundDeliveryRegistrationClien
 
     func disableBackgroundDelivery(
         for sampleType: HKSampleType,
-        completion: @escaping (Bool, Error?) -> Void
+        completion: @escaping @Sendable (Bool, Error?) -> Void
     ) {
         lock.lock()
         recorded.append("disable:\(sampleType.identifier)")
@@ -72,7 +72,7 @@ private final class RecordingDeliveryClient: BackgroundDeliveryRegistrationClien
     func enableBackgroundDelivery(
         for sampleType: HKSampleType,
         frequency: HKUpdateFrequency,
-        completion: @escaping (Bool, Error?) -> Void
+        completion: @escaping @Sendable (Bool, Error?) -> Void
     ) {
         lock.lock()
         recorded.append("enable:\(sampleType.identifier)")
@@ -106,6 +106,26 @@ final class HealthKitBackgroundDeliveryRearmTests: XCTestCase {
         for _ in 0..<10 where results.count < 2 { await Task.yield() }
         XCTAssertEqual(results.map(\.0), ["sleep_analysis", "steps"])
         XCTAssertEqual(results.map(\.1), [true, true])
+    }
+
+    func testRearmPolicyAllowsOnePerForegroundSessionAndNeverMoreOftenThanTenMinutes() {
+        let first = Date(timeIntervalSince1970: 1_788_000_000)
+
+        XCTAssertTrue(BackgroundDeliveryRearmPolicy.admitsRearm(lastRearmAt: nil, now: first))
+        XCTAssertFalse(
+            BackgroundDeliveryRearmPolicy.admitsRearm(
+                lastRearmAt: first,
+                now: first.addingTimeInterval(60)
+            ),
+            "Repeated activations inside the debounce window must not re-arm again."
+        )
+        XCTAssertTrue(
+            BackgroundDeliveryRearmPolicy.admitsRearm(
+                lastRearmAt: first,
+                now: first.addingTimeInterval(BackgroundDeliveryRearmPolicy.minimumInterval)
+            )
+        )
+        XCTAssertEqual(BackgroundDeliveryRearmPolicy.minimumInterval, 600)
     }
 
     func testRearmIsInertWhenHealthDataIsUnavailable() {

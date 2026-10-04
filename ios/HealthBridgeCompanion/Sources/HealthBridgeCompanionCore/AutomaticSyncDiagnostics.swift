@@ -212,14 +212,15 @@ final class AutomaticSyncObserverAcknowledgementOutcome {
     private(set) var acknowledgedAtDeadline = false
 }
 
+/// Injected into the observer lifecycle so tests can acknowledge instantly instead of waiting out
+/// the real deadline.
+func sleepBeforeObserverAcknowledgementDeadline(_ deadline: TimeInterval) async {
+    let nanoseconds = UInt64(max(0, deadline) * 1_000_000_000)
+    try? await Task.sleep(nanoseconds: nanoseconds)
+}
+
 @MainActor
 enum AutomaticSyncObserverEventLifecycle {
-    /// Injected so tests can acknowledge instantly instead of waiting out the real deadline.
-    static func sleepBeforeAcknowledgementDeadline(_ deadline: TimeInterval) async {
-        let nanoseconds = UInt64(max(0, deadline) * 1_000_000_000)
-        try? await Task.sleep(nanoseconds: nanoseconds)
-    }
-
     /// Acknowledges the wake-up as soon as admission finishes or the deadline passes, whichever
     /// comes first, and keeps processing the cycle either way. HealthKit backoff, and eventually
     /// permanent loss of background delivery for the app, is driven by missing this handler.
@@ -228,7 +229,7 @@ enum AutomaticSyncObserverEventLifecycle {
         now: () -> Date = Date.init,
         acknowledgementDeadline: TimeInterval = BackgroundObserverAcknowledgementPolicy
             .observerAcknowledgementDeadline,
-        sleep: @escaping @Sendable (TimeInterval) async -> Void = sleepBeforeAcknowledgementDeadline,
+        sleep: @escaping @Sendable (TimeInterval) async -> Void = sleepBeforeObserverAcknowledgementDeadline,
         admissionHandler: () async -> AutomaticSyncObserverEventAdmission,
         eventHandler: () async -> AutomaticSyncDiagnosticDraft?,
         acknowledge: @escaping () -> Void,
@@ -238,15 +239,18 @@ enum AutomaticSyncObserverEventLifecycle {
         let outcome = AutomaticSyncObserverAcknowledgementOutcome()
         let deadlineTask = Task { @MainActor in
             await sleep(acknowledgementDeadline)
+            guard !Task.isCancelled else { return }
             if acknowledgement.call() {
                 outcome.acknowledgedAtDeadline = true
             }
         }
         let admission = await admissionHandler()
-        deadlineTask.cancel()
-        // A deadline wait that had already resumed runs to its acknowledgement before this yield
-        // returns, so the recorded reason matches the call that actually reached HealthKit.
-        await Task.yield()
+        if !Task.isCancelled {
+            deadlineTask.cancel()
+            // Settling the deadline wait here means the recorded reason always matches the call
+            // that actually reached HealthKit: either the deadline won, or admission did.
+            await deadlineTask.value
+        }
 
         let diagnostic: AutomaticSyncDiagnosticDraft?
         let completionLatency: TimeInterval

@@ -15,7 +15,6 @@ final class AutomaticSyncRuntime {
     private var foregroundOpportunityConsumed = false
     private var foregroundCatchUpTask: Task<Void, Never>?
     private var lastBackgroundDeliveryRearmAt: Date?
-    private let backgroundDeliveryRearmMinimumInterval: TimeInterval = 600
     #if canImport(HealthKit)
     private let backgroundDeliveryCoordinator = HealthKitBackgroundDeliveryCoordinator()
     #endif
@@ -141,10 +140,10 @@ final class AutomaticSyncRuntime {
         #if canImport(HealthKit)
         guard HKHealthStore.isHealthDataAvailable() else { return }
         guard viewModel.backgroundSyncEnabled else { return }
-        if let lastRearmAt = lastBackgroundDeliveryRearmAt,
-           now.timeIntervalSince(lastRearmAt) < backgroundDeliveryRearmMinimumInterval {
-            return
-        }
+        guard BackgroundDeliveryRearmPolicy.admitsRearm(
+            lastRearmAt: lastBackgroundDeliveryRearmAt,
+            now: now
+        ) else { return }
         lastBackgroundDeliveryRearmAt = now
         let healthTypes = viewModel.automaticSyncObserverHealthTypes()
         viewModel.noteBackgroundDeliveryRearmStarted(expectedTypeCount: healthTypes.count)

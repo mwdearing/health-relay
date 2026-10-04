@@ -178,7 +178,8 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
         draft.noteCompletion(.completed)
         var acknowledgementCount = 0
         var eventHandlerRan = false
-        var releaseAdmission: CheckedContinuation<AutomaticSyncObserverEventAdmission, Never>?
+        var persistedBucket: AutomaticSyncObserverCompletionLatencyBucket?
+        var releaseAdmission: CheckedContinuation<Void, Never>?
         let startedAt = Date(timeIntervalSince1970: 1_788_000_000)
 
         let processing = Task { @MainActor in
@@ -190,17 +191,20 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
                     await withCheckedContinuation { continuation in
                         releaseAdmission = continuation
                     }
+                    return .continueProcessing
                 },
                 eventHandler: {
                     eventHandlerRan = true
                     return draft
                 },
                 acknowledge: { acknowledgementCount += 1 },
-                persistDiagnostic: { _, _ in }
+                persistDiagnostic: { completedDraft, _ in
+                    persistedBucket = completedDraft.record.observerCompletionLatencyBucket
+                }
             )
         }
 
-        while releaseAdmission == nil { await Task.yield() }
+        while releaseAdmission == nil || acknowledgementCount == 0 { await Task.yield() }
         XCTAssertEqual(
             acknowledgementCount,
             1,
@@ -208,10 +212,15 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
         )
         XCTAssertFalse(eventHandlerRan)
 
-        releaseAdmission?.resume(.continueProcessing)
+        releaseAdmission?.resume()
         await processing.value
         XCTAssertEqual(acknowledgementCount, 1)
         XCTAssertTrue(eventHandlerRan)
+        XCTAssertEqual(
+            persistedBucket,
+            .deadline,
+            "The diagnostic must show that the deadline, not a finished admission, acknowledged HealthKit."
+        )
     }
 
     @MainActor
@@ -222,7 +231,7 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
         draft.noteRunAccepted()
         draft.noteCompletion(.completed)
         var acknowledgementCount = 0
-        var releaseAdmission: CheckedContinuation<AutomaticSyncObserverEventAdmission, Never>?
+        var releaseAdmission: CheckedContinuation<Void, Never>?
         let startedAt = Date(timeIntervalSince1970: 1_788_000_000)
 
         let processing = Task { @MainActor in
@@ -234,6 +243,7 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
                     await withCheckedContinuation { continuation in
                         releaseAdmission = continuation
                     }
+                    return .complete(nil)
                 },
                 eventHandler: { draft },
                 acknowledge: { acknowledgementCount += 1 },
@@ -241,9 +251,9 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
             )
         }
 
-        while releaseAdmission == nil { await Task.yield() }
+        while releaseAdmission == nil || acknowledgementCount == 0 { await Task.yield() }
         XCTAssertEqual(acknowledgementCount, 1)
-        releaseAdmission?.resume(.complete(nil))
+        releaseAdmission?.resume()
         await processing.value
 
         XCTAssertEqual(

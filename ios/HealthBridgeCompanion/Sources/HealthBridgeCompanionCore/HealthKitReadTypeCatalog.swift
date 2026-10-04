@@ -94,19 +94,19 @@ public enum HealthKitReadTypeCatalog {
 public protocol BackgroundDeliveryRegistrationClient: AnyObject {
     func disableBackgroundDelivery(
         for sampleType: HKSampleType,
-        completion: @escaping (Bool, Error?) -> Void
+        completion: @escaping @Sendable (Bool, Error?) -> Void
     )
     func enableBackgroundDelivery(
         for sampleType: HKSampleType,
         frequency: HKUpdateFrequency,
-        completion: @escaping (Bool, Error?) -> Void
+        completion: @escaping @Sendable (Bool, Error?) -> Void
     )
 }
 
 extension HKHealthStore: BackgroundDeliveryRegistrationClient {
     public func disableBackgroundDelivery(
         for sampleType: HKSampleType,
-        completion: @escaping (Bool, Error?) -> Void
+        completion: @escaping @Sendable (Bool, Error?) -> Void
     ) {
         disableBackgroundDelivery(for: sampleType, withCompletion: completion)
     }
@@ -114,9 +114,45 @@ extension HKHealthStore: BackgroundDeliveryRegistrationClient {
     public func enableBackgroundDelivery(
         for sampleType: HKSampleType,
         frequency: HKUpdateFrequency,
-        completion: @escaping (Bool, Error?) -> Void
+        completion: @escaping @Sendable (Bool, Error?) -> Void
     ) {
         enableBackgroundDelivery(for: sampleType, frequency: frequency, withCompletion: completion)
+    }
+}
+
+/// Foreground re-arm cadence. A re-arm is cheap but pointless in bursts, and the activity log is
+/// easier to read when it shows one re-arm per return to the foreground.
+public enum BackgroundDeliveryRearmPolicy {
+    public static let minimumInterval: TimeInterval = 600
+
+    public static func admitsRearm(lastRearmAt: Date?, now: Date) -> Bool {
+        guard let lastRearmAt else { return true }
+        return now.timeIntervalSince(lastRearmAt) >= minimumInterval
+    }
+}
+
+/// Carries the delivery client across its own completion callbacks, which HealthKit does not
+/// guarantee to run on any particular isolation domain.
+private final class BackgroundDeliveryClientBox: @unchecked Sendable {
+    let client: any BackgroundDeliveryRegistrationClient
+
+    init(_ client: any BackgroundDeliveryRegistrationClient) {
+        self.client = client
+    }
+}
+
+/// Carries the re-arm reporting closure across the HealthKit completion callbacks, which are not
+/// main-actor isolated. Holding it in a main-actor type keeps the call itself on the main actor.
+@MainActor
+private final class BackgroundDeliveryRearmReporter {
+    private let handler: @MainActor (String, Bool) -> Void
+
+    init(handler: @escaping @MainActor (String, Bool) -> Void) {
+        self.handler = handler
+    }
+
+    func report(typeCode: String, succeeded: Bool) {
+        handler(typeCode, succeeded)
     }
 }
 
@@ -312,14 +348,15 @@ public final class HealthKitBackgroundDeliveryCoordinator {
     ) {
         guard isHealthDataAvailable() else { return }
         let expectedGeneration = callbackGeneration
-        let deliveryClient = deliveryClient
+        let box = BackgroundDeliveryClientBox(deliveryClient)
+        let reporter = BackgroundDeliveryRearmReporter(handler: registrationHandler)
         for healthType in healthTypes {
             guard let sampleType = HealthKitReadTypeCatalog.observerSampleTypes(for: [healthType]).first else {
                 continue
             }
             let typeCode = healthType.typeCode
-            deliveryClient.disableBackgroundDelivery(for: sampleType) { _, _ in
-                deliveryClient.enableBackgroundDelivery(
+            box.client.disableBackgroundDelivery(for: sampleType) { _, _ in
+                box.client.enableBackgroundDelivery(
                     for: sampleType,
                     frequency: .immediate
                 ) { succeeded, error in
@@ -327,7 +364,7 @@ public final class HealthKitBackgroundDeliveryCoordinator {
                     Task { @MainActor [weak self] in
                         guard let self,
                               self.callbackGeneration == expectedGeneration else { return }
-                        registrationHandler(typeCode, enabled)
+                        reporter.report(typeCode: typeCode, succeeded: enabled)
                     }
                 }
             }
