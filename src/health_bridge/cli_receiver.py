@@ -3,8 +3,10 @@ import math
 import os
 import re
 import secrets
+import shlex
 import sqlite3
 import stat
+import time
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import replace
@@ -47,6 +49,8 @@ from health_bridge.contract.intake_context_v1 import (
 from health_bridge.launchd import load_runnable_launch_agent_request
 from health_bridge.mailbox.connections import MailboxConnectionStore
 from health_bridge.private_files import (
+    PRIVATE_FILE_MODE,
+    apply_private_file_mode,
     ensure_private_directory,
     write_private_text_file,
 )
@@ -144,6 +148,40 @@ INTAKE_REFUSE_STDOUT_MESSAGE: Final = (
 )
 INTAKE_MUTUALLY_EXCLUSIVE_OUTPUT_MESSAGE: Final = (
     "Use only one secret destination: --print-secret or --output-secret."
+)
+INTAKE_SETUP_SECRET_EXISTS_MESSAGE: Final = (
+    "Refusing to replace the existing intake secret file {path}; nothing was "  # noqa: S105 -- a message, not a secret.
+    "changed. Re-run with --rotate to issue a new token into it and revoke the "
+    "token it held, or choose another --output-secret path."
+)
+INTAKE_SETUP_ROTATE_UNIDENTIFIABLE_MESSAGE: Final = (
+    "Refusing to rotate the intake secret file {path}: it does not name an "
+    "intake token this receiver knows, so the token it held could not be "
+    "revoked and would stay usable; nothing was changed. Revoke it yourself "
+    "with receiver intake-revoke-token after receiver intake-list-tokens, then "
+    "re-run, or move the file aside."
+)
+INTAKE_SETUP_URL_PLACEHOLDER: Final = "<receiver URL>"
+INTAKE_SETUP_URL_MESSAGE: Final = (
+    "Refusing to continue setup with an unusable --url ({reason}); give the http "
+    "or https URL the receiver actually listens on, or omit --url to have the "
+    "printed steps place a placeholder to fill in."
+)
+INTAKE_SETUP_LABEL_MESSAGE: Final = (
+    "Refusing to issue an intake token with an empty --token-label; give the "
+    "device or client label the token inventory should show."
+)
+INTAKE_SETUP_LOCKED_MESSAGE: Final = (
+    "Another intake-setup rotation is already working on {path}; its lock file "
+    "{lock} is still held, so nothing was changed. Wait for it to finish, then "
+    "re-run, or remove the lock file yourself once you are sure no rotation is "
+    "running."
+)
+INTAKE_SETUP_REVOKE_FAILED_MESSAGE: Final = (
+    "The new intake token {new_prefix} is active in {secret_file}, but the token "
+    "this file held ({old_prefix}) could not be revoked and is still usable; "
+    "this rotation is not complete. Revoke it with receiver "
+    "intake-revoke-token --token-prefix {old_prefix}."
 )
 INTAKE_WRITE_FAILURE_MESSAGE: Final = (
     "Failed to write private intake token output file; no token was issued. "
@@ -248,6 +286,18 @@ INTAKE_TOKEN_PATTERN: Final = re.compile(
 )
 # Hostnames and IP literals urllib can encode into a request line.
 INTAKE_SMOKE_HOST_PATTERN: Final = re.compile(r"[A-Za-z0-9._~!$&'()*+,;=%:-]+")
+INTAKE_SETUP_LOCK_SUFFIX: Final = ".rotation.lock"
+# A rotation is short: this only has to outlast a slow filesystem, not a hang.
+ROTATION_LOCK_TIMEOUT_SECONDS: Final = 10.0
+ROTATION_LOCK_POLL_SECONDS: Final = 0.05
+# The claim on a path: existing or new, never both, and never a symlink.
+_EXCLUSIVE_PRIVATE_CREATE_FLAGS: Final = (
+    os.O_WRONLY
+    | os.O_CREAT
+    | os.O_EXCL
+    | getattr(os, "O_NOFOLLOW", 0)
+    | getattr(os, "O_CLOEXEC", 0)
+)
 PurgeIdentity: TypeAlias = tuple[int, int, int, int, int]
 SMOKE_RESPONSE_ADAPTER: Final[TypeAdapter[SmokeResponse]] = TypeAdapter(SmokeResponse)
 INTAKE_JSON_OBJECT_ADAPTER: Final[TypeAdapter[dict[str, object]]] = TypeAdapter(
@@ -1139,33 +1189,13 @@ def intake_register_producer(
         typer.echo(invalid, err=True)
         raise typer.Exit(code=1)
 
-    try:
-        record, created = register_intake_producer(
-            db,
-            owner_id=owner_id,
-            producer_id=producer_id,
-            writer_bundle_id=writer_bundle_id,
-            display_label=label,
-        )
-    except IntakeProducerRevokedError as exc:
-        typer.echo(
-            PRODUCER_REVOKED_MESSAGE.format(producer_id=producer_id),
-            err=True,
-        )
-        raise typer.Exit(code=1) from exc
-    except IntakeProducerConflictError as exc:
-        typer.echo(
-            _intake_producer_conflict_message(
-                db,
-                owner_id=owner_id,
-                producer_id=producer_id,
-            ),
-            err=True,
-        )
-        raise typer.Exit(code=1) from exc
-    except (sqlite3.Error, OSError) as exc:
-        typer.echo(INTAKE_STORAGE_UNAVAILABLE_MESSAGE, err=True)
-        raise typer.Exit(code=1) from exc
+    record, created = _register_intake_producer_or_exit(
+        db,
+        owner_id=owner_id,
+        producer_id=producer_id,
+        writer_bundle_id=writer_bundle_id,
+        label=label,
+    )
 
     typer.echo(
         json.dumps(
@@ -1342,30 +1372,13 @@ def intake_create_token(  # noqa: PLR0913 -- Typer exposes independent token opt
     if output_secret is not None:
         _validate_intake_secret_output_path(output_secret, db=db)
 
-    issue_token = (
-        create_pending_intake_token
-        if output_secret is not None
-        else create_intake_token_for_active_producer
+    issued = _issue_intake_token_or_exit(
+        db,
+        owner_id=owner_id,
+        producer_id=producer_id,
+        label=label,
+        pending=output_secret is not None,
     )
-    try:
-        issued = issue_token(
-            db,
-            owner_id=owner_id,
-            producer_id=producer_id,
-            label=label,
-        )
-    except IntakeProducerInactiveError as exc:
-        typer.echo(
-            INTAKE_PRODUCER_NOT_ACTIVE_MESSAGE.format(producer_id=producer_id),
-            err=True,
-        )
-        raise typer.Exit(code=1) from exc
-    except ValueError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(code=1) from exc
-    except (sqlite3.Error, OSError) as exc:
-        typer.echo(INTAKE_TOKEN_STORAGE_UNAVAILABLE_MESSAGE, err=True)
-        raise typer.Exit(code=1) from exc
 
     secret_payload = {
         "label": issued.label,
@@ -1414,6 +1427,26 @@ def _echo_intake_token_file_result(  # noqa: PLR0913 -- one identity per issuanc
     output_secret: Path,
     secret_payload: Mapping[str, object],
 ) -> None:
+    summary = _write_and_activate_intake_token(
+        db,
+        issued=issued,
+        owner_id=owner_id,
+        producer_id=producer_id,
+        output_secret=output_secret,
+        secret_payload=secret_payload,
+    )
+    typer.echo(json.dumps(summary, sort_keys=True))
+
+
+def _write_and_activate_intake_token(  # noqa: PLR0913 -- one identity per issuance step.
+    db: Path,
+    *,
+    issued: IssuedIntakeToken,
+    owner_id: str,
+    producer_id: str,
+    output_secret: Path,
+    secret_payload: Mapping[str, object],
+) -> dict[str, object]:
     """Write the secret privately, then activate the token that secret unlocks.
 
     The token row is inserted pending, a state of its own, so nothing can
@@ -1467,22 +1500,17 @@ def _echo_intake_token_file_result(  # noqa: PLR0913 -- one identity per issuanc
         _restore_secret_file_or_warn(output_secret, replaced_secret)
         typer.echo(INTAKE_ACTIVATION_FAILURE_MESSAGE, err=True)
         raise typer.Exit(code=1)
-    typer.echo(
-        json.dumps(
-            {
-                "label": issued.label,
-                "owner_id": secret_payload["owner_id"],
-                "producer_id": secret_payload["producer_id"],
-                "secret_file": str(output_secret),
-                "token_prefix": issued.token_prefix,
-                "warning": (
-                    "Secret intake token JSON was written to the requested "
-                    "private file. Keep it out of chat, Git, wiki, and logs."
-                ),
-            },
-            sort_keys=True,
+    return {
+        "label": issued.label,
+        "owner_id": secret_payload["owner_id"],
+        "producer_id": secret_payload["producer_id"],
+        "secret_file": str(output_secret),
+        "token_prefix": issued.token_prefix,
+        "warning": (
+            "Secret intake token JSON was written to the requested "
+            "private file. Keep it out of chat, Git, wiki, and logs."
         ),
-    )
+    }
 
 
 @receiver_app.command("intake-list-tokens")
@@ -1564,6 +1592,695 @@ def _discard_pending_intake_token_or_warn(db: Path, token_prefix: str) -> None:
             "A pending intake token row could not be removed; it stays revoked.",
             err=True,
         )
+
+
+@receiver_app.command("intake-setup")
+def intake_setup(  # noqa: PLR0913 -- Typer exposes independent setup options.
+    db: Annotated[
+        Path,
+        typer.Option("--db", help="User-owned SQLite database path."),
+    ],
+    owner_id: Annotated[
+        str,
+        typer.Option("--owner-id", help="Owner identity the tokens are bound to."),
+    ],
+    producer_id: Annotated[
+        str,
+        typer.Option(
+            "--producer-id",
+            help="Stable producer identifier, e.g. an app slug.",
+        ),
+    ],
+    writer_bundle_id: Annotated[
+        str,
+        typer.Option(
+            "--writer-bundle-id",
+            help="Bundle identifier that writes this producer.",
+        ),
+    ],
+    producer_label: Annotated[
+        str,
+        typer.Option(
+            "--producer-label",
+            "--label",
+            help="Human-readable producer label; --label is the same option.",
+        ),
+    ],
+    output_secret: Annotated[
+        Path,
+        typer.Option(
+            "--output-secret",
+            help="Private file the one-time intake token JSON is written to.",
+        ),
+    ],
+    token_label: Annotated[
+        str | None,
+        typer.Option(
+            "--token-label",
+            help=(
+                "Human-readable device or client label for the issued token. "
+                "Defaults to the producer label, which is what the individual "
+                "commands show when only one identity exists."
+            ),
+        ),
+    ] = None,
+    rotate: Annotated[
+        bool,
+        typer.Option(
+            "--rotate",
+            help=(
+                "Replace an existing secret file with a fresh token and revoke "
+                "the token it held."
+            ),
+        ),
+    ] = False,
+    url: Annotated[
+        str | None,
+        typer.Option(
+            "--url",
+            help=(
+                "Receiver endpoint the next steps should smoke-test, e.g. "
+                "https://receiver.example:8765. Omit it to have the next steps "
+                "print a placeholder to fill in."
+            ),
+        ),
+    ] = None,
+    start_option: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--start-option",
+            help=(
+                "Receiver start option to repeat in the printed restart command, "
+                "e.g. --start-option=--service-config=receiver.json. May be "
+                "given more than once."
+            ),
+        ),
+    ] = None,
+) -> dict[str, object]:
+    """Register the producer, issue its intake token, and print the rest.
+
+    Intake context takes several commands in a fixed order, and the order is the
+    hard part: a token can only be issued for a producer that is already
+    registered, and the token has to reach a private file before it can be
+    activated. This command does the database half in that order and prints what
+    is left, so the one unsafe mistake (a token pasted into a terminal, a chat or
+    a log) is not needed to get set up.
+
+    Every step reuses the single-command paths, so this command never has a
+    weaker rule than the commands it replaces: the producer registration is the
+    idempotent one, and the token goes through the same write-then-activate
+    sequence, which leaves no active credential if the write fails. The token
+    itself is never printed. An existing ``--output-secret`` file is refused
+    untouched, because overwriting it would destroy a working credential the
+    caller cannot re-derive; the file is claimed with an exclusive create, so
+    two concurrent runs cannot both be told the path is free and then race to
+    replace each other's secret. ``--rotate`` is the explicit way to replace it,
+    and it revokes the token the file held so only one credential for this
+    producer stays usable: a rotation whose old token cannot be identified from
+    the file is refused rather than leaving that credential usable, and a
+    rotation holds a lock file next to the secret for as long as it runs, so two
+    rotations cannot each activate a replacement and retire the same old token.
+
+    The producer and the credential it is given are labelled separately, because
+    a producer is often named for the app and its token for the device that
+    uploads context. ``--token-label`` names the credential; without it the
+    producer label is reused, which is what a single-identity setup wants.
+
+    The printed commands carry the paths and the receiver endpoint this run was
+    given, shell-quoted, instead of a built-in endpoint that a non-default host,
+    port or service config would silently contradict.
+
+    Returns the printed payload so callers and tests can read it without
+    re-parsing stdout.
+    """
+    invalid = _intake_producer_input_error(
+        owner_id=owner_id,
+        producer_id=producer_id,
+        writer_bundle_id=writer_bundle_id,
+        label=producer_label,
+    )
+    if invalid is not None:
+        typer.echo(invalid, err=True)
+        raise typer.Exit(code=1)
+    credential_label = producer_label if token_label is None else token_label
+    if credential_label.strip() == "":
+        typer.echo(INTAKE_SETUP_LABEL_MESSAGE, err=True)
+        raise typer.Exit(code=1)
+
+    receiver_url = _intake_setup_receiver_url_or_exit(url)
+    extra_start_options = tuple(start_option or ())
+
+    # Checked before any claim, so a symlinked, non-directory or database-shaped
+    # destination is refused before anything is created or read.
+    _validate_intake_secret_output_path(output_secret, db=db)
+
+    # Held for the whole rotation, prefix check included, because two rotations
+    # that read the same old prefix would each activate their own replacement and
+    # retire only the token that was already there.
+    rotation_locked = rotate and _acquire_rotation_lock_or_exit(output_secret)
+    try:
+        # Read before the write, so the token being replaced is known even though
+        # its file is gone afterwards. A file that cannot be named is refused: a
+        # rotation that cannot revoke what it replaces would leave that credential
+        # usable.
+        replaced_prefix = (
+            _rotation_prefix_or_exit(db, output_secret) if rotate else None
+        )
+
+        # Claimed exclusively, not merely checked, so a second run that starts
+        # while this one is still writing is refused instead of replacing the
+        # secret this run is about to write and stranding the first token.
+        if not rotate and not _reserve_secret_output_path(output_secret):
+            typer.echo(
+                INTAKE_SETUP_SECRET_EXISTS_MESSAGE.format(path=output_secret),
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        try:
+            payload = _intake_setup_after_claim(
+                db,
+                owner_id=owner_id,
+                producer_id=producer_id,
+                writer_bundle_id=writer_bundle_id,
+                producer_label=producer_label,
+                token_label=credential_label,
+                output_secret=output_secret,
+                replaced_prefix=replaced_prefix,
+                url=receiver_url,
+                extra_start_options=extra_start_options,
+            )
+        except BaseException:
+            # The claim is not a credential, so a failed run must not leave one
+            # behind that blocks the retry.
+            _release_secret_output_claim(output_secret, rotate=rotate)
+            raise
+    finally:
+        if rotation_locked:
+            _release_rotation_lock(output_secret)
+
+    typer.echo(json.dumps(payload, sort_keys=True))
+    return payload
+
+
+def _acquire_rotation_lock_or_exit(output_secret: Path) -> bool:
+    """Take the rotation lock for this secret file, or refuse to rotate.
+
+    The lock is a mode-0600 file next to the secret, created exclusively so
+    exactly one run holds it. Another rotation is waited for briefly rather than
+    refused outright, because the window is small; a lock that outlives that
+    window is reported by path so it can be removed deliberately instead of by a
+    rule that quietly assumes no other process is running.
+    """
+    if _acquire_rotation_lock(output_secret):
+        return True
+    typer.echo(
+        INTAKE_SETUP_LOCKED_MESSAGE.format(
+            path=output_secret,
+            lock=_rotation_lock_path(output_secret),
+        ),
+        err=True,
+    )
+    raise typer.Exit(code=1)
+
+
+def _rotation_lock_path(output_secret: Path) -> Path:
+    """The lock file that serializes rotations of one secret file."""
+    return output_secret.with_name(output_secret.name + INTAKE_SETUP_LOCK_SUFFIX)
+
+
+def _acquire_rotation_lock(output_secret: Path) -> bool:
+    """Create the rotation lock, waiting briefly for a rotation already running.
+
+    ``O_CREAT | O_EXCL`` makes the claim atomic, so concurrent rotations are
+    serialized rather than interleaved. The wait is bounded: a rotation holds the
+    lock only for the length of one command, so a lock still held after the
+    timeout belongs to a process that died or to one the operator should look at,
+    and it is reported rather than broken.
+    """
+    lock_path = _rotation_lock_path(output_secret)
+    ensure_private_directory(lock_path.parent)
+    deadline = time.monotonic() + ROTATION_LOCK_TIMEOUT_SECONDS
+    while True:
+        try:
+            descriptor = os.open(
+                lock_path,
+                _EXCLUSIVE_PRIVATE_CREATE_FLAGS,
+                PRIVATE_FILE_MODE,
+            )
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(ROTATION_LOCK_POLL_SECONDS)
+            continue
+        except OSError as exc:
+            typer.echo(
+                f"Failed to open the rotation lock file: {exc.strerror}",
+                err=True,
+            )
+            raise typer.Exit(code=1) from exc
+        try:
+            # The create mode is masked by the umask, so the owner-only mode is
+            # set on the descriptor rather than trusted from the call. The lock
+            # holds no credential, so a failure here is not fatal.
+            with suppress(OSError):
+                apply_private_file_mode(descriptor, lock_path)
+        finally:
+            os.close(descriptor)
+        return True
+
+
+def _release_rotation_lock(output_secret: Path) -> None:
+    """Drop the rotation lock so the next rotation can run."""
+    lock_path = _rotation_lock_path(output_secret)
+    try:
+        lock_path.unlink(missing_ok=True)
+    except OSError:
+        typer.echo(
+            f"Remove the leftover intake rotation lock yourself: {lock_path}",
+            err=True,
+        )
+
+
+def _rotation_prefix_or_exit(db: Path, output_secret: Path) -> str | None:
+    """The prefix ``--rotate`` must retire, refusing when it cannot be recovered.
+
+    A missing file has nothing to rotate, so a fresh token is simply issued. An
+    existing file whose prefix cannot be read, or whose prefix names no token
+    this receiver knows, is refused: the write would destroy the only record of
+    a credential the rotation promised to revoke.
+    """
+    if not output_secret.exists():
+        return None
+    prefix = _existing_secret_token_prefix(output_secret)
+    if prefix is None or not _intake_token_prefix_is_known(db, prefix):
+        typer.echo(
+            INTAKE_SETUP_ROTATE_UNIDENTIFIABLE_MESSAGE.format(path=output_secret),
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    return prefix
+
+
+def _intake_token_prefix_is_known(db: Path, prefix: str) -> bool:
+    """True when the prefix has the intake shape and is a token this store holds.
+
+    A read-only listing decides it, so checking a rotation's old token creates
+    nothing and revokes nothing. An unreadable store is treated as unknown,
+    which refuses the rotation rather than guessing.
+    """
+    if not prefix.startswith(INTAKE_TOKEN_PREFIX):
+        return False
+    try:
+        return prefix in {token.token_prefix for token in _read_intake_tokens(db)}
+    except (sqlite3.Error, OSError, _MissingIntakeTablesError):
+        return False
+
+
+def _reserve_secret_output_path(output_secret: Path) -> bool:
+    """Claim the destination for this run, or report that it is already taken.
+
+    ``O_CREAT | O_EXCL`` is the claim: the kernel resolves existence and
+    creation in one step, so two concurrent runs cannot both pass. The parent
+    directory is created first, because the exclusive create cannot create one.
+
+    A claim whose permissions cannot be tightened is removed again before this
+    returns: an empty file left at the destination would be refused by the next
+    setup run and rejected as unusable JSON by the next rotation, so a filesystem
+    that cannot keep the file private would block setup entirely instead of
+    failing it once.
+    """
+    ensure_private_directory(output_secret.parent)
+    try:
+        descriptor = os.open(
+            output_secret,
+            _EXCLUSIVE_PRIVATE_CREATE_FLAGS,
+            PRIVATE_FILE_MODE,
+        )
+    except FileExistsError:
+        return False
+    except OSError as exc:
+        typer.echo(
+            f"Failed to open private token output file: {exc.strerror}",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    try:
+        # The create mode is masked by the umask, so the owner-only mode is set
+        # on the descriptor rather than trusted from the call.
+        apply_private_file_mode(descriptor, output_secret)
+    except OSError as exc:
+        os.close(descriptor)
+        _remove_failed_claim_or_warn(output_secret)
+        typer.echo(
+            f"Failed to make private token output file owner-only: {exc.strerror}",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    os.close(descriptor)
+    return True
+
+
+def _remove_failed_claim_or_warn(output_secret: Path) -> None:
+    """Drop the file this invocation created, so the path stays usable."""
+    try:
+        output_secret.unlink(missing_ok=True)
+    except OSError:
+        typer.echo(
+            f"Remove the unused secret file yourself: {output_secret}",
+            err=True,
+        )
+
+
+def _release_secret_output_claim(output_secret: Path, *, rotate: bool) -> None:
+    """Drop this run's claim so a failed run can be retried on the same path."""
+    if rotate:
+        return
+    try:
+        output_secret.unlink(missing_ok=True)
+    except OSError:
+        typer.echo(
+            f"Remove the unused secret file yourself: {output_secret}",
+            err=True,
+        )
+
+
+def _intake_setup_receiver_url_or_exit(url: str | None) -> str | None:
+    """The endpoint the printed smoke check should use, or a refusal.
+
+    ``None`` becomes a printed placeholder rather than a built-in endpoint: a
+    receiver on another host, port or TLS setup would otherwise be smoke-tested
+    on the wrong port, against a process that is not the receiver at all.
+
+    Anything else is validated with the same rules ``intake-smoke`` applies, and
+    refused here rather than after setup has registered the producer and
+    activated a live credential: an unusable endpoint would otherwise leave a
+    token in a private file and an active credential on a receiver the operator
+    cannot check.
+    """
+    if url is None:
+        return None
+    candidate = url.strip()
+    if candidate == "":
+        typer.echo(INTAKE_SETUP_URL_MESSAGE.format(reason="it is empty"), err=True)
+        raise typer.Exit(code=1)
+    reason = _intake_url_unusable_reason(candidate)
+    if reason is not None:
+        typer.echo(INTAKE_SETUP_URL_MESSAGE.format(reason=reason), err=True)
+        raise typer.Exit(code=1)
+    return candidate
+
+
+def _intake_setup_after_claim(  # noqa: PLR0913 -- one identity per setup step.
+    db: Path,
+    *,
+    owner_id: str,
+    producer_id: str,
+    writer_bundle_id: str,
+    producer_label: str,
+    token_label: str,
+    output_secret: Path,
+    replaced_prefix: str | None,
+    url: str | None,
+    extra_start_options: tuple[str, ...],
+) -> dict[str, object]:
+    """The database and secret-file half of setup, run once the path is claimed."""
+    record, created = _register_intake_producer_or_exit(
+        db,
+        owner_id=owner_id,
+        producer_id=producer_id,
+        writer_bundle_id=writer_bundle_id,
+        label=producer_label,
+    )
+
+    issued = _issue_intake_token_or_exit(
+        db,
+        owner_id=owner_id,
+        producer_id=producer_id,
+        label=token_label,
+        pending=True,
+    )
+    written = _write_and_activate_intake_token(
+        db,
+        issued=issued,
+        owner_id=owner_id,
+        producer_id=producer_id,
+        output_secret=output_secret,
+        secret_payload={
+            "label": issued.label,
+            "owner_id": owner_id,
+            "producer_id": producer_id,
+            "token": issued.token,
+            "token_prefix": issued.token_prefix,
+            "warning": (
+                "Store this token now; it is shown once and only a hash is kept "
+                "locally."
+            ),
+        },
+    )
+    revoked_prefix = _revoke_replaced_intake_token(
+        db,
+        replaced_prefix,
+        active_prefix=str(written["token_prefix"]),
+        output_secret=output_secret,
+    )
+
+    return {
+        **_intake_producer_payload(record),
+        "secret_file": written["secret_file"],
+        "status": "registered" if created else "already-registered",
+        "token_label": issued.label,
+        "token_prefix": written["token_prefix"],
+        # True only when a previous token was actually retired, so it is
+        # never reported as a rotation that replaced nothing.
+        "rotated": revoked_prefix is not None,
+        "revoked_token_prefix": revoked_prefix,
+        "next_steps": _intake_setup_next_steps(
+            db,
+            output_secret,
+            url=url,
+            start_options=extra_start_options,
+        ),
+    }
+
+
+def _register_intake_producer_or_exit(
+    db: Path,
+    *,
+    owner_id: str,
+    producer_id: str,
+    writer_bundle_id: str,
+    label: str,
+) -> tuple[ProducerRecord, bool]:
+    """The `intake-register-producer` path, shared with `intake-setup`."""
+    try:
+        return register_intake_producer(
+            db,
+            owner_id=owner_id,
+            producer_id=producer_id,
+            writer_bundle_id=writer_bundle_id,
+            display_label=label,
+        )
+    except IntakeProducerRevokedError as exc:
+        typer.echo(
+            PRODUCER_REVOKED_MESSAGE.format(producer_id=producer_id),
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    except IntakeProducerConflictError as exc:
+        typer.echo(
+            _intake_producer_conflict_message(
+                db,
+                owner_id=owner_id,
+                producer_id=producer_id,
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    except (sqlite3.Error, OSError) as exc:
+        typer.echo(INTAKE_STORAGE_UNAVAILABLE_MESSAGE, err=True)
+        raise typer.Exit(code=1) from exc
+
+
+def _issue_intake_token_or_exit(
+    db: Path,
+    *,
+    owner_id: str,
+    producer_id: str,
+    label: str,
+    pending: bool,
+) -> IssuedIntakeToken:
+    """The `intake-create-token` issuance, shared with `intake-setup`.
+
+    ``pending`` selects the state the row is inserted in: a token written to a
+    private file is inserted pending and activated only once the secret is on
+    disk, while a token the operator asked to print is active immediately because
+    there is no file to wait for.
+    """
+    issue_token = (
+        create_pending_intake_token
+        if pending
+        else create_intake_token_for_active_producer
+    )
+    try:
+        return issue_token(
+            db,
+            owner_id=owner_id,
+            producer_id=producer_id,
+            label=label,
+        )
+    except IntakeProducerInactiveError as exc:
+        typer.echo(
+            INTAKE_PRODUCER_NOT_ACTIVE_MESSAGE.format(producer_id=producer_id),
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except (sqlite3.Error, OSError) as exc:
+        typer.echo(INTAKE_TOKEN_STORAGE_UNAVAILABLE_MESSAGE, err=True)
+        raise typer.Exit(code=1) from exc
+
+
+def _existing_secret_token_prefix(output_secret: Path) -> str | None:
+    """The token prefix a rotation is about to replace, when the file names one.
+
+    Only a prefix is read, never the token, and only to revoke the credential
+    the file held. A file this command cannot parse simply has no prefix to
+    revoke, which is reported rather than guessed at.
+    """
+    text = _existing_secret_text(output_secret)
+    if text is None:
+        return None
+    document = _intake_json_object(text.encode("utf-8"))
+    prefix = None if document is None else document.get("token_prefix")
+    return prefix if isinstance(prefix, str) and prefix != "" else None
+
+
+def _revoke_replaced_intake_token(
+    db: Path,
+    replaced_prefix: str | None,
+    *,
+    active_prefix: str,
+    output_secret: Path,
+) -> str | None:
+    """Retire the token a rotated file held, reporting the prefix when it did.
+
+    A store that cannot be reached for the revocation fails the command instead
+    of warning: the replacement is already active and on disk, so exiting zero
+    would report a rotation that quietly left the credential it was meant to
+    retire still usable. The new secret is kept, since it is valid and the only
+    copy of that token; the message names the prefix that still needs revoking.
+    An already-revoked token is not a failure, because nothing is left usable.
+    """
+    if replaced_prefix is None:
+        return None
+    already_revoked_message = (
+        "The intake token this file held ({prefix}) was already revoked; "
+        "nothing was revoked."
+    )
+    try:
+        revoked_count = revoke_active_intake_token(db, replaced_prefix)
+    except (sqlite3.Error, OSError) as exc:
+        typer.echo(
+            INTAKE_SETUP_REVOKE_FAILED_MESSAGE.format(
+                new_prefix=active_prefix,
+                old_prefix=replaced_prefix,
+                secret_file=output_secret,
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    if revoked_count == 0:
+        typer.echo(already_revoked_message.format(prefix=replaced_prefix), err=True)
+        return None
+    return replaced_prefix
+
+
+def _intake_setup_next_steps(
+    db: Path,
+    output_secret: Path,
+    *,
+    url: str | None,
+    start_options: tuple[str, ...],
+) -> list[str]:
+    """What is left to do by hand, in the order it has to happen.
+
+    The routes are off until the receiver is restarted with the flag, so the
+    smoke check is printed after the restart rather than as if it worked now.
+
+    Every path is shell-quoted and the endpoint is the one this run was given,
+    because these lines are meant to be pasted: an unquoted path with a space
+    splits into two arguments, and a built-in endpoint would silently smoke-test
+    the wrong port or the wrong process.
+
+    ``--db`` is left out when the start options configure the receiver through a
+    service config, because ``receiver start`` rejects that combination: the
+    printed command would otherwise be one the receiver itself refuses, which is
+    the same as printing no command at all.
+    """
+    restart_command = " ".join(
+        [
+            "health-bridge receiver start",
+            *(
+                ()
+                if _start_options_configure_service(start_options)
+                else (f"--db {shlex.quote(str(db))}",)
+            ),
+            "--enable-intake-context",
+            *(shlex.quote(option) for option in start_options),
+        ],
+    )
+    restart_step = (
+        f"Restart the receiver with the intake routes enabled: {restart_command}"
+    )
+    routes_off_step = (
+        "Intake routes stay off until that flag is passed, so a receiver "
+        "started without it answers 404 for them."
+    )
+    smoke_endpoint = url if url is not None else INTAKE_SETUP_URL_PLACEHOLDER
+    smoke_command = " ".join(
+        [
+            "health-bridge receiver intake-smoke",
+            f"--url {shlex.quote(smoke_endpoint)}",
+            f"--token-file {shlex.quote(str(output_secret))}",
+        ],
+    )
+    smoke_step = f"Check the receiver serves them: {smoke_command}"
+    url_step = (
+        f"These steps assume the receiver answers on {url}."
+        if url is not None
+        else (
+            f"Replace {INTAKE_SETUP_URL_PLACEHOLDER} with the URL this receiver "
+            "actually answers on, including its scheme, host and port, or re-run "
+            "intake-setup with --url to have these steps print it for you."
+        )
+    )
+    move_into_app_step = (
+        "Move the token from {secret_file} into the app that uploads intake "
+        "context, then delete the file. Never paste it into chat, Git, a wiki "
+        "or a log."
+    )
+    return [
+        restart_step,
+        routes_off_step,
+        smoke_step,
+        url_step,
+        move_into_app_step.format(secret_file=output_secret),
+    ]
+
+
+def _start_options_configure_service(start_options: tuple[str, ...]) -> bool:
+    """True when these start options already carry the receiver's database.
+
+    ``receiver start`` refuses a database together with a service config, because
+    the config is then the only place the database can come from.
+    """
+    return any(
+        option == "--service-config" or option.startswith("--service-config=")
+        for option in start_options
+    )
 
 
 def _existing_secret_text(output_secret: Path) -> str | None:
@@ -2279,8 +2996,8 @@ def _read_intake_smoke_token(token_file: Path) -> str:
     return token
 
 
-def _validate_intake_smoke_url(url: str) -> None:
-    """Accept only an http(s) URL urllib can actually open.
+def _intake_url_unusable_reason(url: str) -> str | None:
+    """Why this URL could not be smoke-tested, or ``None`` when it is usable.
 
     Parsing is defensive because the malformed inputs a user can type raise from
     different places: ``urlparse`` itself rejects an unmatched IPv6 bracket,
@@ -2291,17 +3008,22 @@ def _validate_intake_smoke_url(url: str) -> None:
     try:
         parsed = urlparse(url)
         host = parsed.hostname
+        # `.port` itself rejects a non-numeric or out-of-range port.
         _ = parsed.port
     except ValueError:
-        typer.echo(INTAKE_SMOKE_URL_MESSAGE, err=True)
-        raise typer.Exit(code=1) from None
-    if (
-        parsed.scheme not in {"http", "https"}
-        or not parsed.netloc
-        or host is None
-        or host.strip() == ""
-        or not INTAKE_SMOKE_HOST_PATTERN.fullmatch(host)
-    ):
+        return "the port is not a number in range"
+    if parsed.scheme not in {"http", "https"}:
+        return f"the scheme {parsed.scheme!r} is not http or https"
+    if not parsed.netloc or host is None or host.strip() == "":
+        return "it has no host"
+    if not INTAKE_SMOKE_HOST_PATTERN.fullmatch(host):
+        return "the host holds characters a request cannot carry"
+    return None
+
+
+def _validate_intake_smoke_url(url: str) -> None:
+    """Accept only an http(s) URL urllib can actually open."""
+    if _intake_url_unusable_reason(url) is not None:
         typer.echo(INTAKE_SMOKE_URL_MESSAGE, err=True)
         raise typer.Exit(code=1)
 
