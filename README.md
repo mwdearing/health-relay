@@ -121,6 +121,8 @@ uv tool install "git+https://github.com/mwdearing/health-relay.git"
 
 To update it later, run `uv tool upgrade apple-health-ai-bridge`. Do not install upstream `roian6/apple-health-ai-bridge`: it lacks this repository's receiver changes.
 
+To freeze one known receiver state instead of tracking `main`, install a pinned receiver release: `uv tool install "git+https://github.com/mwdearing/health-relay.git@healthrelay-receiver-2026.10.04"`. Its tag names an immutable commit and the package version is unchanged; see [versioning](docs/versioning.md#pinned-receiver-releases).
+
 The route-specific guide sets `HEALTH_BRIDGE_RECEIVER_URL` to the exact configured `/v1/batches` URL. Only then run:
 
 ```bash
@@ -177,7 +179,7 @@ If your agent is [Hermes Agent](https://github.com/NousResearch/hermes-agent), c
 
 | Plugin | What it gives your agent |
 | --- | --- |
-| [**hermes-healthrelay**](https://github.com/mwdearing/hermes-healthrelay) | Read-only MCP access to your receiver database (nine tools: sync status, synced metrics, time series, daily, sleep and workout summaries, sources) plus skills for setup, review and troubleshooting |
+| [**hermes-healthrelay**](https://github.com/mwdearing/hermes-healthrelay) | Read-only MCP access to your receiver database (ten tools: sync status, synced metrics, time series, daily, sleep and workout summaries, sources, and intake evidence) plus skills for setup, review and troubleshooting |
 | [**hermes-health-insights**](https://github.com/mwdearing/hermes-health-insights) | A local analysis tool and skills: weekly trends, rule-based concern checks, nutrition against Dietary Reference Intakes, an energy target and lab results |
 | [**hermes-medlog**](https://github.com/mwdearing/hermes-medlog) | A deterministic medication log with skills: record doses, list what is missing, import dose events from this receiver (never infers a dose or gives advice) |
 
@@ -186,7 +188,7 @@ hermes plugins install mwdearing/hermes-healthrelay --no-enable
 hermes plugins enable healthrelay
 ```
 
-Set up the receiver and the iPhone app above first, then follow the plugin's `healthrelay-setup` skill to point it at your receiver database. Health data is sensitive: use a local model, or one you trust with it. Catalog listings are pending Hermes maintainer review, so until then install by repository name as shown.
+Set up the receiver and the iPhone app above first, then follow the plugin's `healthrelay-setup` skill to point it at your receiver database. Health data is sensitive: use a local model, or one you trust with it. `hermes-healthrelay` and `hermes-health-insights` are listed in the Hermes plugin catalog. The catalog still pins hermes-healthrelay 0.2.2 (nine tools, no intake evidence) until its update is merged, so install by repository name as shown to get the intake evidence tool (0.3.0 or later).
 
 ## What the agent can see
 
@@ -252,7 +254,7 @@ These numbers do not need to match. Receiver-only fixes must not force an unchan
 <details>
 <summary><strong>How releases are published</strong></summary>
 
-The app ships as an unsigned IPA on GitHub Releases (`app-v<marketing-version>` tags, default marketing version `1.2.<run>`, from the `Build unsigned IPA` and `Publish IPA release` workflows). New builds are pre-releases (betas); the stable release is marked Latest after an approval-gated promotion. The receiver is installed from `main` of this repository, so a fix lands for users once it is merged; there are no `receiver-v*` or `ios-v*` tags in this fork. See [versioning](docs/versioning.md).
+The app ships as an unsigned IPA on GitHub Releases (`app-v<marketing-version>` tags, default marketing version `1.2.<run>`, from the `Build unsigned IPA` and `Publish IPA release` workflows). New builds are pre-releases (betas); the stable release is marked Latest after an approval-gated promotion. The receiver is installed from `main` of this repository, so a fix lands for users once it is merged. A pinned receiver release (`healthrelay-receiver-<YYYY.MM.DD>`) is the alternative when you want one known commit: it is not marked Latest, and the package version stays unchanged. There are no `receiver-v*` or `ios-v*` tags in this fork. See [versioning](docs/versioning.md).
 
 </details>
 
