@@ -610,6 +610,10 @@ final class AutomaticSyncEngineContractTests: XCTestCase {
     /// Observer callbacks that arrive while a run is active coalesce into one trailing run, and the
     /// merge drops one run identifier. A deadline acknowledgement recorded against the dropped
     /// identifier must move to the surviving run so the batch diagnostic still reports it.
+    ///
+    /// The first request owns the active run and the second only fills the empty trailing
+    /// opportunity, so a third request is what actually coalesces two opportunities into one.
+    @MainActor
     func testCoalescedObserverRunKeepsADeadlineAcknowledgement() async throws {
         let fixture = try PendingGenerationFixture()
         defer { fixture.remove() }
@@ -618,6 +622,7 @@ final class AutomaticSyncEngineContractTests: XCTestCase {
         let release = BoundedAsyncValueLatch<Void>()
         let finished = BoundedAsyncValueLatch<Void>()
         let survivingRunID = UUID()
+        let trailingRunID = UUID()
         let coalescedRunID = UUID()
         var opportunityRunIDs: [UUID] = []
         let engine = AutomaticSyncEngine(
@@ -646,7 +651,13 @@ final class AutomaticSyncEngineContractTests: XCTestCase {
             return
         }
 
-        // A second wake-up arrives while the first run is active and only the deadline answered it.
+        // The second wake-up only fills the empty trailing opportunity.
+        engine.requestRunWithoutWaiting(
+            reason: .observer(typeCode: "sleep_analysis"),
+            diagnosticRunID: trailingRunID
+        )
+        // The third request is the one that coalesces the trailing opportunity with this newcomer,
+        // and only the deadline answered this wake-up.
         deadlineRegistry.noteAcknowledgedAtDeadline(runID: coalescedRunID)
         engine.requestRunWithoutWaiting(
             reason: .observer(typeCode: "steps"),
@@ -658,9 +669,9 @@ final class AutomaticSyncEngineContractTests: XCTestCase {
             return
         }
 
-        XCTAssertEqual(opportunityRunIDs, [survivingRunID, survivingRunID])
+        XCTAssertEqual(opportunityRunIDs, [survivingRunID, trailingRunID])
         XCTAssertTrue(
-            deadlineRegistry.containsDeadlineAcknowledgement(runID: survivingRunID),
+            deadlineRegistry.containsDeadlineAcknowledgement(runID: trailingRunID),
             "The surviving coalesced run must inherit the dropped run's deadline acknowledgement."
         )
         XCTAssertFalse(
@@ -670,6 +681,10 @@ final class AutomaticSyncEngineContractTests: XCTestCase {
 
     /// An observer callback that coalesces into a run already scheduled for another reason leaves that
     /// run's own wake source in place, so the deadline mark has to be reported on it anyway.
+    ///
+    /// The first request owns the active run and the second only fills the empty trailing
+    /// opportunity, so a third request is what actually coalesces the two.
+    @MainActor
     func testObserverCallbackCoalescingIntoScheduledRefreshKeepsDeadlineMark() async throws {
         let fixture = try PendingGenerationFixture()
         defer { fixture.remove() }
@@ -678,13 +693,16 @@ final class AutomaticSyncEngineContractTests: XCTestCase {
         let release = BoundedAsyncValueLatch<Void>()
         let finished = BoundedAsyncValueLatch<Void>()
         let scheduledRunID = UUID()
+        let trailingScheduledRunID = UUID()
         let observerRunID = UUID()
         var opportunityReasons: [AutomaticSyncReason] = []
+        var opportunityRunIDs: [UUID] = []
         let engine = AutomaticSyncEngine(
             pendingStore: fixture.store,
             processType: { _, _ in .noPayload },
             performOpportunity: { opportunity, _ in
                 opportunityReasons.append(opportunity.reason)
+                opportunityRunIDs.append(opportunity.diagnosticRunID)
                 defer {
                     if opportunityReasons.count == 2 { finished.resolve(()) }
                 }
@@ -706,7 +724,14 @@ final class AutomaticSyncEngineContractTests: XCTestCase {
             return
         }
 
-        // The observer wake-up is the newcomer, so the scheduled refresh run survives the merge.
+        // The second request only fills the empty trailing opportunity.
+        engine.requestRunWithoutWaiting(
+            reason: .scheduledRefresh,
+            diagnosticRunID: trailingScheduledRunID
+        )
+        // The third request is the observer wake-up, so it is the newcomer that merges into the
+        // trailing scheduled refresh: that run survives with its own wake source, the observer run ID
+        // is dropped, and only the deadline answered this wake-up.
         deadlineRegistry.noteAcknowledgedAtDeadline(runID: observerRunID)
         engine.requestRunWithoutWaiting(
             reason: .observer(typeCode: "sleep_analysis"),
@@ -719,8 +744,9 @@ final class AutomaticSyncEngineContractTests: XCTestCase {
         }
 
         XCTAssertEqual(opportunityReasons, [.scheduledRefresh, .scheduledRefresh])
+        XCTAssertEqual(opportunityRunIDs, [scheduledRunID, trailingScheduledRunID])
         XCTAssertTrue(
-            deadlineRegistry.containsDeadlineAcknowledgement(runID: scheduledRunID),
+            deadlineRegistry.containsDeadlineAcknowledgement(runID: trailingScheduledRunID),
             "The surviving scheduled refresh run must inherit the observer run's deadline mark."
         )
         XCTAssertFalse(deadlineRegistry.containsDeadlineAcknowledgement(runID: observerRunID))
@@ -728,7 +754,7 @@ final class AutomaticSyncEngineContractTests: XCTestCase {
         // The surviving run keeps its own wake source, and the deadline must still be reported.
         let survivingDraft = AutomaticSyncDiagnosticDraft(
             reason: .scheduledRefresh,
-            runID: scheduledRunID
+            runID: trailingScheduledRunID
         )
         survivingDraft.noteObserverAcknowledged()
         if deadlineRegistry.containsDeadlineAcknowledgement(runID: survivingDraft.runID) {
