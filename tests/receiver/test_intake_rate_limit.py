@@ -1,6 +1,7 @@
 """Per-token rate limiting on POST /v1/intake-context/batches."""
 
 import sqlite3
+from collections import deque
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from http.server import ThreadingHTTPServer
@@ -12,6 +13,7 @@ import pytest
 
 from health_bridge.receiver.intake_tokens import create_intake_token
 from health_bridge.receiver.server import (
+    INTAKE_CAPABILITIES_RATE_LIMIT_COUNT,
     INTAKE_RATE_LIMIT_COUNT,
     INTAKE_RATE_LIMIT_WINDOW_SECONDS,
     IntakeRateLimiter,
@@ -180,7 +182,7 @@ def test_limited_batch_is_neither_accepted_nor_stored(tmp_path: Path) -> None:
     assert receipt_count(db) == stored
 
 
-def test_capabilities_are_not_rate_limited(tmp_path: Path) -> None:
+def test_capabilities_do_not_spend_the_batch_budget(tmp_path: Path) -> None:
     db = tmp_path / "r.sqlite"
     issued = token_for(db, "a")
     with served(db, count=1, window_seconds=60.0) as base:
@@ -273,3 +275,40 @@ def test_limiter_samples_the_clock_while_holding_its_lock() -> None:
     _ = limiter.retry_after_seconds("tok_a")
     assert seen
     assert all(seen)
+
+
+def test_capabilities_have_their_own_limit_with_retry_after(tmp_path: Path) -> None:
+    db = tmp_path / "r.sqlite"
+    issued = token_for(db, "a")
+    with served(db) as base:
+        statuses = [
+            call(base, "GET", CAP, issued)[0]
+            for _ in range(INTAKE_CAPABILITIES_RATE_LIMIT_COUNT)
+        ]
+        status, body, headers = call(base, "GET", CAP, issued)
+        batch_status = call(base, "POST", POST, issued, WORKED)[0]
+    assert statuses == [200] * INTAKE_CAPABILITIES_RATE_LIMIT_COUNT
+    assert (status, body) == (429, {"error": "rate_limited"})
+    assert headers["Retry-After"].isdigit()
+    # A polling loop on capabilities never blocks real uploads.
+    assert batch_status == 200
+
+
+def test_capabilities_are_privately_cacheable(tmp_path: Path) -> None:
+    db = tmp_path / "r.sqlite"
+    issued = token_for(db, "a")
+    with served(db) as base:
+        status, _, headers = call(base, "GET", CAP, issued)
+    assert status == 200
+    # Authenticated: a shared cache must never store it ("private"), the client may.
+    assert headers["Cache-Control"] == "private, max-age=300"
+
+
+def test_idle_key_cleanup_tolerates_an_empty_window() -> None:
+    read, advance = fake_clock()
+    limiter = IntakeRateLimiter(max_batches=2, window_seconds=10.0, clock=read)
+    assert limiter.allow("tok_a")
+    limiter._hits["tok_empty"] = deque()  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    advance(11.0)
+    assert limiter.allow("tok_b")
+    assert "tok_a" not in limiter.tracked_clients
