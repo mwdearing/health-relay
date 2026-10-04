@@ -7,10 +7,35 @@ HealthRelay contains independently versioned components. Always include the comp
 | Component | Version source | Distribution |
 | --- | --- | --- |
 | iOS Companion (HealthRelay app) | Xcode `MARKETING_VERSION`; build number = the `Build unsigned IPA` workflow run number for CI-built IPAs; a self-build uses `CURRENT_PROJECT_VERSION` from the Xcode project | Unsigned IPA on GitHub Releases, tag `app-v<marketing-version>`. The default marketing version is `1.2.<run>`, so tags look like `app-v1.2.23`; a maintainer may supply a different marketing version when starting the build, and the tag follows it. Sign it with your own certificate, or self-build ([self-build guide](self-build.md)). |
-| Receiver/CLI | `version` in `pyproject.toml` | Installed from this repository's `main`: `uv tool install "git+https://github.com/mwdearing/health-relay.git"`; update with `uv tool upgrade apple-health-ai-bridge`. |
+| Receiver/CLI | `version` in `pyproject.toml` | Installed from this repository's `main`: `uv tool install "git+https://github.com/mwdearing/health-relay.git"`; update with `uv tool upgrade apple-health-ai-bridge`. A pinned receiver release is the alternative: `uv tool install "git+https://github.com/mwdearing/health-relay.git@healthrelay-receiver-<YYYY.MM.DD>"` (see below). |
 | Batch Protocol | `health_bridge.batch.v1` | Wire contract only; see below. |
 
-App releases come from the `Build unsigned IPA` and `Publish IPA release` workflows. A new build is published as a **pre-release** (beta). The stable release, marked **Latest**, is chosen through the approval-gated `Promote IPA release` workflow after the build has been installed and checked on a device. The receiver has no separate release step: a fix is available once it is merged to `main`.
+App releases come from the `Build unsigned IPA` and `Publish IPA release` workflows. A new build is published as a **pre-release** (beta). The stable release, marked **Latest**, is chosen through the approval-gated `Promote IPA release` workflow after the build has been installed and checked on a device. The receiver can also be installed from a pinned receiver release instead of tracking `main`: a fix is available from `main` as soon as it is merged, and a pinned receiver release freezes one known state of the receiver for users who want it.
+
+### Pinned receiver releases
+
+A pinned receiver release is a GitHub Release whose tag names one immutable commit:
+
+```text
+healthrelay-receiver-<YYYY.MM.DD>
+```
+
+- The tag is created at a merge commit and is never moved or reused for a different commit.
+- The release is **not** marked **Latest**. **Latest** stays the stable app release, chosen through the approval-gated `Promote IPA release` workflow.
+- The release is not a pre-release; it carries no beta framing.
+- The package version in `pyproject.toml` does not change. Helper manifests must carry the release tag `receiver-v<version>` and are validated against the receiver version (`src/health_bridge/mailbox/helper_lifecycle.py`, `cli_mailbox_helper.py`), so a version bump would make Mailbox helper installs require a notarized helper release that does not exist. The tag identifies the commit instead.
+- `receiver-v*` and `ios-v*` tags are never pushed from this fork, so `healthrelay-receiver-*` names a receiver release without matching any workflow tag trigger.
+
+Install a pinned receiver release:
+
+```bash
+uv tool install "git+https://github.com/mwdearing/health-relay.git@healthrelay-receiver-2026.10.04"
+```
+
+Check what you have:
+
+- `health-bridge --version` prints the package version, which stays `1.1.1` for every pinned receiver release.
+- The release tag names the commit. Read that commit to see the exact receiver source you installed.
 
 This fork does not push `receiver-v*` or `ios-v*` tags. Those tags trigger the upstream release workflows, which HealthRelay does not use.
 
