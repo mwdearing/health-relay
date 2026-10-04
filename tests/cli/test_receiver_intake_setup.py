@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import shlex
+import sqlite3
 import stat
 import threading
-from typing import TYPE_CHECKING, Final
+from pathlib import Path
+from typing import Final
 
 import pytest
 import typer
@@ -13,9 +15,6 @@ from typer.testing import CliRunner, Result
 from health_bridge import cli_receiver
 from health_bridge.cli import app
 from health_bridge.private_files import ensure_private_directory
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 OWNER_ID: Final = "owner-1"
 PRODUCER_ID: Final = "synthetic-app"
@@ -31,6 +30,7 @@ class SecretFilePayload(BaseModel):
 
 class ListedToken(BaseModel):
     token_prefix: str
+    label: str
     revoked_at: str | None
 
 
@@ -41,6 +41,7 @@ class TokenListPayload(BaseModel):
 class ListedProducer(BaseModel):
     producer_id: str
     writer_bundle_id: str
+    label: str
 
 
 class ProducerListPayload(BaseModel):
@@ -52,6 +53,7 @@ class SetupPayload(BaseModel):
     producer_id: str
     owner_id: str
     writer_bundle_id: str
+    token_label: str
     token_prefix: str
     secret_file: str
     rotated: bool
@@ -96,11 +98,22 @@ def _setup(db_path: Path, secret_path: Path, *extra: str) -> SetupPayload:
     return SetupPayload.model_validate_json(result.stdout)
 
 
-def _active_token_prefixes(db_path: Path) -> list[str]:
+def _active_tokens(db_path: Path) -> list[ListedToken]:
     result = _cli("intake-list-tokens", "--db", str(db_path))
     assert result.exit_code == 0, (result.output, result.exception)
     listed = TokenListPayload.model_validate_json(result.stdout)
-    return [token.token_prefix for token in listed.tokens if token.revoked_at is None]
+    return [token for token in listed.tokens if token.revoked_at is None]
+
+
+def _active_token_prefixes(db_path: Path) -> list[str]:
+    return [token.token_prefix for token in _active_tokens(db_path)]
+
+
+def _listed_producers(db_path: Path) -> list[ListedProducer]:
+    result = _cli("intake-list-producers", "--db", str(db_path))
+    assert result.exit_code == 0, (result.output, result.exception)
+    listed = ProducerListPayload.model_validate_json(result.stdout)
+    return listed.producers
 
 
 def test_intake_setup_cli_writes_a_private_token_and_registers_the_producer(
@@ -193,10 +206,8 @@ def test_intake_setup_cli_registers_the_producer_once_across_runs(
     _ = _setup(db_path, second_secret)
 
     # Then
-    result = _cli("intake-list-producers", "--db", str(db_path))
-    assert result.exit_code == 0, (result.output, result.exception)
-    listed = ProducerListPayload.model_validate_json(result.stdout)
-    assert [producer.producer_id for producer in listed.producers] == [PRODUCER_ID]
+    producers = _listed_producers(db_path)
+    assert [producer.producer_id for producer in producers] == [PRODUCER_ID]
 
 
 def test_intake_setup_cli_refuses_a_different_writer_bundle(tmp_path: Path) -> None:
@@ -471,3 +482,320 @@ def test_intake_setup_cli_rejects_an_empty_url(tmp_path: Path) -> None:
     assert result.exit_code == 1
     assert "Traceback" not in result.output
     assert not secret_path.exists()
+
+
+# --- round 2 findings -------------------------------------------------------
+
+DOCS: Final = Path("docs/pairing.md")
+
+
+def test_intake_setup_docs_limit_the_idempotency_claim_to_producer_registration() -> (
+    None
+):
+    # Given
+    setup_section = (
+        DOCS.read_text(encoding="utf-8")
+        .split(
+            "### Guided setup",
+            maxsplit=1,
+        )[1]
+        .split("### The individual commands", maxsplit=1)[0]
+    )
+
+    # When
+    claims = [
+        line.strip()
+        for line in setup_section.splitlines()
+        if "idempotent" in line.lower()
+    ]
+
+    # Then: the whole command is not repeatable, so only the registration step
+    # may be described as idempotent.
+    assert claims, "the guided setup section should still explain what repeats"
+    assert all("registration" in claim.lower() for claim in claims), claims
+
+
+def test_intake_setup_cli_labels_the_credential_apart_from_the_producer(
+    tmp_path: Path,
+) -> None:
+    # Given: a producer named for the app, a credential named for the device
+    db_path = tmp_path / "receiver.sqlite"
+    secret_path = tmp_path / "private" / "intake-token.json"
+
+    # When
+    result = _cli(
+        "intake-setup",
+        "--db",
+        str(db_path),
+        "--owner-id",
+        OWNER_ID,
+        "--producer-id",
+        PRODUCER_ID,
+        "--writer-bundle-id",
+        WRITER_BUNDLE_ID,
+        "--producer-label",
+        "Synthetic app",
+        "--token-label",
+        TOKEN_LABEL,
+        "--output-secret",
+        str(secret_path),
+    )
+
+    # Then
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert _active_tokens(db_path)[0].label == TOKEN_LABEL
+    listed = _listed_producers(db_path)
+    assert [producer.label for producer in listed] == ["Synthetic app"]
+
+
+def test_intake_setup_cli_falls_back_to_the_producer_label(
+    tmp_path: Path,
+) -> None:
+    # Given: no --token-label, so the producer label names the credential too
+    db_path = tmp_path / "receiver.sqlite"
+    secret_path = tmp_path / "private" / "intake-token.json"
+
+    # When
+    payload = _setup(db_path, secret_path, "--producer-label", "Synthetic app")
+
+    # Then
+    assert payload.token_label == "Synthetic app"
+    assert _active_tokens(db_path)[0].label == "Synthetic app"
+
+
+def test_intake_setup_cli_rejects_an_empty_token_label(tmp_path: Path) -> None:
+    # Given
+    db_path = tmp_path / "receiver.sqlite"
+    secret_path = tmp_path / "private" / "intake-token.json"
+
+    # When
+    result = _run_setup(db_path, secret_path, "--token-label", "   ")
+
+    # Then
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert not secret_path.exists()
+
+
+@pytest.mark.parametrize(
+    "unusable_url",
+    [
+        pytest.param("file:///tmp/receiver", id="not-http"),
+        pytest.param("https://", id="no-host"),
+        pytest.param("http://receiver example:8765", id="host-with-space"),
+        pytest.param("http://receiver.example:99999", id="port-out-of-range"),
+    ],
+)
+def test_intake_setup_cli_refuses_an_unusable_url_before_any_database_change(
+    tmp_path: Path,
+    unusable_url: str,
+) -> None:
+    # Given: a --url the printed smoke command could never use
+    db_path = tmp_path / "receiver.sqlite"
+    secret_path = tmp_path / "private" / "intake-token.json"
+
+    # When
+    result = _run_setup(db_path, secret_path, "--url", unusable_url)
+
+    # Then
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert not db_path.exists()
+    assert not secret_path.exists()
+
+
+def test_intake_setup_cli_cleans_up_the_claim_when_private_mode_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a filesystem where the owner-only chmod cannot be applied
+    db_path = tmp_path / "receiver.sqlite"
+    secret_path = tmp_path / "private" / "intake-token.json"
+
+    def _fail_chmod(_descriptor: int, _path: Path) -> None:
+        msg = "chmod not permitted"
+        raise PermissionError(msg)
+
+    monkeypatch.setattr(cli_receiver, "apply_private_file_mode", _fail_chmod)
+
+    # When
+    result = _run_setup(db_path, secret_path)
+
+    # Then
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    # The zero-length claim must not survive: a retry on the same path has to work.
+    assert not secret_path.exists()
+    monkeypatch.undo()
+    assert _setup(db_path, secret_path).status == "registered"
+
+
+def test_intake_setup_cli_fails_when_a_rotation_cannot_revoke_the_old_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: the store becomes unavailable after the new token is activated
+    db_path = tmp_path / "receiver.sqlite"
+    secret_path = tmp_path / "private" / "intake-token.json"
+    first = _setup(db_path, secret_path)
+    first_token = _secret_token(secret_path)
+
+    def _unavailable(*_args: object, **_kwargs: object) -> int:
+        msg = "database is locked"
+        raise sqlite3.OperationalError(msg)
+
+    monkeypatch.setattr(cli_receiver, "revoke_active_intake_token", _unavailable)
+
+    # When
+    result = _run_setup(db_path, secret_path, "--rotate")
+
+    # Then
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    # The credential that is still usable is named, so it can be revoked by hand.
+    assert first.token_prefix in result.output
+    assert "intake-revoke-token" in result.output
+    # The new secret is not thrown away: it is active and valid.
+    new_token = _secret_token(secret_path)
+    assert new_token.startswith("hri_")
+    assert new_token != first_token
+    assert sorted(_active_token_prefixes(db_path)) == sorted(
+        [
+            first.token_prefix,
+            SecretFilePayload.model_validate_json(
+                secret_path.read_bytes()
+            ).token_prefix,
+        ],
+    )
+
+
+def test_intake_setup_cli_serializes_concurrent_rotations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: two runs that reach the rotation lock at the same instant
+    db_path = tmp_path / "receiver.sqlite"
+    secret_path = tmp_path / "private" / "intake-token.json"
+    _ = _setup(db_path, secret_path)
+    lock_path = cli_receiver._rotation_lock_path(secret_path)  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+    # A bare claim, so a second claim cannot be told apart from a wait.
+    monkeypatch.setattr(cli_receiver, "ROTATION_LOCK_TIMEOUT_SECONDS", 0)
+    runners = 4
+    start = threading.Barrier(runners)
+    # No runner releases until every other one has tried, so a second claim
+    # cannot slip in after the winner has already dropped the lock.
+    attempted = threading.Barrier(runners)
+    acquired: list[bool] = []
+    modes: list[int] = []
+    acquired_lock = threading.Lock()
+
+    def _lock() -> None:
+        _ = start.wait(timeout=60)
+        # The lock file next to the secret is what a rotation must hold.
+        held = cli_receiver._acquire_rotation_lock(  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+            secret_path,
+        )
+        try:
+            with acquired_lock:
+                acquired.append(held)
+                if held:
+                    # A lock another account could open or delete is not a lock.
+                    modes.append(stat.S_IMODE(lock_path.stat().st_mode))
+            _ = attempted.wait(timeout=60)
+        finally:
+            if held:
+                cli_receiver._release_rotation_lock(  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+                    secret_path,
+                )
+
+    # When
+    threads = [threading.Thread(target=_lock) for _ in range(runners)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    # Then
+    assert not any(thread.is_alive() for thread in threads)
+    assert acquired.count(True) == 1
+    assert acquired.count(False) == runners - 1
+    assert modes == [0o600]
+    # The lock is not left behind to block later rotations.
+    assert not lock_path.exists()
+
+
+def test_intake_setup_cli_rotate_holds_a_private_lock_file_while_it_works(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    db_path = tmp_path / "receiver.sqlite"
+    secret_path = tmp_path / "private" / "intake-token.json"
+    _ = _setup(db_path, secret_path)
+    lock_path = cli_receiver._rotation_lock_path(secret_path)  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+    held_while_working: list[bool] = []
+
+    def _record(_db: Path, **kwargs: object) -> dict[str, object]:
+        held_while_working.append(lock_path.exists())
+        return {
+            "secret_file": str(kwargs["output_secret"]),
+            "token_prefix": "hri_rotated0001",
+        }
+
+    monkeypatch.setattr(cli_receiver, "_write_and_activate_intake_token", _record)
+
+    # When
+    monkeypatch.setattr(cli_receiver, "ROTATION_LOCK_TIMEOUT_SECONDS", 0.2)
+    result = _run_setup(db_path, secret_path, "--rotate")
+
+    # Then
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert held_while_working == [True]
+    assert not lock_path.exists()
+
+
+def test_intake_setup_cli_rotate_refuses_while_another_rotation_holds_the_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a second rotation already claimed this secret file
+    db_path = tmp_path / "receiver.sqlite"
+    secret_path = tmp_path / "private" / "intake-token.json"
+    first = _setup(db_path, secret_path)
+    original = secret_path.read_bytes()
+    lock_path = cli_receiver._rotation_lock_path(secret_path)  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+    _ = cli_receiver._acquire_rotation_lock(secret_path)  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+    try:
+        assert stat.S_IMODE(lock_path.stat().st_mode) == 0o600
+        # When
+        monkeypatch.setattr(cli_receiver, "ROTATION_LOCK_TIMEOUT_SECONDS", 0.2)
+        result = _run_setup(db_path, secret_path, "--rotate")
+    finally:
+        cli_receiver._release_rotation_lock(secret_path)  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+
+    # Then
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert secret_path.read_bytes() == original
+    assert _active_token_prefixes(db_path) == [first.token_prefix]
+
+
+def test_intake_setup_cli_next_steps_omit_the_database_for_a_service_config(
+    tmp_path: Path,
+) -> None:
+    # Given: a receiver configured entirely by its service config
+    db_path = tmp_path / "receiver.sqlite"
+    secret_path = tmp_path / "private" / "intake-token.json"
+
+    # When
+    payload = _setup(
+        db_path,
+        secret_path,
+        "--start-option=--service-config=.private/receiver.json",
+    )
+
+    # Then: `--db` and `--service-config` are mutually exclusive in receiver start
+    restart_arguments = _command_arguments(payload.next_steps[0])
+    assert "--service-config=.private/receiver.json" in restart_arguments
+    assert "--db" not in restart_arguments
+    assert str(db_path) not in restart_arguments

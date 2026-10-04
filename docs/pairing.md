@@ -223,9 +223,10 @@ registered producer, so a producer must exist before it can be given a token.
 
 ### Guided setup: `intake-setup`
 
-`receiver intake-setup` is the whole database half of intake setup in one safe,
-idempotent command. It registers the producer, issues its intake token into a
-private file, and prints what is left:
+`receiver intake-setup` is the whole database half of intake setup in one safe
+command. It registers the producer, issues its intake token into a private file,
+and prints what is left. The registration step is the idempotent one; issuing a
+token is not, so the command as a whole is not repeatable:
 
 ```bash
 uv run health-bridge receiver intake-setup \
@@ -233,10 +234,21 @@ uv run health-bridge receiver intake-setup \
   --owner-id <owner> \
   --producer-id nutrition-app \
   --writer-bundle-id dev.example.nutrition \
-  --label "Nutrition app" \
+  --producer-label "Nutrition app" \
+  --token-label phone \
   --output-secret .private/intake-token.json \
   --url http://127.0.0.1:8765
 ```
+
+`--producer-label` names the producer, as `intake-register-producer --label`
+does, and `--token-label` names the issued token, as `intake-create-token
+--label` does. They are separate because a producer is often named for the app
+while its credential is named for the device that uploads context; without
+`--token-label` the producer label is reused.
+
+`--url` is validated before anything is written, so an endpoint the printed
+smoke command could never use is refused instead of leaving an activated
+credential behind a next step that cannot work.
 
 The token itself is never printed. The JSON on stdout carries the producer
 identity, the new `token_prefix`, the `secret_file` path, whether the producer was
@@ -261,11 +273,16 @@ uv run health-bridge receiver intake-setup \
   --owner-id <owner> \
   --producer-id nutrition-app \
   --writer-bundle-id dev.example.nutrition \
-  --label "Nutrition app" \
+  --producer-label "Nutrition app" \
+  --token-label phone \
   --output-secret .private/intake-token.json \
   --url https://receiver.example:8765 \
   --start-option=--service-config=.private/receiver.json
 ```
+
+`--service-config` already carries the database, and `receiver start` refuses a
+`--db` alongside it, so the printed restart command leaves `--db` out whenever a
+service config is passed as a start option.
 
 Without `--url` the smoke command prints `<receiver URL>` and a line telling you
 to replace it, rather than assuming the default endpoint.
@@ -274,7 +291,9 @@ An existing `--output-secret` file is refused and left untouched, because
 overwriting it would destroy a working credential that cannot be re-derived from
 the database (only a hash is stored). The destination is claimed with an
 exclusive create before anything else is written, so two runs started at the same
-time cannot both pass the check and then overwrite each other's secret. To
+time cannot both pass the check and then overwrite each other's secret; a claim
+whose permissions cannot be tightened to owner-only is removed again rather than
+left blocking the next run. To
 replace the file deliberately:
 
 ```bash
@@ -283,7 +302,7 @@ uv run health-bridge receiver intake-setup \
   --owner-id <owner> \
   --producer-id nutrition-app \
   --writer-bundle-id dev.example.nutrition \
-  --label "Nutrition app" \
+  --producer-label "Nutrition app" \
   --output-secret .private/intake-token.json \
   --rotate
 ```
@@ -291,10 +310,12 @@ uv run health-bridge receiver intake-setup \
 `--rotate` issues a new token into the file and revokes the token the file held,
 so only one credential for the producer stays usable; the revoked prefix is
 reported as `revoked_token_prefix` and `rotated` is true only when a previous
-token was really retired. The rotation, the mode-0600 write, the write-then-activate
-ordering and the producer rules are the same ones `intake-register-producer` and
-`intake-create-token --output-secret` already enforce — `intake-setup` never has a
-weaker rule than the commands it replaces.
+token was really retired. A rotation holds a mode-0600 lock file next to the
+secret, `<secret>.rotation.lock`, for as long as it runs, so two rotations
+cannot both read the same old prefix, each activate a replacement and retire only
+the token that was already there. A rotation that finds the lock held waits
+briefly, then refuses with exit code 1 and the lock path, so a lock left by a
+killed run is removed deliberately rather than assumed away.
 
 A rotation only runs when the existing file still names the token it held: a file
 that is not valid JSON, that has no usable `token_prefix`, or whose prefix names
@@ -304,6 +325,13 @@ would destroy the only record of a token nothing could revoke afterwards. Revoke
 it yourself with `receiver intake-revoke-token` after
 `receiver intake-list-tokens`, then re-run; `--rotate` on a path that does not
 exist yet just issues a fresh token.
+
+If the revocation itself fails — the store went away between activating the new
+token and retiring the old one — the command exits 1 instead of warning, because
+the rotation did not finish: the credential it was meant to retire is still
+usable. The new secret stays where it is, since it is valid and the only copy of
+that token, and the message names the prefix that still needs
+`receiver intake-revoke-token`.
 
 ### The individual commands
 
