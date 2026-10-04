@@ -416,6 +416,70 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
 
     /// The engine creates the run's draft after admission, so the deadline outcome must be recorded
     /// by run identifier for that later draft to find.
+    /// The re-arm debounce must survive an app relaunch, otherwise a quick restart re-arms on every
+    /// foreground and floods the activity log.
+    func testRearmDebounceSurvivesRelaunchThroughTheSettingsStore() throws {
+        let suiteName = "healthBridgeTests.rearmDebounce.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let firstRearm = Date(timeIntervalSince1970: 1_788_000_000)
+
+        XCTAssertNil(
+            BackgroundSyncSettingsStore(userDefaults: defaults).lastBackgroundDeliveryRearmAt()
+        )
+        BackgroundSyncSettingsStore(userDefaults: defaults)
+            .recordBackgroundDeliveryRearm(at: firstRearm)
+
+        // A relaunch reads the persisted timestamp back through a brand new store instance.
+        let persisted = BackgroundSyncSettingsStore(userDefaults: defaults)
+            .lastBackgroundDeliveryRearmAt()
+        XCTAssertEqual(
+            persisted?.timeIntervalSince1970 ?? 0,
+            firstRearm.timeIntervalSince1970,
+            accuracy: 1
+        )
+        XCTAssertFalse(
+            BackgroundDeliveryRearmPolicy.admitsRearm(
+                lastRearmAt: persisted,
+                now: firstRearm.addingTimeInterval(60)
+            ),
+            "A relaunch inside the debounce window must not re-arm again."
+        )
+        XCTAssertTrue(
+            BackgroundDeliveryRearmPolicy.admitsRearm(
+                lastRearmAt: persisted,
+                now: firstRearm.addingTimeInterval(BackgroundDeliveryRearmPolicy.minimumInterval)
+            )
+        )
+    }
+
+    /// A wake-up answered at the deadline must stay visible when several observer callbacks coalesce
+    /// into one engine run, because the merge drops one of the run identifiers.
+    func testCoalescedObserverCallbacksKeepADeadlineAcknowledgement() {
+        let registry = ObserverAcknowledgementDeadlineRegistry()
+        let survivingRunID = UUID()
+        let coalescedRunID = UUID()
+
+        registry.noteAcknowledgedAtDeadline(runID: coalescedRunID)
+        registry.absorbDeadlineAcknowledgement(
+            from: coalescedRunID,
+            into: survivingRunID
+        )
+
+        let batchDraft = AutomaticSyncDiagnosticDraft(
+            reason: .observerBatch(typeCodes: ["sleep_analysis", "steps"]),
+            runID: survivingRunID
+        )
+        XCTAssertTrue(registry.containsDeadlineAcknowledgement(runID: survivingRunID))
+        batchDraft.noteObserverAcknowledgedAtDeadline()
+        XCTAssertEqual(
+            batchDraft.record.observerCompletionLatencyBucket,
+            .deadline,
+            "A batch run must report the deadline when any coalesced callback hit it."
+        )
+        XCTAssertFalse(registry.containsDeadlineAcknowledgement(runID: coalescedRunID))
+    }
+
     func testDeadlineOutcomeReachesTheLaterEngineOwnedDraft() {
         let registry = ObserverAcknowledgementDeadlineRegistry()
         let acknowledgedRunID = UUID()

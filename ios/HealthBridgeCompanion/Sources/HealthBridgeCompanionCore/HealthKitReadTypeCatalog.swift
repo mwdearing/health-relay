@@ -300,10 +300,10 @@ public final class HealthKitBackgroundDeliveryCoordinator {
             registrationTypes[healthType.typeCode] = sampleType
             let observer = HKObserverQuery(sampleType: sampleType, predicate: nil) { [weak self] _, completionHandler, error in
                 let runID = UUID()
-                observerEntryHandler(healthType.typeCode, runID)
                 let completion = BackgroundObserverAcknowledgement(completionHandler)
                 let observerStartedAt = Date()
-                // Started here, on HealthKit's own callback thread: the deadline must hold even if
+                // Started first, on HealthKit's own callback thread: the deadline must not spend any
+                // of its window on logging, UserDefaults or lock latency, and it must hold even if
                 // the main actor is blocked and the admission cycle cannot start for a while.
                 let deadline = ObserverAcknowledgementDeadline(
                     acknowledgement: completion,
@@ -313,6 +313,7 @@ public final class HealthKitBackgroundDeliveryCoordinator {
                     startedAt: observerStartedAt,
                     deadline: BackgroundObserverAcknowledgementPolicy.observerAcknowledgementDeadline
                 )
+                observerEntryHandler(healthType.typeCode, runID)
                 guard error == nil else {
                     let completionLatency = Date().timeIntervalSince(observerStartedAt)
                     Task { @MainActor [weak self] in

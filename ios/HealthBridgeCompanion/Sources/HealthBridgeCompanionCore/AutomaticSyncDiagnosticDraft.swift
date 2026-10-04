@@ -282,9 +282,11 @@ public final class AutomaticSyncDiagnosticDraft {
     }
 
     /// The wake-up was acknowledged by the acknowledgement deadline instead of by a finished
-    /// admission cycle. This is the signature of a cycle that was too slow to answer in time.
+    /// admission cycle. This is the signature of a cycle that was too slow to answer in time. A
+    /// coalesced observer batch counts too: the merge drops one of the run identifiers, and the
+    /// surviving run still has to report that a wake-up in the batch hit the deadline.
     func noteObserverAcknowledgedAtDeadline() {
-        guard wakeSource == .healthKitObserver else { return }
+        guard wakeSource == .healthKitObserver || wakeSource == .observerRetry else { return }
         observerCompletionLatencyBucket = .deadline
     }
 

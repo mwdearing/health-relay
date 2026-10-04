@@ -14,13 +14,15 @@ final class AutomaticSyncRuntime {
     private var hasActivatedReadyWork = false
     private var foregroundOpportunityConsumed = false
     private var foregroundCatchUpTask: Task<Void, Never>?
-    private var lastBackgroundDeliveryRearmAt: Date?
+    /// Persists the re-arm timestamp so the debounce survives an app relaunch. Injectable for tests.
+    private let rearmStore: BackgroundSyncSettingsStore
     #if canImport(HealthKit)
     private let backgroundDeliveryCoordinator: HealthKitBackgroundDeliveryCoordinator
     #endif
 
     private lazy var engine = AutomaticSyncEngine(
         pendingStore: viewModel.automaticSyncSettingsStore,
+        deadlineRegistry: viewModel.observerDeadlineRegistry,
         processType: { @MainActor [weak viewModel] typeCode, pendingGenerations in
             guard let viewModel else { return .blocked }
             return await viewModel.processAutomaticSyncType(
@@ -46,8 +48,12 @@ final class AutomaticSyncRuntime {
         }
     )
 
-    init(viewModel: HealthBridgeCompanionViewModel) {
+    init(
+        viewModel: HealthBridgeCompanionViewModel,
+        rearmStore: BackgroundSyncSettingsStore = BackgroundSyncSettingsStore()
+    ) {
         self.viewModel = viewModel
+        self.rearmStore = rearmStore
         #if canImport(HealthKit)
         backgroundDeliveryCoordinator = HealthKitBackgroundDeliveryCoordinator(
             deadlineRegistry: viewModel.observerDeadlineRegistry
@@ -140,16 +146,17 @@ final class AutomaticSyncRuntime {
     /// HealthKit stops launching a backgrounded app for a while, and a missed acknowledgement can
     /// stop it outright. Re-arm the observed types on foreground so registrations survive a long gap.
     /// Debounced: at most one re-arm per foreground session and never more than once per 10 minutes.
+    /// The timestamp is persisted, so an app relaunch does not reset the window.
     func noteSceneBecameActive(now: Date = Date()) {
         guard isActivated else { return }
         #if canImport(HealthKit)
         guard HKHealthStore.isHealthDataAvailable() else { return }
         guard viewModel.backgroundSyncEnabled else { return }
         guard BackgroundDeliveryRearmPolicy.admitsRearm(
-            lastRearmAt: lastBackgroundDeliveryRearmAt,
+            lastRearmAt: rearmStore.lastBackgroundDeliveryRearmAt(),
             now: now
         ) else { return }
-        lastBackgroundDeliveryRearmAt = now
+        rearmStore.recordBackgroundDeliveryRearm(at: now)
         let healthTypes = viewModel.automaticSyncObserverHealthTypes()
         viewModel.noteBackgroundDeliveryRearmStarted(expectedTypeCount: healthTypes.count)
         backgroundDeliveryCoordinator.rearmBackgroundDelivery(

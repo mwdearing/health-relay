@@ -316,18 +316,35 @@ public final class ObserverAcknowledgementDeadlineRegistry: @unchecked Sendable 
         lock.lock()
         defer { lock.unlock() }
         guard !acknowledged.contains(runID) else { return }
-        acknowledged.insert(runID)
-        runIDs.append(runID)
-        while runIDs.count > capacity, let oldest = runIDs.first {
-            runIDs.removeFirst()
-            acknowledged.remove(oldest)
-        }
+        insert(runID)
     }
 
     public func containsDeadlineAcknowledgement(runID: UUID) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         return acknowledged.contains(runID)
+    }
+
+    /// Carries a coalesced wake-up's deadline acknowledgement onto the run that survives the merge.
+    /// Several observer callbacks can fold into one engine run; if any of them was answered at the
+    /// deadline, the surviving run's diagnostic must still say so.
+    public func absorbDeadlineAcknowledgement(from runID: UUID, into survivingRunID: UUID) {
+        guard runID != survivingRunID else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        guard acknowledged.contains(runID) else { return }
+        acknowledged.remove(runID)
+        if let index = runIDs.firstIndex(of: runID) { runIDs.remove(at: index) }
+        insert(survivingRunID)
+    }
+
+    private func insert(_ runID: UUID) {
+        acknowledged.insert(runID)
+        runIDs.append(runID)
+        while runIDs.count > capacity, let oldest = runIDs.first {
+            runIDs.removeFirst()
+            acknowledged.remove(oldest)
+        }
     }
 }
 

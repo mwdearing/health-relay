@@ -606,6 +606,67 @@ final class AutomaticSyncEngineContractTests: XCTestCase {
             try fixture.store.loadPendingObserverTypeCodeGenerations().isEmpty
         )
     }
+
+    /// Observer callbacks that arrive while a run is active coalesce into one trailing run, and the
+    /// merge drops one run identifier. A deadline acknowledgement recorded against the dropped
+    /// identifier must move to the surviving run so the batch diagnostic still reports it.
+    func testCoalescedObserverRunKeepsADeadlineAcknowledgement() async throws {
+        let fixture = try PendingGenerationFixture()
+        defer { fixture.remove() }
+        let deadlineRegistry = ObserverAcknowledgementDeadlineRegistry()
+        let entered = BoundedAsyncValueLatch<Void>()
+        let release = BoundedAsyncValueLatch<Void>()
+        let finished = BoundedAsyncValueLatch<Void>()
+        let survivingRunID = UUID()
+        let coalescedRunID = UUID()
+        var opportunityRunIDs: [UUID] = []
+        let engine = AutomaticSyncEngine(
+            pendingStore: fixture.store,
+            processType: { _, _ in .noPayload },
+            performOpportunity: { opportunity, _ in
+                opportunityRunIDs.append(opportunity.diagnosticRunID)
+                defer {
+                    if opportunityRunIDs.count == 2 { finished.resolve(()) }
+                }
+                if opportunity.diagnosticRunID == survivingRunID {
+                    entered.resolve(())
+                    _ = await release.wait(timeout: 1)
+                }
+            },
+            deadlineRegistry: deadlineRegistry
+        )
+
+        engine.requestRunWithoutWaiting(
+            reason: .observer(typeCode: "sleep_analysis"),
+            diagnosticRunID: survivingRunID
+        )
+        guard await entered.wait(timeout: 1) != nil else {
+            release.resolve(())
+            XCTFail("The first observer opportunity did not start.")
+            return
+        }
+
+        // A second wake-up arrives while the first run is active and only the deadline answered it.
+        deadlineRegistry.noteAcknowledgedAtDeadline(runID: coalescedRunID)
+        engine.requestRunWithoutWaiting(
+            reason: .observer(typeCode: "steps"),
+            diagnosticRunID: coalescedRunID
+        )
+        release.resolve(())
+        guard await finished.wait(timeout: 2) != nil else {
+            XCTFail("The coalesced observer opportunity did not run.")
+            return
+        }
+
+        XCTAssertEqual(opportunityRunIDs, [survivingRunID, survivingRunID])
+        XCTAssertTrue(
+            deadlineRegistry.containsDeadlineAcknowledgement(runID: survivingRunID),
+            "The surviving coalesced run must inherit the dropped run's deadline acknowledgement."
+        )
+        XCTAssertFalse(
+            deadlineRegistry.containsDeadlineAcknowledgement(runID: coalescedRunID)
+        )
+    }
 }
 
 private actor TypeCodeRecorder {

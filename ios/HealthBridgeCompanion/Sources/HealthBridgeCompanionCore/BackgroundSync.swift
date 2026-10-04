@@ -182,6 +182,9 @@ public final class AutomaticSyncEngine: @unchecked Sendable {
     private let processType: ProcessType
     private let performOpportunity: PerformOpportunity
     private let startOwner: StartOwner
+    /// Observer callbacks that coalesced into one run keep a single diagnostic, so a deadline
+    /// acknowledgement recorded against any of the merged callbacks must survive the merge.
+    private let deadlineRegistry: ObserverAcknowledgementDeadlineRegistry
     @MainActor private var activeTask: Task<Result<Void, Error>, Never>?
     @MainActor private var trailingOpportunity: Opportunity?
 
@@ -255,7 +258,8 @@ public final class AutomaticSyncEngine: @unchecked Sendable {
         pendingStore: BackgroundSyncSettingsStore,
         processType: @escaping ProcessType,
         performOpportunity: PerformOpportunity? = nil,
-        startOwner: StartOwner? = nil
+        startOwner: StartOwner? = nil,
+        deadlineRegistry: ObserverAcknowledgementDeadlineRegistry = ObserverAcknowledgementDeadlineRegistry()
     ) {
         self.pendingStore = pendingStore
         self.processType = processType
@@ -263,6 +267,7 @@ public final class AutomaticSyncEngine: @unchecked Sendable {
             _ = try await processPendingTypes()
         }
         self.startOwner = startOwner ?? { _ in {} }
+        self.deadlineRegistry = deadlineRegistry
     }
 
     @MainActor
@@ -337,7 +342,22 @@ public final class AutomaticSyncEngine: @unchecked Sendable {
         for opportunity: Opportunity
     ) -> (task: Task<Result<Void, Error>, Never>, ownsTask: Bool) {
         if let activeTask {
-            trailingOpportunity = trailingOpportunity?.coalescing(opportunity) ?? opportunity
+            if let trailingOpportunity {
+                let coalesced = trailingOpportunity.coalescing(opportunity)
+                // One of the two run identifiers disappears in the merge, and with it any deadline
+                // acknowledgement recorded against it. Carry that onto the surviving run so the
+                // batch diagnostic still reports the deadline.
+                let droppedRunID = coalesced.diagnosticRunID == trailingOpportunity.diagnosticRunID
+                    ? opportunity.diagnosticRunID
+                    : trailingOpportunity.diagnosticRunID
+                deadlineRegistry.absorbDeadlineAcknowledgement(
+                    from: droppedRunID,
+                    into: coalesced.diagnosticRunID
+                )
+                self.trailingOpportunity = coalesced
+            } else {
+                self.trailingOpportunity = opportunity
+            }
             return (activeTask, false)
         }
         trailingOpportunity = nil
@@ -1006,6 +1026,8 @@ public final class BackgroundSyncSettingsStore {
         static let lastTaskScheduleAttemptedAt = "healthBridge.bgTask.lastScheduleAttemptedAt"
         static let lastTaskScheduleStatus = "healthBridge.bgTask.lastScheduleStatus"
         static let lastTaskScheduleSummary = "healthBridge.bgTask.lastScheduleSummary"
+        static let lastBackgroundDeliveryRearmAt =
+            "healthBridge.backgroundDelivery.lastRearmAt"
         static let lastWakeEnteredAt = "healthBridge.backgroundWake.lastEnteredAt"
         static let lastWakeSource = "healthBridge.backgroundWake.lastSource"
         static let lastWakeSummary = "healthBridge.backgroundWake.lastSummary"
@@ -1370,6 +1392,30 @@ public final class BackgroundSyncSettingsStore {
     public func recordWakeEvent(at enteredAt: Date, source: String, summary: String) {
         wakeEventRecorder.record(at: enteredAt, source: source, summary: summary)
     }
+
+    /// When the foreground last re-armed HealthKit background delivery. Persisted so the debounce
+    /// survives an app relaunch instead of letting a quick restart re-arm on every foreground.
+    public func lastBackgroundDeliveryRearmAt() -> Date? {
+        guard let recorded = userDefaults.string(forKey: Key.lastBackgroundDeliveryRearmAt) else {
+            return nil
+        }
+        return Self.rearmDateFormatter.date(from: recorded)
+    }
+
+    public func recordBackgroundDeliveryRearm(at rearmAt: Date) {
+        userDefaults.set(
+            Self.rearmDateFormatter.string(from: rearmAt),
+            forKey: Key.lastBackgroundDeliveryRearmAt
+        )
+        _ = userDefaults.synchronize()
+    }
+
+    private static let rearmDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter
+    }()
 
     public func healthKitObserverEntryHandler() -> @Sendable (String, UUID) -> Void {
         let recorder = wakeEventRecorder
