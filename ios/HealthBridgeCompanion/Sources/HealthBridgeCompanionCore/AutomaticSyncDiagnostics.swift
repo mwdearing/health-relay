@@ -245,12 +245,10 @@ enum AutomaticSyncObserverEventLifecycle {
             }
         }
         let admission = await admissionHandler()
-        if !Task.isCancelled {
-            deadlineTask.cancel()
-            // Settling the deadline wait here means the recorded reason always matches the call
-            // that actually reached HealthKit: either the deadline won, or admission did.
-            await deadlineTask.value
-        }
+        deadlineTask.cancel()
+        // Settling the deadline wait here means the recorded reason always matches the call that
+        // actually reached HealthKit: either the deadline won, or admission did.
+        await deadlineTask.value
 
         let diagnostic: AutomaticSyncDiagnosticDraft?
         let completionLatency: TimeInterval
