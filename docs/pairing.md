@@ -221,6 +221,120 @@ The intake-context routes authenticate with their own tokens (prefix `hri_`), no
 with `/v1/batches` bearer credentials. A token is bound to one owner and one
 registered producer, so a producer must exist before it can be given a token.
 
+### Guided setup: `intake-setup`
+
+`receiver intake-setup` is the whole database half of intake setup in one safe
+command. It registers the producer, issues its intake token into a private file,
+and prints what is left. The registration step is the idempotent one; issuing a
+token is not, so the command as a whole is not repeatable:
+
+```bash
+uv run health-bridge receiver intake-setup \
+  --db .tmp/receiver.sqlite \
+  --owner-id <owner> \
+  --producer-id nutrition-app \
+  --writer-bundle-id dev.example.nutrition \
+  --producer-label "Nutrition app" \
+  --token-label phone \
+  --output-secret .private/intake-token.json \
+  --url http://127.0.0.1:8765
+```
+
+`--producer-label` names the producer, as `intake-register-producer --label`
+does, and `--token-label` names the issued token, as `intake-create-token
+--label` does. They are separate because a producer is often named for the app
+while its credential is named for the device that uploads context; without
+`--token-label` the producer label is reused.
+
+`--url` is validated before anything is written, so an endpoint the printed
+smoke command could never use is refused instead of leaving an activated
+credential behind a next step that cannot work.
+
+The token itself is never printed. The JSON on stdout carries the producer
+identity, the new `token_prefix`, the `secret_file` path, whether the producer was
+`registered` or `already-registered`, and `next_steps`:
+
+1. restart the receiver with `--enable-intake-context` (the intake routes answer
+   404 until that flag is passed);
+2. run `receiver intake-smoke --url <receiver URL> --token-file <the secret file>`;
+3. move the token from that file into the app that uploads intake context, then
+   delete the file, and never paste it into chat.
+
+The printed commands shell-quote every path and use the endpoint you passed, so
+they work for a path with spaces in it and for a receiver on a non-default host,
+port or TLS setup. Give `--url` the URL the receiver actually answers on; each
+`--start-option` is repeated verbatim in the printed restart command, so a
+receiver that needs `--host`, `--port` or `--service-config` keeps that
+configuration:
+
+```bash
+uv run health-bridge receiver intake-setup \
+  --db .tmp/receiver.sqlite \
+  --owner-id <owner> \
+  --producer-id nutrition-app \
+  --writer-bundle-id dev.example.nutrition \
+  --producer-label "Nutrition app" \
+  --token-label phone \
+  --output-secret .private/intake-token.json \
+  --url "http://<receiver-lan-host>:8765" \
+  --start-option=--service-config=.private/receiver.json
+```
+
+`--service-config` already carries the database, and `receiver start` refuses a
+`--db` alongside it, so the printed restart command leaves `--db` out whenever a
+service config is passed as a start option.
+
+Without `--url` the smoke command prints `<receiver URL>` and a line telling you
+to replace it, rather than assuming the default endpoint.
+
+An existing `--output-secret` file is refused and left untouched, because
+overwriting it would destroy a working credential that cannot be re-derived from
+the database (only a hash is stored). The destination is claimed with an
+exclusive create before anything else is written, so two runs started at the same
+time cannot both pass the check and then overwrite each other's secret; a claim
+whose permissions cannot be tightened to owner-only is removed again rather than
+left blocking the next run. To
+replace the file deliberately:
+
+```bash
+uv run health-bridge receiver intake-setup \
+  --db .tmp/receiver.sqlite \
+  --owner-id <owner> \
+  --producer-id nutrition-app \
+  --writer-bundle-id dev.example.nutrition \
+  --producer-label "Nutrition app" \
+  --output-secret .private/intake-token.json \
+  --rotate
+```
+
+`--rotate` issues a new token into the file and revokes the token the file held,
+so only one credential for the producer stays usable; the revoked prefix is
+reported as `revoked_token_prefix` and `rotated` is true only when a previous
+token was really retired. A rotation holds a mode-0600 lock file next to the
+secret, `<secret>.rotation.lock`, for as long as it runs, so two rotations
+cannot both read the same old prefix, each activate a replacement and retire only
+the token that was already there. A rotation that finds the lock held waits
+briefly, then refuses with exit code 1 and the lock path, so a lock left by a
+killed run is removed deliberately rather than assumed away.
+
+A rotation only runs when the existing file still names the token it held: a file
+that is not valid JSON, that has no usable `token_prefix`, or whose prefix names
+no token this receiver knows, is refused with exit code 1 and left untouched.
+Retiring a leaked credential is exactly when a silent gap is worst — the write
+would destroy the only record of a token nothing could revoke afterwards. Revoke
+it yourself with `receiver intake-revoke-token` after
+`receiver intake-list-tokens`, then re-run; `--rotate` on a path that does not
+exist yet just issues a fresh token.
+
+If the revocation itself fails — the store went away between activating the new
+token and retiring the old one — the command exits 1 instead of warning, because
+the rotation did not finish: the credential it was meant to retire is still
+usable. The new secret stays where it is, since it is valid and the only copy of
+that token, and the message names the prefix that still needs
+`receiver intake-revoke-token`.
+
+### The individual commands
+
 Register a producer once, with the bundle identifier that writes on its behalf:
 
 ```bash

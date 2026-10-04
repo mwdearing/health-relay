@@ -103,9 +103,66 @@ Trust boundaries:
 
 ### Enabling intake context
 
-Three steps: register the producer, issue its intake token, then start the
-receiver with the routes enabled. Order matters — a token can only be issued for
-a producer that is already registered.
+`health-bridge receiver intake-setup` does the database half of this in one
+command and prints the rest: it registers the producer, issues its
+intake token into a mode-0600 private file (never printed), and prints the
+restart, smoke-check and secret-handling steps in order. Order matters — a token
+can only be issued for a producer that is already registered. The registration
+step is the idempotent one; issuing a token is not, so the command as a whole is
+not repeatable.
+
+```bash
+health-bridge receiver intake-setup \
+  --db .tmp/device.sqlite \
+  --owner-id <owner> --producer-id nutrition-app \
+  --writer-bundle-id dev.example.nutrition \
+  --producer-label "Nutrition app" --token-label phone \
+  --output-secret .private/intake-token.json \
+  --url http://127.0.0.1:8765 \
+  --start-option=--request-timeout=30
+
+health-bridge receiver start --db .tmp/device.sqlite --enable-intake-context \
+  --request-timeout 30
+
+health-bridge receiver intake-smoke \
+  --url http://127.0.0.1:8765 \
+  --token-file .private/intake-token.json
+```
+
+The printed next steps quote their paths and carry the endpoint this run was
+given, so the commands work for a path with spaces and for a receiver that does
+not answer on the default host and port. `--url` supplies that endpoint and
+`--start-option` repeats a receiver start option in the printed restart
+command; without `--url` the smoke command prints `<receiver URL>` to fill in
+rather than assuming one.
+
+`intake-setup` refuses an existing `--output-secret` file and leaves it
+untouched, because overwriting it would destroy a working credential the caller
+cannot re-derive; the destination is claimed with an exclusive create, so two
+concurrent runs cannot both be told the path is free and then overwrite each
+other's secret. A claim whose permissions cannot be tightened is removed again,
+so a filesystem that cannot keep the file owner-only fails one run instead of
+blocking the next. `--rotate` is the explicit way to replace it, issuing a new
+token into the file and revoking the token the file held so only one credential
+for the producer stays usable; a rotation whose old token cannot be identified
+from the file is refused rather than leaving that credential usable. `rotated`
+is reported only when a previous token was really retired.
+
+A rotation holds a mode-0600 lock file next to the secret for its whole run, so
+two rotations cannot each activate a replacement and retire only the token that
+was already there. A failed revocation exits non-zero instead of warning: the
+replacement is active and written, so the rotation is incomplete until the
+prefix named in the message is revoked by hand. The new secret stays in place,
+because it is valid and the only copy of that token.
+
+`--producer-label` and `--token-label` name the producer and its credential
+separately, as the individual commands do; without `--token-label` the producer
+label is reused. `--url` is validated before anything is written, so an endpoint
+the printed smoke command could never use cannot leave an activated credential
+behind. A service config passed as a start option replaces `--db` in the printed
+restart command, because `receiver start` refuses both together.
+
+The same work by hand, one command per step:
 
 ```bash
 health-bridge receiver intake-register-producer \
