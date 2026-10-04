@@ -667,6 +667,79 @@ final class AutomaticSyncEngineContractTests: XCTestCase {
             deadlineRegistry.containsDeadlineAcknowledgement(runID: coalescedRunID)
         )
     }
+
+    /// An observer callback that coalesces into a run already scheduled for another reason leaves that
+    /// run's own wake source in place, so the deadline mark has to be reported on it anyway.
+    func testObserverCallbackCoalescingIntoScheduledRefreshKeepsDeadlineMark() async throws {
+        let fixture = try PendingGenerationFixture()
+        defer { fixture.remove() }
+        let deadlineRegistry = ObserverAcknowledgementDeadlineRegistry()
+        let entered = BoundedAsyncValueLatch<Void>()
+        let release = BoundedAsyncValueLatch<Void>()
+        let finished = BoundedAsyncValueLatch<Void>()
+        let scheduledRunID = UUID()
+        let observerRunID = UUID()
+        var opportunityReasons: [AutomaticSyncReason] = []
+        let engine = AutomaticSyncEngine(
+            pendingStore: fixture.store,
+            processType: { _, _ in .noPayload },
+            performOpportunity: { opportunity, _ in
+                opportunityReasons.append(opportunity.reason)
+                defer {
+                    if opportunityReasons.count == 2 { finished.resolve(()) }
+                }
+                if opportunityReasons.count == 1 {
+                    entered.resolve(())
+                    _ = await release.wait(timeout: 1)
+                }
+            },
+            deadlineRegistry: deadlineRegistry
+        )
+
+        engine.requestRunWithoutWaiting(
+            reason: .scheduledRefresh,
+            diagnosticRunID: scheduledRunID
+        )
+        guard await entered.wait(timeout: 1) != nil else {
+            release.resolve(())
+            XCTFail("The scheduled refresh opportunity did not start.")
+            return
+        }
+
+        // The observer wake-up is the newcomer, so the scheduled refresh run survives the merge.
+        deadlineRegistry.noteAcknowledgedAtDeadline(runID: observerRunID)
+        engine.requestRunWithoutWaiting(
+            reason: .observer(typeCode: "sleep_analysis"),
+            diagnosticRunID: observerRunID
+        )
+        release.resolve(())
+        guard await finished.wait(timeout: 2) != nil else {
+            XCTFail("The coalesced opportunity did not run.")
+            return
+        }
+
+        XCTAssertEqual(opportunityReasons, [.scheduledRefresh, .scheduledRefresh])
+        XCTAssertTrue(
+            deadlineRegistry.containsDeadlineAcknowledgement(runID: scheduledRunID),
+            "The surviving scheduled refresh run must inherit the observer run's deadline mark."
+        )
+        XCTAssertFalse(deadlineRegistry.containsDeadlineAcknowledgement(runID: observerRunID))
+
+        // The surviving run keeps its own wake source, and the deadline must still be reported.
+        let survivingDraft = AutomaticSyncDiagnosticDraft(
+            reason: .scheduledRefresh,
+            runID: scheduledRunID
+        )
+        survivingDraft.noteObserverAcknowledged()
+        if deadlineRegistry.containsDeadlineAcknowledgement(runID: survivingDraft.runID) {
+            survivingDraft.noteObserverAcknowledgedAtDeadline()
+        }
+        XCTAssertEqual(
+            survivingDraft.record.observerCompletionLatencyBucket,
+            .deadline,
+            "A coalesced wake-up that only the deadline answered must not be hidden by the surviving wake source."
+        )
+    }
 }
 
 private actor TypeCodeRecorder {

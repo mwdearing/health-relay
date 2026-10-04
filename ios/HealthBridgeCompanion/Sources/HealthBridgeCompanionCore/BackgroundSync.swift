@@ -1395,27 +1395,23 @@ public final class BackgroundSyncSettingsStore {
 
     /// When the foreground last re-armed HealthKit background delivery. Persisted so the debounce
     /// survives an app relaunch instead of letting a quick restart re-arm on every foreground.
+    /// Stored as seconds since the epoch: a shared date formatter would not be concurrency-safe.
     public func lastBackgroundDeliveryRearmAt() -> Date? {
-        guard let recorded = userDefaults.string(forKey: Key.lastBackgroundDeliveryRearmAt) else {
+        guard userDefaults.object(forKey: Key.lastBackgroundDeliveryRearmAt) != nil else {
             return nil
         }
-        return Self.rearmDateFormatter.date(from: recorded)
+        let seconds = userDefaults.double(forKey: Key.lastBackgroundDeliveryRearmAt)
+        guard seconds > 0 else { return nil }
+        return Date(timeIntervalSince1970: seconds)
     }
 
     public func recordBackgroundDeliveryRearm(at rearmAt: Date) {
         userDefaults.set(
-            Self.rearmDateFormatter.string(from: rearmAt),
+            rearmAt.timeIntervalSince1970,
             forKey: Key.lastBackgroundDeliveryRearmAt
         )
         _ = userDefaults.synchronize()
     }
-
-    private static let rearmDateFormatter: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        return formatter
-    }()
 
     public func healthKitObserverEntryHandler() -> @Sendable (String, UUID) -> Void {
         let recorder = wakeEventRecorder

@@ -14,6 +14,7 @@ public final class AutomaticSyncDiagnosticDraft {
     private var pendingSnapshot: AutomaticSyncPendingSnapshot = .empty
     private var runOutcome: AutomaticSyncDiagnosticRunOutcome = .interrupted
     private var observerCompletionLatencyBucket: AutomaticSyncObserverCompletionLatencyBucket
+    private var observerDeadlineAcknowledged = false
     private var failure: AutomaticSyncDiagnosticFailure?
     private var remainingPendingLaneCount = 0
     private var pendingTypeCodesForDeferredPersistence: [String]?
@@ -282,10 +283,14 @@ public final class AutomaticSyncDiagnosticDraft {
     }
 
     /// The wake-up was acknowledged by the acknowledgement deadline instead of by a finished
-    /// admission cycle. This is the signature of a cycle that was too slow to answer in time. A
-    /// coalesced observer batch counts too: the merge drops one of the run identifiers, and the
-    /// surviving run still has to report that a wake-up in the batch hit the deadline.
+    /// admission cycle. This is the signature of a cycle that was too slow to answer in time.
+    ///
+    /// Coalescing counts too: when an observer callback merges into a run that is already scheduled
+    /// for another reason, the surviving run keeps its own wake source and would otherwise hide that
+    /// a wake-up inside it only the deadline answered. The mark is therefore recorded on its own and
+    /// reported whatever the surviving wake source is.
     func noteObserverAcknowledgedAtDeadline() {
+        observerDeadlineAcknowledged = true
         guard wakeSource == .healthKitObserver || wakeSource == .observerRetry else { return }
         observerCompletionLatencyBucket = .deadline
     }
@@ -311,7 +316,11 @@ public final class AutomaticSyncDiagnosticDraft {
             oldestPendingLane: pendingSnapshot.oldestPendingLane,
             oldestPendingLaneAgeBucket: pendingSnapshot.oldestPendingLaneAgeBucket,
             runOutcome: runOutcome,
-            observerCompletionLatencyBucket: observerCompletionLatencyBucket,
+            // A deadline mark outranks the bucket even when the surviving run kept another wake
+            // source, so a coalesced wake-up that only the deadline answered stays visible.
+            observerCompletionLatencyBucket: observerDeadlineAcknowledged
+                ? .deadline
+                : observerCompletionLatencyBucket,
             failure: failure,
             remainingPendingLaneCount: remainingPendingLaneCount,
             causalChain: causalChain
