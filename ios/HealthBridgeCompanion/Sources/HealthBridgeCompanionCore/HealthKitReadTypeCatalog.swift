@@ -145,6 +145,17 @@ public final class BackgroundDeliveryGeneration: @unchecked Sendable {
         lock.unlock()
         return advanced
     }
+
+    /// Runs `submit` only while the generation is still `expected`, holding the lock across both the
+    /// check and the submit. `stop()` advances the generation under the same lock, so it cannot land
+    /// between the two: a re-arm either submits its enable before a stop, or not at all. Enabling
+    /// delivery after a stop would leave background delivery on with no observer query to answer it.
+    public func withCurrentGeneration<T>(_ expected: UInt64, _ submit: () throws -> T) rethrows -> T? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard value == expected else { return nil }
+        return try submit()
+    }
 }
 
 /// Foreground re-arm cadence. A re-arm is cheap but pointless in bursts, and the activity log is
@@ -411,10 +422,11 @@ public final class HealthKitBackgroundDeliveryCoordinator {
     /// a re-arm never races the registration path in `start()`.
     ///
     /// A `stop()` that lands while a disable is still outstanding advances the delivery generation,
-    /// and the enable is then skipped: enabling delivery for a type whose observer queries are gone
-    /// would leave background delivery on with nothing acknowledging it. A disable that HealthKit
-    /// reports as failed makes the re-arm a failure too, even when the enable succeeds, because the
-    /// intended reset did not happen. Results are reported through `registrationHandler`.
+    /// and the enable is then skipped: the generation check and the enable submit are atomic against
+    /// `stop()`, so enabling delivery for a type whose observer queries are gone cannot happen. A
+    /// disable that HealthKit reports as failed makes the re-arm a failure too, even when the enable
+    /// succeeds, because the intended reset did not happen. Results are reported through
+    /// `registrationHandler`.
     public func rearmBackgroundDelivery(
         healthTypes: [HealthBridgeHealthType] = HealthBridgeBackgroundSync.observedHealthTypes,
         registrationHandler: @escaping @MainActor (_ typeCode: String, _ succeeded: Bool) -> Void = { _, _ in }
@@ -430,17 +442,19 @@ public final class HealthKitBackgroundDeliveryCoordinator {
             }
             let typeCode = healthType.typeCode
             box.client.disableBackgroundDelivery(for: sampleType) { disabled, disableError in
-                // `stop()` (or a restart) may have landed while the disable was in flight.
-                guard generation.current() == expectedGeneration else { return }
-                box.client.enableBackgroundDelivery(
-                    for: sampleType,
-                    frequency: .immediate
-                ) { succeeded, error in
-                    let rearmed = succeeded && error == nil && disabled && disableError == nil
-                    Task { @MainActor [weak self] in
-                        guard let self,
-                              self.callbackGeneration == expectedGeneration else { return }
-                        reporter.report(typeCode: typeCode, succeeded: rearmed)
+                // Checking the generation and submitting the enable happen together under the
+                // generation lock, so a `stop()` cannot slip in between and leave delivery enabled.
+                generation.withCurrentGeneration(expectedGeneration) {
+                    box.client.enableBackgroundDelivery(
+                        for: sampleType,
+                        frequency: .immediate
+                    ) { succeeded, error in
+                        let rearmed = succeeded && error == nil && disabled && disableError == nil
+                        Task { @MainActor [weak self] in
+                            guard let self,
+                                  self.callbackGeneration == expectedGeneration else { return }
+                            reporter.report(typeCode: typeCode, succeeded: rearmed)
+                        }
                     }
                 }
             }

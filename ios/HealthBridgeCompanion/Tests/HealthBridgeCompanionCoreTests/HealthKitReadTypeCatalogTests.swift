@@ -61,6 +61,10 @@ private final class RecordingDeliveryClient: BackgroundDeliveryRegistrationClien
     /// Set by tests that need a disable to stay in flight.
     var defersDisableCompletion = false
 
+    /// Runs on the delivering thread just before the held disable completions are handed back, so a
+    /// test can land a `stop()` in the window the re-arm's enable submit would otherwise use.
+    var beforeDisableCompletionDelivery: (@Sendable () -> Void)?
+
     init(disableSucceeds: Bool = true, disableError: Error? = nil) {
         self.disableSucceeds = disableSucceeds
         self.disableError = disableError
@@ -84,6 +88,7 @@ private final class RecordingDeliveryClient: BackgroundDeliveryRegistrationClien
         let completions = pendingDisableCompletions
         pendingDisableCompletions.removeAll()
         lock.unlock()
+        beforeDisableCompletionDelivery?()
         completions.forEach { $0(disableSucceeds, disableError) }
     }
 
@@ -169,6 +174,81 @@ final class HealthKitBackgroundDeliveryRearmTests: XCTestCase {
             "A re-arm whose disable completes after stop() must not enable delivery for a type that no longer has an observer query."
         )
         XCTAssertEqual(resultCount, 0)
+    }
+
+    /// `stop()` landing between the disable completion arriving and the enable submit must not leave
+    /// delivery enabled: the generation check and the submit are one atomic step against `stop()`.
+    func testStopBetweenDisableCompletionAndEnableNeverEnablesDelivery() async {
+        let client = RecordingDeliveryClient()
+        client.defersDisableCompletion = true
+        let coordinator = HealthKitBackgroundDeliveryCoordinator(
+            deliveryClient: client,
+            isHealthDataAvailable: { true }
+        )
+        let deliveryIsParked = DispatchSemaphore(value: 0)
+        let resumeDelivery = DispatchSemaphore(value: 0)
+        var resultCount = 0
+
+        // The fake store parks HealthKit's disable completion on another thread, so the stop below
+        // lands in exactly the window the re-arm's enable submit would otherwise use.
+        client.beforeDisableCompletionDelivery = {
+            deliveryIsParked.signal()
+            _ = resumeDelivery.wait(timeout: .now() + 5)
+        }
+
+        coordinator.rearmBackgroundDelivery(healthTypes: [.steps]) { _, _ in resultCount += 1 }
+        XCTAssertTrue(client.hasOutstandingDisable)
+        XCTAssertEqual(client.calls, ["disable:\(stepCountIdentifier)"])
+
+        let delivery = Task.detached { client.completeOutstandingDisables() }
+        XCTAssertEqual(
+            deliveryIsParked.wait(timeout: .now() + 5),
+            .success,
+            "The fake store never reached the held disable completion."
+        )
+        coordinator.stop(healthTypes: [.steps])
+        resumeDelivery.signal()
+        await delivery.value
+        for _ in 0..<10 { await Task.yield() }
+
+        XCTAssertEqual(
+            client.calls,
+            ["disable:\(stepCountIdentifier)", "disable:\(stepCountIdentifier)"],
+            "The re-arm must not enable delivery for a type whose observer queries stop() already removed."
+        )
+        XCTAssertEqual(resultCount, 0)
+    }
+
+    /// The same invariant under a genuine race: whichever of the two runs first, the enable is
+    /// either submitted before the stop's disable or never submitted at all.
+    func testEnableIsAtomicWithStopAdmissionUnderConcurrentDelivery() async {
+        for _ in 0..<50 {
+            let client = RecordingDeliveryClient()
+            client.defersDisableCompletion = true
+            let coordinator = HealthKitBackgroundDeliveryCoordinator(
+                deliveryClient: client,
+                isHealthDataAvailable: { true }
+            )
+
+            coordinator.rearmBackgroundDelivery(healthTypes: [.steps]) { _, _ in }
+            let delivery = Task.detached { client.completeOutstandingDisables() }
+            coordinator.stop(healthTypes: [.steps])
+            await delivery.value
+
+            let calls = client.calls
+            let stopDisableIndex = calls.lastIndex { $0.hasPrefix("disable:") } ?? -1
+            for (index, call) in calls.enumerated() where call.hasPrefix("enable:") {
+                XCTAssertLessThan(
+                    index,
+                    stopDisableIndex,
+                    "An enable submitted after the stop's disable would leave delivery on with no observer."
+                )
+            }
+            XCTAssertLessThanOrEqual(
+                calls.filter { $0.hasPrefix("disable:") }.count,
+                2
+            )
+        }
     }
 
     func testFailedDisableMakesTheRearmFail() async {
