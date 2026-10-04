@@ -526,13 +526,16 @@ func testDeadlineRegistryEvictsOnlyMarksOlderThanTheRetentionWindow() {
     )
 
     // Move past the retention window and the mark is gone even though nothing else arrived.
-    let laterNow = now.addingTimeInterval(1_200)
+    // The mark is recorded at the original time and looked up after the clock has moved past retention.
+    let clock = RegistryTestClock(now)
     let expiredRegistry = ObserverAcknowledgementDeadlineRegistry(
         capacity: 512,
         retention: 600,
-        now: { laterNow }
+        now: { clock.current }
     )
     expiredRegistry.noteAcknowledgedAtDeadline(runID: staleRunID)
+    XCTAssertTrue(expiredRegistry.containsDeadlineAcknowledgement(runID: staleRunID))
+    clock.advance(by: 1_200)
     XCTAssertFalse(expiredRegistry.containsDeadlineAcknowledgement(runID: staleRunID))
     XCTAssertEqual(
         ObserverAcknowledgementDeadlineRegistry.defaultRetention,
@@ -1047,5 +1050,23 @@ func testDeadlineOutcomeReachesTheLaterEngineOwnedDraft() {
                 isDirectory: true
             )
             .appendingPathComponent("state.json")
+    }
+}
+
+/// A clock a test can move forward; the registry reads it through a @Sendable closure.
+private final class RegistryTestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Date
+
+    init(_ start: Date) { value = start }
+
+    var current: Date {
+        lock.lock(); defer { lock.unlock() }
+        return value
+    }
+
+    func advance(by seconds: TimeInterval) {
+        lock.lock(); defer { lock.unlock() }
+        value = value.addingTimeInterval(seconds)
     }
 }
