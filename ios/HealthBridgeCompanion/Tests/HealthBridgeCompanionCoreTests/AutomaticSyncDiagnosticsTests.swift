@@ -1,7 +1,66 @@
 import XCTest
 @testable import HealthBridgeCompanionCore
 
+/// Counts observer acknowledgements from whichever thread delivered them: the completion handler
+/// must not need the main actor.
+final class AcknowledgementCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var acknowledged = 0
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return acknowledged
+    }
+
+    func increment() {
+        lock.lock()
+        acknowledged += 1
+        lock.unlock()
+    }
+
+    /// Waits for the acknowledgement without touching the main actor.
+    func waitForCount(_ target: Int, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if count >= target { return true }
+            usleep(5_000)
+        }
+        return count >= target
+    }
+}
+
+/// Records the remaining time each deadline wait is given.
+final class DeadlineDelayRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [TimeInterval] = []
+
+    var delays: [TimeInterval] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recorded
+    }
+
+    func record(_ delay: TimeInterval) {
+        lock.lock()
+        recorded.append(delay)
+        lock.unlock()
+    }
+}
+
 final class AutomaticSyncDiagnosticsTests: XCTestCase {
+    /// A deadline whose wait returns as soon as it is scheduled, so tests exercise the deadline
+    /// path without waiting out the production 15 seconds.
+    private func immediateDeadline(
+        _ counter: AcknowledgementCounter,
+        onDeadline: @escaping @Sendable () -> Void = {}
+    ) -> ObserverAcknowledgementDeadline {
+        ObserverAcknowledgementDeadline(
+            acknowledgement: BackgroundObserverAcknowledgement { counter.increment() },
+            onDeadline: onDeadline,
+            sleep: { _ in await Task.yield() }
+        )
+    }
     @MainActor
     func testObserverAcknowledgesBeforeContinuationAndDiagnosticPersistence() async {
         let fileURL = temporaryFileURL()
@@ -15,11 +74,21 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
         var events: [String] = []
         var resumeContinuation: CheckedContinuation<Void, Never>?
         let startedAt = Date(timeIntervalSince1970: 1_788_000_000)
+        let deadline = ObserverAcknowledgementDeadline(
+            acknowledgement: BackgroundObserverAcknowledgement {
+                events.append("acknowledge")
+                XCTAssertFalse(
+                    FileManager.default.fileExists(atPath: fileURL.path),
+                    "Diagnostic persistence must not begin before HealthKit is acknowledged."
+                )
+            }
+        )
 
         let processing = Task { @MainActor in
             await AutomaticSyncObserverEventLifecycle.process(
                 startedAt: startedAt,
                 now: { startedAt.addingTimeInterval(0.25) },
+                deadline: deadline,
                 admissionHandler: {
                     events.append("admission")
                     return .continueProcessing
@@ -31,13 +100,6 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
                     }
                     events.append("continuation finished")
                     return draft
-                },
-                acknowledge: {
-                    events.append("acknowledge")
-                    XCTAssertFalse(
-                        FileManager.default.fileExists(atPath: fileURL.path),
-                        "Diagnostic persistence must not begin before HealthKit is acknowledged."
-                    )
                 },
                 persistDiagnostic: { completedDraft, latency in
                     events.append("persist")
@@ -65,8 +127,12 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
             reason: .observer(typeCode: HealthBridgeHealthType.sleepAnalysis.typeCode)
         )
         var events: [String] = []
+        let deadline = ObserverAcknowledgementDeadline(
+            acknowledgement: BackgroundObserverAcknowledgement { events.append("acknowledge") }
+        )
         await AutomaticSyncObserverEventLifecycle.process(
             startedAt: Date(timeIntervalSince1970: 1_788_000_000),
+            deadline: deadline,
             admissionHandler: {
                 events.append("admission")
                 return .complete(draft)
@@ -75,7 +141,6 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
                 events.append("continuation")
                 return nil
             },
-            acknowledge: { events.append("acknowledge") },
             persistDiagnostic: { _, _ in events.append("persist") }
         )
         XCTAssertEqual(events, ["admission", "acknowledge", "persist"])
@@ -87,8 +152,12 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
             reason: .observer(typeCode: HealthBridgeHealthType.sleepAnalysis.typeCode)
         )
         var events: [String] = []
+        let deadline = ObserverAcknowledgementDeadline(
+            acknowledgement: BackgroundObserverAcknowledgement { events.append("acknowledge") }
+        )
         await AutomaticSyncObserverEventLifecycle.process(
             startedAt: Date(timeIntervalSince1970: 1_788_000_000),
+            deadline: deadline,
             admissionHandler: {
                 events.append("admission")
                 return .complete(draft)
@@ -97,7 +166,6 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
                 events.append("continuation")
                 return nil
             },
-            acknowledge: { events.append("acknowledge") },
             persistDiagnostic: { _, _ in events.append("persist") }
         )
         XCTAssertEqual(events, ["admission", "acknowledge", "persist"])
@@ -109,8 +177,12 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
             reason: .observer(typeCode: HealthBridgeHealthType.steps.typeCode)
         )
         var events: [String] = []
+        let deadline = ObserverAcknowledgementDeadline(
+            acknowledgement: BackgroundObserverAcknowledgement { events.append("acknowledge") }
+        )
         await AutomaticSyncObserverEventLifecycle.process(
             startedAt: Date(timeIntervalSince1970: 1_788_000_000),
+            deadline: deadline,
             admissionHandler: {
                 events.append("admission")
                 return .continueProcessing
@@ -119,7 +191,6 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
                 events.append("acquisition")
                 return draft
             },
-            acknowledge: { events.append("acknowledge") },
             persistDiagnostic: { _, _ in events.append("persist") }
         )
 
@@ -167,6 +238,365 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
             corruptStore.record(makeRecord(remainingPendingLaneCount: 1))
         )
         XCTAssertEqual(corruptStore.history.count, 1)
+    }
+
+    @MainActor
+    func testHangingAdmissionStillAcknowledgesByTheDeadline() async {
+        let draft = AutomaticSyncDiagnosticDraft(
+            reason: .observer(typeCode: HealthBridgeHealthType.sleepAnalysis.typeCode)
+        )
+        draft.noteRunAccepted()
+        draft.noteCompletion(.completed)
+        let acknowledgementCount = AcknowledgementCounter()
+        var eventHandlerRan = false
+        var persistedBucket: AutomaticSyncObserverCompletionLatencyBucket?
+        var releaseAdmission: CheckedContinuation<Void, Never>?
+        let startedAt = Date(timeIntervalSince1970: 1_788_000_000)
+        let deadline = immediateDeadline(acknowledgementCount)
+        // Started from outside the main-actor hop, exactly as the HealthKit callback does.
+        deadline.start(startedAt: startedAt, deadline: 15)
+
+        let processing = Task { @MainActor in
+            await AutomaticSyncObserverEventLifecycle.process(
+                startedAt: startedAt,
+                now: { startedAt.addingTimeInterval(15) },
+                deadline: deadline,
+                admissionHandler: {
+                    await withCheckedContinuation { continuation in
+                        releaseAdmission = continuation
+                    }
+                    return .continueProcessing
+                },
+                eventHandler: {
+                    eventHandlerRan = true
+                    return draft
+                },
+                persistDiagnostic: { completedDraft, _ in
+                    persistedBucket = completedDraft.record.observerCompletionLatencyBucket
+                }
+            )
+        }
+
+        while releaseAdmission == nil || acknowledgementCount.count == 0 { await Task.yield() }
+        XCTAssertEqual(
+            acknowledgementCount.count,
+            1,
+            "A hung admission cycle must still acknowledge the HealthKit observer wake-up at the deadline."
+        )
+        XCTAssertFalse(eventHandlerRan)
+
+        releaseAdmission?.resume()
+        await processing.value
+        XCTAssertEqual(acknowledgementCount.count, 1)
+        XCTAssertTrue(eventHandlerRan)
+        XCTAssertEqual(
+            persistedBucket,
+            .deadline,
+            "The diagnostic must show that the deadline, not a finished admission, acknowledged HealthKit."
+        )
+    }
+
+    @MainActor
+    func testAdmissionFinishingAfterTheDeadlineAcknowledgesExactlyOnce() async {
+        let draft = AutomaticSyncDiagnosticDraft(
+            reason: .observer(typeCode: HealthBridgeHealthType.steps.typeCode)
+        )
+        draft.noteRunAccepted()
+        draft.noteCompletion(.completed)
+        let acknowledgementCount = AcknowledgementCounter()
+        var releaseAdmission: CheckedContinuation<Void, Never>?
+        let startedAt = Date(timeIntervalSince1970: 1_788_000_000)
+        let deadline = immediateDeadline(acknowledgementCount)
+        deadline.start(startedAt: startedAt, deadline: 15)
+
+        let processing = Task { @MainActor in
+            await AutomaticSyncObserverEventLifecycle.process(
+                startedAt: startedAt,
+                now: { startedAt.addingTimeInterval(16) },
+                deadline: deadline,
+                admissionHandler: {
+                    await withCheckedContinuation { continuation in
+                        releaseAdmission = continuation
+                    }
+                    return .complete(nil)
+                },
+                eventHandler: { draft },
+                persistDiagnostic: { _, _ in }
+            )
+        }
+
+        while releaseAdmission == nil || acknowledgementCount.count == 0 { await Task.yield() }
+        XCTAssertEqual(acknowledgementCount.count, 1)
+        releaseAdmission?.resume()
+        await processing.value
+
+        XCTAssertEqual(
+            acknowledgementCount.count,
+            1,
+            "HealthKit must be acknowledged exactly once even when admission finishes after the deadline."
+        )
+        XCTAssertTrue(deadline.acknowledgedAtDeadline)
+    }
+
+    /// The deadline timer must not depend on the main actor: HealthKit's own callback starts it, and
+    /// a blocked main actor must not be able to delay or skip the acknowledgement.
+    func testDeadlineAcknowledgesWhileTheMainActorIsBlocked() {
+        let acknowledgementCount = AcknowledgementCounter()
+        let mainActorIsBlocked = DispatchSemaphore(value: 0)
+        let releaseMainActor = DispatchSemaphore(value: 0)
+        let finished = expectation(description: "deadline check finished")
+        let deadline = ObserverAcknowledgementDeadline(
+            acknowledgement: BackgroundObserverAcknowledgement { acknowledgementCount.increment() },
+            sleep: { _ in await Task.yield() }
+        )
+
+        DispatchQueue.global().async {
+            DispatchQueue.main.async {
+                // Occupy the main actor until the deadline has had every chance to fire.
+                mainActorIsBlocked.signal()
+                releaseMainActor.wait()
+            }
+            mainActorIsBlocked.wait()
+            deadline.start(startedAt: Date(), deadline: 0.01)
+            let firedWhileBlocked = acknowledgementCount.waitForCount(1, timeout: 3)
+            releaseMainActor.signal()
+            XCTAssertTrue(
+                firedWhileBlocked,
+                "The acknowledgement deadline must fire without the main actor."
+            )
+            finished.fulfill()
+        }
+
+        wait(for: [finished], timeout: 10)
+        XCTAssertEqual(acknowledgementCount.count, 1)
+        XCTAssertTrue(deadline.acknowledgedAtDeadline)
+    }
+
+    /// Time spent before the timer starts counts against the deadline, so a backlogged main actor
+    /// cannot hand the wake-up a second full budget.
+    func testDeadlineSubtractsTimeAlreadyElapsedSinceTheObserverCallback() async {
+        let acknowledgementCount = AcknowledgementCounter()
+        let recordedDelays: DeadlineDelayRecorder = DeadlineDelayRecorder()
+        let startedAt = Date(timeIntervalSince1970: 1_788_000_000)
+        let deadline = ObserverAcknowledgementDeadline(
+            acknowledgement: BackgroundObserverAcknowledgement { acknowledgementCount.increment() },
+            sleep: { delay in recordedDelays.record(delay) },
+            now: { startedAt.addingTimeInterval(10) }
+        )
+
+        deadline.start(startedAt: startedAt, deadline: 15)
+
+        // The timer runs in a detached task, so wait for it rather than asserting straight after start().
+        // Bounded by time rather than by yields: a busy CI host may not schedule the detached task within a
+        // fixed number of yields.
+        for _ in 0..<500 where acknowledgementCount.count == 0 { try? await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertEqual(recordedDelays.delays.count, 1)
+        XCTAssertEqual(recordedDelays.delays.first ?? -1, 5, accuracy: 1)
+        XCTAssertEqual(acknowledgementCount.count, 1)
+    }
+
+    /// A wake-up whose budget is already spent is acknowledged at once rather than being slept on.
+    func testExpiredDeadlineAcknowledgesImmediatelyWithoutSleeping() {
+        let acknowledgementCount = AcknowledgementCounter()
+        let recordedDelays: DeadlineDelayRecorder = DeadlineDelayRecorder()
+        let startedAt = Date(timeIntervalSince1970: 1_788_000_000)
+        let deadline = ObserverAcknowledgementDeadline(
+            acknowledgement: BackgroundObserverAcknowledgement { acknowledgementCount.increment() },
+            sleep: { delay in recordedDelays.record(delay) },
+            now: { startedAt.addingTimeInterval(20) }
+        )
+
+        deadline.start(startedAt: startedAt, deadline: 15)
+
+        XCTAssertTrue(
+            recordedDelays.delays.isEmpty,
+            "An already-expired deadline must not start a wait that outlives the budget."
+        )
+        XCTAssertEqual(acknowledgementCount.count, 1)
+        XCTAssertTrue(deadline.acknowledgedAtDeadline)
+    }
+
+    /// The engine creates the run's draft after admission, so the deadline outcome must be recorded
+    /// by run identifier for that later draft to find.
+    /// The re-arm debounce must survive an app relaunch, otherwise a quick restart re-arms on every
+    /// foreground and floods the activity log.
+    func testRearmDebounceSurvivesRelaunchThroughTheSettingsStore() throws {
+        let suiteName = "healthBridgeTests.rearmDebounce.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let firstRearm = Date(timeIntervalSince1970: 1_788_000_000)
+
+        XCTAssertNil(
+            BackgroundSyncSettingsStore(userDefaults: defaults).lastBackgroundDeliveryRearmAt()
+        )
+        BackgroundSyncSettingsStore(userDefaults: defaults)
+            .recordBackgroundDeliveryRearm(at: firstRearm)
+
+        // A relaunch reads the persisted timestamp back through a brand new store instance.
+        let persisted = BackgroundSyncSettingsStore(userDefaults: defaults)
+            .lastBackgroundDeliveryRearmAt()
+        XCTAssertEqual(
+            persisted?.timeIntervalSince1970 ?? 0,
+            firstRearm.timeIntervalSince1970,
+            accuracy: 1
+        )
+        XCTAssertFalse(
+            BackgroundDeliveryRearmPolicy.admitsRearm(
+                lastRearmAt: persisted,
+                now: firstRearm.addingTimeInterval(60)
+            ),
+            "A relaunch inside the debounce window must not re-arm again."
+        )
+        XCTAssertTrue(
+            BackgroundDeliveryRearmPolicy.admitsRearm(
+                lastRearmAt: persisted,
+                now: firstRearm.addingTimeInterval(BackgroundDeliveryRearmPolicy.minimumInterval)
+            )
+        )
+    }
+
+    /// A wake-up answered at the deadline must stay visible when several observer callbacks coalesce
+    /// into one engine run, because the merge drops one of the run identifiers.
+    func testCoalescedObserverCallbacksKeepADeadlineAcknowledgement() {
+        let registry = ObserverAcknowledgementDeadlineRegistry()
+        let survivingRunID = UUID()
+        let coalescedRunID = UUID()
+
+        registry.noteAcknowledgedAtDeadline(runID: coalescedRunID)
+        registry.absorbDeadlineAcknowledgement(
+            from: coalescedRunID,
+            into: survivingRunID
+        )
+
+        let batchDraft = AutomaticSyncDiagnosticDraft(
+            reason: .observerBatch(typeCodes: ["sleep_analysis", "steps"]),
+            runID: survivingRunID
+        )
+        XCTAssertTrue(registry.containsDeadlineAcknowledgement(runID: survivingRunID))
+        batchDraft.noteObserverAcknowledgedAtDeadline()
+        XCTAssertEqual(
+            batchDraft.record.observerCompletionLatencyBucket,
+            .deadline,
+            "A batch run must report the deadline when any coalesced callback hit it."
+        )
+        XCTAssertFalse(registry.containsDeadlineAcknowledgement(runID: coalescedRunID))
+    }
+
+    /// A burst that hits every observed type at once must not evict a mark before its run looks it up:
+/// the old 64-entry bound was smaller than the number of eligible types.
+func testDeadlineRegistrySurvivesABurstLargerThanTheOldBound() {
+    let registry = ObserverAcknowledgementDeadlineRegistry()
+    let observedTypeCount = 200
+    registry.reserveCapacity(forObserverCount: observedTypeCount)
+    let runIDs = (0..<observedTypeCount).map { _ in UUID() }
+
+    for runID in runIDs {
+        registry.noteAcknowledgedAtDeadline(runID: runID)
+    }
+
+    let missing = runIDs.filter { !registry.containsDeadlineAcknowledgement(runID: $0) }
+    XCTAssertTrue(
+        missing.isEmpty,
+        "A burst covering every observed type must keep every deadline mark: \(missing.count) were evicted."
+    )
+    XCTAssertGreaterThan(
+        ObserverAcknowledgementDeadlineRegistry.defaultCapacity,
+        64,
+        "The default bound must exceed the number of eligible observed types."
+    )
+}
+
+/// Marks are only dropped once they are older than the retention window, not merely because newer
+/// ones arrived.
+func testDeadlineRegistryEvictsOnlyMarksOlderThanTheRetentionWindow() {
+    let now = Date(timeIntervalSince1970: 1_788_000_000)
+    let registry = ObserverAcknowledgementDeadlineRegistry(
+        capacity: 2,
+        retention: 600,
+        now: { now }
+    )
+    let staleRunID = UUID()
+    registry.noteAcknowledgedAtDeadline(runID: staleRunID)
+
+    // Two newer marks push the registry past its bound; the oldest mark is evicted first.
+    let keptRunIDs = [UUID(), UUID()]
+    for runID in keptRunIDs {
+        registry.noteAcknowledgedAtDeadline(runID: runID)
+    }
+    XCTAssertTrue(
+        keptRunIDs.allSatisfy { registry.containsDeadlineAcknowledgement(runID: $0) }
+    )
+
+    // Move past the retention window and the mark is gone even though nothing else arrived.
+    // The mark is recorded at the original time and looked up after the clock has moved past retention.
+    let clock = RegistryTestClock(now)
+    let expiredRegistry = ObserverAcknowledgementDeadlineRegistry(
+        capacity: 512,
+        retention: 600,
+        now: { clock.current }
+    )
+    expiredRegistry.noteAcknowledgedAtDeadline(runID: staleRunID)
+    XCTAssertTrue(expiredRegistry.containsDeadlineAcknowledgement(runID: staleRunID))
+    clock.advance(by: 1_200)
+    XCTAssertFalse(expiredRegistry.containsDeadlineAcknowledgement(runID: staleRunID))
+    XCTAssertEqual(
+        ObserverAcknowledgementDeadlineRegistry.defaultRetention,
+        3_600,
+        "The default retention must outlast a sync run."
+    )
+}
+
+func testDeadlineOutcomeReachesTheLaterEngineOwnedDraft() {
+        let registry = ObserverAcknowledgementDeadlineRegistry()
+        let acknowledgedRunID = UUID()
+        let ordinaryRunID = UUID()
+
+        registry.noteAcknowledgedAtDeadline(runID: acknowledgedRunID)
+
+        XCTAssertTrue(registry.containsDeadlineAcknowledgement(runID: acknowledgedRunID))
+        XCTAssertFalse(registry.containsDeadlineAcknowledgement(runID: ordinaryRunID))
+
+        let deadlineDraft = AutomaticSyncDiagnosticDraft(
+            reason: .observer(typeCode: HealthBridgeHealthType.sleepAnalysis.typeCode),
+            runID: acknowledgedRunID
+        )
+        deadlineDraft.noteObserverAcknowledgedAtDeadline()
+        let ordinaryDraft = AutomaticSyncDiagnosticDraft(
+            reason: .observer(typeCode: HealthBridgeHealthType.sleepAnalysis.typeCode),
+            runID: ordinaryRunID
+        )
+        ordinaryDraft.noteObserverAcknowledged()
+
+        XCTAssertEqual(deadlineDraft.record.observerCompletionLatencyBucket, .deadline)
+        XCTAssertEqual(ordinaryDraft.record.observerCompletionLatencyBucket, .notApplicable)
+    }
+
+    @MainActor
+    func testDiagnosticRecordsDeadlineAcknowledgement() {
+        let draft = AutomaticSyncDiagnosticDraft(
+            reason: .observer(typeCode: HealthBridgeHealthType.sleepAnalysis.typeCode)
+        )
+        draft.noteRunAccepted()
+        draft.noteCompletion(.completed)
+        draft.noteObserverAcknowledgedAtDeadline()
+        // A later latency write from the finished cycle must not hide the deadline acknowledgement.
+        draft.noteObserverCompletionLatency(0.2)
+
+        XCTAssertEqual(draft.record.observerCompletionLatencyBucket, .deadline)
+        XCTAssertFalse(draft.defersPersistenceUntilObserverAcknowledgement)
+        XCTAssertTrue(draft.record.latestLaneSummary.contains("observer completion=deadline"))
+    }
+
+    @MainActor
+    func testAcknowledgementDeadlineFitsInsideTheBackgroundWakeWindow() {
+        XCTAssertEqual(
+            BackgroundObserverAcknowledgementPolicy.observerAcknowledgementDeadline,
+            15
+        )
+        XCTAssertLessThanOrEqual(
+            BackgroundObserverAcknowledgementPolicy.observerAcknowledgementDeadline,
+            20
+        )
     }
 
     func testPendingLaneAgeUsesCoarseObservedDurationBuckets() {
@@ -622,5 +1052,23 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
                 isDirectory: true
             )
             .appendingPathComponent("state.json")
+    }
+}
+
+/// A clock a test can move forward; the registry reads it through a @Sendable closure.
+private final class RegistryTestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Date
+
+    init(_ start: Date) { value = start }
+
+    var current: Date {
+        lock.lock(); defer { lock.unlock() }
+        return value
+    }
+
+    func advance(by seconds: TimeInterval) {
+        lock.lock(); defer { lock.unlock() }
+        value = value.addingTimeInterval(seconds)
     }
 }

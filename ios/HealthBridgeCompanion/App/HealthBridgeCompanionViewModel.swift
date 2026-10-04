@@ -438,7 +438,12 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     private var automaticSyncActiveObserverCount = 0
     private var backgroundDeliveryRegistrationExpectedCount = 0
     private var backgroundDeliveryRegistrationResults: [String: Bool] = [:]
+    private var backgroundDeliveryRearmExpectedCount = 0
+    private var backgroundDeliveryRearmResults: [String: Bool] = [:]
     #endif
+    /// Observer wake-ups the acknowledgement deadline answered. Shared with the background delivery
+    /// coordinator so the engine-owned diagnostic can report the deadline outcome.
+    let observerDeadlineRegistry = ObserverAcknowledgementDeadlineRegistry()
 
     init(
         receiverClient: ReceiverClient = ReceiverClient(),
@@ -3018,6 +3023,42 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         }
     }
 
+    /// Foreground re-arm of the observed types. Tracked apart from the initial registration so the
+    /// activity log shows which path re-registered HealthKit background delivery.
+    func noteBackgroundDeliveryRearmStarted(expectedTypeCount: Int) {
+        guard terminalPayloadActionAdmissionIsOpen else { return }
+        guard backgroundSyncEnabled else { return }
+        backgroundDeliveryRearmExpectedCount = expectedTypeCount
+        backgroundDeliveryRearmResults = [:]
+        recordBackgroundSyncRegistrationIfAllowed(
+            at: Date(),
+            succeeded: false,
+            summary: "HealthKit background delivery re-arm requested for \(expectedTypeCount) type(s); active_observers=\(automaticSyncActiveObserverCount)."
+        )
+    }
+
+    func noteBackgroundDeliveryRearmResult(typeCode: String, succeeded: Bool) {
+        guard terminalPayloadActionAdmissionIsOpen else { return }
+        guard backgroundSyncEnabled else { return }
+        backgroundDeliveryRearmResults[typeCode] = succeeded
+        let completedCount = backgroundDeliveryRearmResults.count
+        let expectedCount = max(backgroundDeliveryRearmExpectedCount, completedCount)
+        let successCount = backgroundDeliveryRearmResults.values.filter { $0 }.count
+        let failureCount = completedCount - successCount
+        let allResponsesReceived = completedCount >= backgroundDeliveryRearmExpectedCount
+        let allSucceeded = allResponsesReceived && failureCount == 0
+        recordBackgroundSyncRegistrationIfAllowed(
+            at: Date(),
+            succeeded: allSucceeded,
+            summary: "HealthKit background delivery re-armed \(successCount)/\(expectedCount) type(s), \(failureCount) failed; active_observers=\(automaticSyncActiveObserverCount)."
+        )
+        if allResponsesReceived {
+            backgroundSyncStatus = allSucceeded
+                ? "Apple Health background delivery re-armed for \(successCount) type(s). iOS still decides timing."
+                : "Apple Health background delivery re-arm had \(failureCount) failure(s). Sync Now still works."
+        }
+    }
+
     #endif
 
     func persistCompletedObserverAutomaticSyncDiagnostic(
@@ -3460,7 +3501,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             reason: reason,
             runID: diagnosticRunID
         )
-        diagnostic.noteObserverAcknowledged()
+        noteObserverAcknowledgementOutcome(on: diagnostic)
         let expectedGeneration = settingsStore.receiverSettingsGenerationToken
         let taskID = UUID()
         let task = Task { @MainActor [weak self] in
@@ -3509,6 +3550,17 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 .latestLaneSummary ?? "No automatic-sync lane diagnostic recorded."
         }
         return diagnostic
+    }
+
+    /// The observer wake-up answers HealthKit before the engine creates this draft, so the deadline
+    /// outcome is looked up by run identifier: a wake-up answered at the deadline must not be
+    /// persisted as an ordinary acknowledgement.
+    private func noteObserverAcknowledgementOutcome(on diagnostic: AutomaticSyncDiagnosticDraft) {
+        if observerDeadlineRegistry.containsDeadlineAcknowledgement(runID: diagnostic.runID) {
+            diagnostic.noteObserverAcknowledgedAtDeadline()
+        } else {
+            diagnostic.noteObserverAcknowledged()
+        }
     }
 
     private func noteAutomaticSyncPending(
@@ -3780,6 +3832,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             }
         }
         noteAutomaticSyncPending(diagnostic, initial: false)
+        // The deadline can fire while the run is still in flight, so re-check before persisting.
+        if observerDeadlineRegistry.containsDeadlineAcknowledgement(runID: diagnostic.runID) {
+            diagnostic.noteObserverAcknowledgedAtDeadline()
+        }
         if !diagnostic.defersPersistenceUntilObserverAcknowledgement {
             if automaticSyncDiagnosticStore.recordFinal(diagnostic.record) {
                 automaticSyncLaneDiagnosticLine = automaticSyncDiagnosticStore.latestRecord?

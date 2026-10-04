@@ -14,8 +14,10 @@ final class AutomaticSyncRuntime {
     private var hasActivatedReadyWork = false
     private var foregroundOpportunityConsumed = false
     private var foregroundCatchUpTask: Task<Void, Never>?
+    /// Persists the re-arm timestamp so the debounce survives an app relaunch. Injectable for tests.
+    private let rearmStore: BackgroundSyncSettingsStore
     #if canImport(HealthKit)
-    private let backgroundDeliveryCoordinator = HealthKitBackgroundDeliveryCoordinator()
+    private let backgroundDeliveryCoordinator: HealthKitBackgroundDeliveryCoordinator
     #endif
 
     private lazy var engine = AutomaticSyncEngine(
@@ -42,11 +44,21 @@ final class AutomaticSyncRuntime {
         },
         startOwner: { @MainActor [weak self] cancelOwner in
             self?.beginOwner(cancelOwner: cancelOwner) ?? {}
-        }
+        },
+        deadlineRegistry: viewModel.observerDeadlineRegistry
     )
 
-    init(viewModel: HealthBridgeCompanionViewModel) {
+    init(
+        viewModel: HealthBridgeCompanionViewModel,
+        rearmStore: BackgroundSyncSettingsStore = BackgroundSyncSettingsStore()
+    ) {
         self.viewModel = viewModel
+        self.rearmStore = rearmStore
+        #if canImport(HealthKit)
+        backgroundDeliveryCoordinator = HealthKitBackgroundDeliveryCoordinator(
+            deadlineRegistry: viewModel.observerDeadlineRegistry
+        )
+        #endif
     }
 
     func prepareForBackgroundLaunch() {
@@ -129,6 +141,31 @@ final class AutomaticSyncRuntime {
     func noteSceneLeftActive() {
         foregroundOpportunityConsumed = false
         viewModel.noteSceneLeftActive()
+    }
+
+    /// HealthKit stops launching a backgrounded app for a while, and a missed acknowledgement can
+    /// stop it outright. Re-arm the observed types on foreground so registrations survive a long gap.
+    /// Debounced: at most one re-arm per foreground session and never more than once per 10 minutes.
+    /// The timestamp is persisted, so an app relaunch does not reset the window.
+    func noteSceneBecameActive(now: Date = Date()) {
+        guard isActivated else { return }
+        #if canImport(HealthKit)
+        guard HKHealthStore.isHealthDataAvailable() else { return }
+        guard viewModel.backgroundSyncEnabled else { return }
+        guard BackgroundDeliveryRearmPolicy.admitsRearm(
+            lastRearmAt: rearmStore.lastBackgroundDeliveryRearmAt(),
+            now: now
+        ) else { return }
+        rearmStore.recordBackgroundDeliveryRearm(at: now)
+        let healthTypes = viewModel.automaticSyncObserverHealthTypes()
+        viewModel.noteBackgroundDeliveryRearmStarted(expectedTypeCount: healthTypes.count)
+        backgroundDeliveryCoordinator.rearmBackgroundDelivery(
+            healthTypes: healthTypes,
+            registrationHandler: { [weak viewModel] typeCode, succeeded in
+                viewModel?.noteBackgroundDeliveryRearmResult(typeCode: typeCode, succeeded: succeeded)
+            }
+        )
+        #endif
     }
 
     func handleBackgroundRefresh() async {

@@ -89,6 +89,111 @@ public enum HealthKitReadTypeCatalog {
     }
 }
 
+/// Seam over `HKHealthStore`'s background delivery registration calls so re-arm order can be
+/// verified without a live HealthKit store.
+public protocol BackgroundDeliveryRegistrationClient: AnyObject {
+    func disableBackgroundDelivery(
+        for sampleType: HKSampleType,
+        completion: @escaping @Sendable (Bool, Error?) -> Void
+    )
+    func enableBackgroundDelivery(
+        for sampleType: HKSampleType,
+        frequency: HKUpdateFrequency,
+        completion: @escaping @Sendable (Bool, Error?) -> Void
+    )
+}
+
+extension HKHealthStore: BackgroundDeliveryRegistrationClient {
+    public func disableBackgroundDelivery(
+        for sampleType: HKSampleType,
+        completion: @escaping @Sendable (Bool, Error?) -> Void
+    ) {
+        disableBackgroundDelivery(for: sampleType, withCompletion: completion)
+    }
+
+    public func enableBackgroundDelivery(
+        for sampleType: HKSampleType,
+        frequency: HKUpdateFrequency,
+        completion: @escaping @Sendable (Bool, Error?) -> Void
+    ) {
+        enableBackgroundDelivery(for: sampleType, frequency: frequency, withCompletion: completion)
+    }
+}
+
+/// Monotonic counter for observer and delivery callbacks. Safe to read and advance from HealthKit's
+/// completion threads, which are not main-actor isolated. `stop()` advances it so a re-arm whose
+/// disable is still outstanding can tell that it is obsolete before enabling delivery again.
+public final class BackgroundDeliveryGeneration: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: UInt64
+
+    public init(value: UInt64 = 0) {
+        self.value = value
+    }
+
+    public func current() -> UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    @discardableResult
+    public func advance() -> UInt64 {
+        lock.lock()
+        value &+= 1
+        let advanced = value
+        lock.unlock()
+        return advanced
+    }
+
+    /// Runs `submit` only while the generation is still `expected`, holding the lock across both the
+    /// check and the submit. `stop()` advances the generation under the same lock, so it cannot land
+    /// between the two: a re-arm either submits its enable before a stop, or not at all. Enabling
+    /// delivery after a stop would leave background delivery on with no observer query to answer it.
+    public func withCurrentGeneration<T>(_ expected: UInt64, _ submit: () throws -> T) rethrows -> T? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard value == expected else { return nil }
+        return try submit()
+    }
+}
+
+/// Foreground re-arm cadence. A re-arm is cheap but pointless in bursts, and the activity log is
+/// easier to read when it shows one re-arm per return to the foreground.
+public enum BackgroundDeliveryRearmPolicy {
+    public static let minimumInterval: TimeInterval = 600
+
+    public static func admitsRearm(lastRearmAt: Date?, now: Date) -> Bool {
+        guard let lastRearmAt else { return true }
+        return now.timeIntervalSince(lastRearmAt) >= minimumInterval
+    }
+}
+
+/// Carries the delivery client across its own completion callbacks, which HealthKit does not
+/// guarantee to run on any particular isolation domain.
+private final class BackgroundDeliveryClientBox: @unchecked Sendable {
+    let client: any BackgroundDeliveryRegistrationClient
+
+    init(_ client: any BackgroundDeliveryRegistrationClient) {
+        self.client = client
+    }
+}
+
+/// Carries the re-arm reporting closure across the HealthKit completion callbacks, which are not
+/// main-actor isolated. Holding it in a main-actor type keeps the call itself on the main actor.
+@MainActor
+private final class BackgroundDeliveryRearmReporter {
+    private let handler: @MainActor (String, Bool) -> Void
+
+    init(handler: @escaping @MainActor (String, Bool) -> Void) {
+        self.handler = handler
+    }
+
+    func report(typeCode: String, succeeded: Bool) {
+        handler(typeCode, succeeded)
+    }
+}
+
 public enum HealthKitAuthorizationError: Error, Equatable {
     case healthDataUnavailable
     case emptyReadTypeSet
@@ -143,12 +248,26 @@ public final class HealthKitBackgroundDeliveryCoordinator {
     private let healthStore: HKHealthStore
     private var activeObserverQueries: [HKObserverQuery] = []
     private var callbackGeneration: UInt64 = 0
+    /// Mirror of `callbackGeneration` that HealthKit's completion threads can read. The two counters
+    /// advance together in `start()` and `stop()`, the only places that change either of them.
+    private let deliveryGeneration = BackgroundDeliveryGeneration()
     private var registrationTypes: [String: HKSampleType] = [:]
     private var registrationHandler: @MainActor (String, Bool) -> Void = { _, _ in }
     private var isCurrent: @MainActor () -> Bool = { false }
+    private let deliveryClient: BackgroundDeliveryRegistrationClient
+    private let isHealthDataAvailable: @Sendable () -> Bool
+    private let deadlineRegistry: ObserverAcknowledgementDeadlineRegistry
 
-    public init(healthStore: HKHealthStore = HKHealthStore()) {
+    public init(
+        healthStore: HKHealthStore = HKHealthStore(),
+        deliveryClient: (any BackgroundDeliveryRegistrationClient)? = nil,
+        isHealthDataAvailable: @escaping @Sendable () -> Bool = { HKHealthStore.isHealthDataAvailable() },
+        deadlineRegistry: ObserverAcknowledgementDeadlineRegistry = ObserverAcknowledgementDeadlineRegistry()
+    ) {
         self.healthStore = healthStore
+        self.deliveryClient = deliveryClient ?? healthStore
+        self.isHealthDataAvailable = isHealthDataAvailable
+        self.deadlineRegistry = deadlineRegistry
     }
 
     public var activeObserverCount: Int {
@@ -165,13 +284,18 @@ public final class HealthKitBackgroundDeliveryCoordinator {
         eventHandler: @escaping @MainActor (_ typeCode: String, _ runID: UUID) async -> AutomaticSyncDiagnosticDraft?
     ) {
         callbackGeneration &+= 1
+        deliveryGeneration.advance()
         let expectedCallbackGeneration = callbackGeneration
         self.registrationHandler = registrationHandler
         self.isCurrent = isCurrent
         registrationTypes = [:]
         stopActiveObserverQueries()
+        // One observer query per observed type, all of which can be woken at once, so the registry
+        // must hold a mark for every one of them before it evicts anything.
+        deadlineRegistry.reserveCapacity(forObserverCount: healthTypes.count)
         guard HKHealthStore.isHealthDataAvailable(), isCurrent() else { return }
 
+        let registry = deadlineRegistry
         for healthType in healthTypes {
             guard let sampleType = HealthKitReadTypeCatalog.observerSampleTypes(for: [healthType]).first else {
                 continue
@@ -179,19 +303,32 @@ public final class HealthKitBackgroundDeliveryCoordinator {
             registrationTypes[healthType.typeCode] = sampleType
             let observer = HKObserverQuery(sampleType: sampleType, predicate: nil) { [weak self] _, completionHandler, error in
                 let runID = UUID()
-                observerEntryHandler(healthType.typeCode, runID)
                 let completion = BackgroundObserverAcknowledgement(completionHandler)
                 let observerStartedAt = Date()
+                // Started first, on HealthKit's own callback thread: the deadline must not spend any
+                // of its window on logging, UserDefaults or lock latency, and it must hold even if
+                // the main actor is blocked and the admission cycle cannot start for a while.
+                let deadline = ObserverAcknowledgementDeadline(
+                    acknowledgement: completion,
+                    onDeadline: { registry.noteAcknowledgedAtDeadline(runID: runID) }
+                )
+                deadline.start(
+                    startedAt: observerStartedAt,
+                    deadline: BackgroundObserverAcknowledgementPolicy.observerAcknowledgementDeadline
+                )
+                observerEntryHandler(healthType.typeCode, runID)
                 guard error == nil else {
                     let completionLatency = Date().timeIntervalSince(observerStartedAt)
                     Task { @MainActor [weak self] in
-                        guard let self, self.callbackGeneration == expectedCallbackGeneration,
+                        guard let self,
+                              self.callbackGeneration == expectedCallbackGeneration,
                               self.isCurrent() else {
-                            completion.call()
+                            deadline.acknowledge()
                             return
                         }
                         await AutomaticSyncObserverEventLifecycle.process(
                             startedAt: observerStartedAt,
+                            deadline: deadline,
                             admissionHandler: {
                                 await observerAdmissionHandler(
                                     healthType.typeCode,
@@ -211,27 +348,27 @@ public final class HealthKitBackgroundDeliveryCoordinator {
                                 _ = await eventHandler(healthType.typeCode, runID)
                                 return diagnostic
                             },
-                            acknowledge: completion.call,
                             persistDiagnostic: observerCompletionHandler
                         )
                     }
                     return
                 }
                 Task { @MainActor [weak self] in
-                    guard let self, self.callbackGeneration == expectedCallbackGeneration,
+                    guard let self,
+                          self.callbackGeneration == expectedCallbackGeneration,
                           self.isCurrent() else {
-                        completion.call()
+                        deadline.acknowledge()
                         return
                     }
                     await AutomaticSyncObserverEventLifecycle.process(
                         startedAt: observerStartedAt,
+                        deadline: deadline,
                         admissionHandler: {
                             await observerAdmissionHandler(healthType.typeCode, runID)
                         },
                         eventHandler: {
                             await eventHandler(healthType.typeCode, runID)
                         },
-                        acknowledge: completion.call,
                         persistDiagnostic: observerCompletionHandler
                     )
                 }
@@ -267,9 +404,10 @@ public final class HealthKitBackgroundDeliveryCoordinator {
         healthTypes: [HealthBridgeHealthType] = HealthBridgeBackgroundSync.observedHealthTypes
     ) {
         callbackGeneration &+= 1
+        deliveryGeneration.advance()
         isCurrent = { false }
         registrationTypes = [:]
-        guard HKHealthStore.isHealthDataAvailable() else {
+        guard isHealthDataAvailable() else {
             activeObserverQueries.removeAll()
             return
         }
@@ -277,7 +415,53 @@ public final class HealthKitBackgroundDeliveryCoordinator {
 
         let sampleTypes = HealthKitReadTypeCatalog.observerSampleTypes(for: healthTypes)
         for sampleType in sampleTypes {
-            healthStore.disableBackgroundDelivery(for: sampleType) { _, _ in }
+            deliveryClient.disableBackgroundDelivery(for: sampleType) { _, _ in }
+        }
+    }
+
+    /// Re-registers background delivery for the observed types without touching the observer
+    /// queries: HealthKit can stop launching the app after long gaps or after missed
+    /// acknowledgements, and a disable/enable pair restores the registration. Each type is
+    /// re-armed in order, and its enable call only follows the disable completion for that type, so
+    /// a re-arm never races the registration path in `start()`.
+    ///
+    /// A `stop()` that lands while a disable is still outstanding advances the delivery generation,
+    /// and the enable is then skipped: the generation check and the enable submit are atomic against
+    /// `stop()`, so enabling delivery for a type whose observer queries are gone cannot happen. A
+    /// disable that HealthKit reports as failed makes the re-arm a failure too, even when the enable
+    /// succeeds, because the intended reset did not happen. Results are reported through
+    /// `registrationHandler`.
+    public func rearmBackgroundDelivery(
+        healthTypes: [HealthBridgeHealthType] = HealthBridgeBackgroundSync.observedHealthTypes,
+        registrationHandler: @escaping @MainActor (_ typeCode: String, _ succeeded: Bool) -> Void = { _, _ in }
+    ) {
+        guard isHealthDataAvailable() else { return }
+        let expectedGeneration = callbackGeneration
+        let generation = deliveryGeneration
+        let box = BackgroundDeliveryClientBox(deliveryClient)
+        let reporter = BackgroundDeliveryRearmReporter(handler: registrationHandler)
+        for healthType in healthTypes {
+            guard let sampleType = HealthKitReadTypeCatalog.observerSampleTypes(for: [healthType]).first else {
+                continue
+            }
+            let typeCode = healthType.typeCode
+            box.client.disableBackgroundDelivery(for: sampleType) { disabled, disableError in
+                // Checking the generation and submitting the enable happen together under the
+                // generation lock, so a `stop()` cannot slip in between and leave delivery enabled.
+                generation.withCurrentGeneration(expectedGeneration) {
+                    box.client.enableBackgroundDelivery(
+                        for: sampleType,
+                        frequency: .immediate
+                    ) { succeeded, error in
+                        let rearmed = succeeded && error == nil && disabled && disableError == nil
+                        Task { @MainActor [weak self] in
+                            guard let self,
+                                  self.callbackGeneration == expectedGeneration else { return }
+                            reporter.report(typeCode: typeCode, succeeded: rearmed)
+                        }
+                    }
+                }
+            }
         }
     }
 
