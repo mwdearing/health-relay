@@ -386,9 +386,10 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
 
         deadline.start(startedAt: startedAt, deadline: 15)
 
+        // The timer runs in a detached task, so wait for it rather than asserting straight after start().
+        for _ in 0..<1_000 where acknowledgementCount.count == 0 { await Task.yield() }
         XCTAssertEqual(recordedDelays.delays.count, 1)
         XCTAssertEqual(recordedDelays.delays.first ?? -1, 5, accuracy: 1)
-        for _ in 0..<100 where acknowledgementCount.count == 0 { await Task.yield() }
         XCTAssertEqual(acknowledgementCount.count, 1)
     }
 
