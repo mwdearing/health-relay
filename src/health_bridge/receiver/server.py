@@ -101,6 +101,11 @@ PAIRING_REDEEM_MAX_CLIENTS: Final = 1_024
 INTAKE_RATE_LIMIT_COUNT: Final = 60
 INTAKE_RATE_LIMIT_WINDOW_SECONDS: Final = 60.0
 INTAKE_RATE_LIMIT_MAX_TOKENS: Final = 1_024
+# Capabilities get their own, smaller budget, so a client polling them never spends the
+# batch budget its uploads need. The response is privately cacheable for five minutes.
+INTAKE_CAPABILITIES_RATE_LIMIT_COUNT: Final = 30
+INTAKE_CAPABILITIES_RATE_LIMIT_WINDOW_SECONDS: Final = 60.0
+INTAKE_CAPABILITIES_CACHE_CONTROL: Final = "private, max-age=300"
 JsonPayloadValue: TypeAlias = (
     bool | int | str | list[str] | list[dict[str, str | int | None]] | dict[str, str]
 )
@@ -239,7 +244,9 @@ class IntakeRateLimiter:
         return max(1, math.ceil(window[0] + self.window_seconds - now))
 
     def _drop_idle_keys(self, cutoff: float) -> None:
-        for key in [key for key, hits in self._hits.items() if hits[-1] <= cutoff]:
+        for key in [
+            key for key, hits in self._hits.items() if not hits or hits[-1] <= cutoff
+        ]:
             _ = self._hits.pop(key)
 
 
@@ -282,6 +289,10 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
             max_batches=intake_rate_limit_count,
             window_seconds=intake_rate_limit_window_seconds,
         )
+        self.intake_capabilities_limiter: IntakeRateLimiter = IntakeRateLimiter(
+            max_batches=INTAKE_CAPABILITIES_RATE_LIMIT_COUNT,
+            window_seconds=INTAKE_CAPABILITIES_RATE_LIMIT_WINDOW_SECONDS,
+        )
         super().__init__((host, port), ReceiverRequestHandler)
 
     @property
@@ -297,6 +308,21 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
                         window_seconds=self.intake_rate_limit_window_seconds,
                     )
                     self.intake_limiter = limiter
+        return limiter
+
+    @property
+    def capabilities_limiter(self) -> IntakeRateLimiter:
+        """The capabilities limiter, built on first use if __init__ was bypassed."""
+        limiter = getattr(self, "intake_capabilities_limiter", None)
+        if limiter is None:
+            with _INTAKE_LIMITER_LOCK:
+                limiter = getattr(self, "intake_capabilities_limiter", None)
+                if limiter is None:
+                    limiter = IntakeRateLimiter(
+                        max_batches=INTAKE_CAPABILITIES_RATE_LIMIT_COUNT,
+                        window_seconds=INTAKE_CAPABILITIES_RATE_LIMIT_WINDOW_SECONDS,
+                    )
+                    self.intake_capabilities_limiter = limiter
         return limiter
 
     @override
@@ -682,6 +708,8 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
     def _handle_intake_capabilities(self) -> None:
         if self._authorize_intake_request() is None:
             return
+        if not self._admit_intake_request(self.receiver_server.capabilities_limiter):
+            return
         self._send_json(
             HTTPStatus.OK,
             {
@@ -697,7 +725,29 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
                 },
                 "features": INTAKE_CONTEXT_FEATURES,
             },
+            # Vary: a cached copy is reusable only for the same credential.
+            extra_headers={
+                "Cache-Control": INTAKE_CAPABILITIES_CACHE_CONTROL,
+                "Vary": "Authorization",
+            },
         )
+
+    def _admit_intake_request(self, limiter: IntakeRateLimiter) -> bool:
+        """Count this request for its token; answer 429 and close when over."""
+        token = self._bearer_token()
+        token_prefix = "" if token is None else token[:INTAKE_TOKEN_PREFIX_LENGTH]
+        if limiter.allow(token_prefix):
+            return True
+        self.close_connection = True
+        self._send_json(
+            HTTPStatus.TOO_MANY_REQUESTS,
+            {"error": "rate_limited"},
+            extra_headers={
+                "Retry-After": str(limiter.retry_after_seconds(token_prefix)),
+                "Connection": "close",
+            },
+        )
+        return False
 
     def _handle_intake_batches(self) -> None:  # noqa: PLR0911
         principal = self._authorize_intake_request()
@@ -705,19 +755,7 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
             return
         # Counted per authenticated token, so a rejected request never spends
         # another producer's budget; the body is left unread on 429.
-        token = self._bearer_token()
-        limiter = self.receiver_server.limiter
-        token_prefix = "" if token is None else token[:INTAKE_TOKEN_PREFIX_LENGTH]
-        if not limiter.allow(token_prefix):
-            self.close_connection = True
-            self._send_json(
-                HTTPStatus.TOO_MANY_REQUESTS,
-                {"error": "rate_limited"},
-                extra_headers={
-                    "Retry-After": str(limiter.retry_after_seconds(token_prefix)),
-                    "Connection": "close",
-                },
-            )
+        if not self._admit_intake_request(self.receiver_server.limiter):
             return
         body = self._read_body(close_on_reject=True)
         if body is None:
