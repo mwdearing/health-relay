@@ -725,7 +725,11 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
                 },
                 "features": INTAKE_CONTEXT_FEATURES,
             },
-            extra_headers={"Cache-Control": INTAKE_CAPABILITIES_CACHE_CONTROL},
+            # Vary: a cached copy is reusable only for the same credential.
+            extra_headers={
+                "Cache-Control": INTAKE_CAPABILITIES_CACHE_CONTROL,
+                "Vary": "Authorization",
+            },
         )
 
     def _admit_intake_request(self, limiter: IntakeRateLimiter) -> bool:

@@ -182,10 +182,17 @@ the full command reference.
   `Retry-After` header giving whole seconds until a slot frees (at least 1) and
   closes the connection; the body is neither read nor stored. Failed
   authentication is not counted, so a bad token cannot spend a producer's
-  budget, and each token is limited independently of the others. The
-  capabilities GET is not limited. Limits are set per server with
-  `intake_rate_limit_count` and `intake_rate_limit_window_seconds`, and idle
-  token keys are dropped so memory stays bounded.
+  budget, and each token is limited independently of the others. Limits are
+  set per server with `intake_rate_limit_count` and
+  `intake_rate_limit_window_seconds`, and idle token keys are dropped so memory
+  stays bounded.
+- **Capabilities limit and caching.** `GET /v1/intake-context/capabilities`
+  has its own fixed budget of 30 requests per 60 seconds per intake token,
+  separate from the batch budget, so polling capabilities never blocks uploads.
+  Over it the receiver answers 429 `rate_limited` with `Retry-After`, the same
+  way as the batch route. A 200 carries `Cache-Control: private, max-age=300`
+  and `Vary: Authorization`: a client may reuse it for five minutes for the
+  same token, and shared caches must not store it.
 - **Operation outcomes.** Every fully identifiable operation in a batch gets
   one result: `accepted`, `duplicate`, `stale_revision`, `domain_conflict`,
   `projection_conflict`, `retryable_failure` or `permanent_failure`. If an

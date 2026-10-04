@@ -302,6 +302,8 @@ def test_capabilities_are_privately_cacheable(tmp_path: Path) -> None:
     assert status == 200
     # Authenticated: a shared cache must never store it ("private"), the client may.
     assert headers["Cache-Control"] == "private, max-age=300"
+    # A cached copy belongs to one credential: another token must not reuse it.
+    assert headers["Vary"] == "Authorization"
 
 
 def test_idle_key_cleanup_tolerates_an_empty_window() -> None:
