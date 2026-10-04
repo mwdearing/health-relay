@@ -438,6 +438,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     private var automaticSyncActiveObserverCount = 0
     private var backgroundDeliveryRegistrationExpectedCount = 0
     private var backgroundDeliveryRegistrationResults: [String: Bool] = [:]
+    private var backgroundDeliveryRearmExpectedCount = 0
+    private var backgroundDeliveryRearmResults: [String: Bool] = [:]
     #endif
 
     init(
@@ -3015,6 +3017,42 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             backgroundSyncStatus = "HealthKit background delivery registration has \(failureCount) failure(s). Sync Now still works."
         } else if allSucceeded {
             backgroundSyncStatus = "HealthKit background delivery registered for \(successCount) type(s). iOS still decides timing."
+        }
+    }
+
+    /// Foreground re-arm of the observed types. Tracked apart from the initial registration so the
+    /// activity log shows which path re-registered HealthKit background delivery.
+    func noteBackgroundDeliveryRearmStarted(expectedTypeCount: Int) {
+        guard terminalPayloadActionAdmissionIsOpen else { return }
+        guard backgroundSyncEnabled else { return }
+        backgroundDeliveryRearmExpectedCount = expectedTypeCount
+        backgroundDeliveryRearmResults = [:]
+        recordBackgroundSyncRegistrationIfAllowed(
+            at: Date(),
+            succeeded: false,
+            summary: "HealthKit background delivery re-arm requested for \(expectedTypeCount) type(s); active_observers=\(automaticSyncActiveObserverCount)."
+        )
+    }
+
+    func noteBackgroundDeliveryRearmResult(typeCode: String, succeeded: Bool) {
+        guard terminalPayloadActionAdmissionIsOpen else { return }
+        guard backgroundSyncEnabled else { return }
+        backgroundDeliveryRearmResults[typeCode] = succeeded
+        let completedCount = backgroundDeliveryRearmResults.count
+        let expectedCount = max(backgroundDeliveryRearmExpectedCount, completedCount)
+        let successCount = backgroundDeliveryRearmResults.values.filter { $0 }.count
+        let failureCount = completedCount - successCount
+        let allResponsesReceived = completedCount >= backgroundDeliveryRearmExpectedCount
+        let allSucceeded = allResponsesReceived && failureCount == 0
+        recordBackgroundSyncRegistrationIfAllowed(
+            at: Date(),
+            succeeded: allSucceeded,
+            summary: "HealthKit background delivery re-armed \(successCount)/\(expectedCount) type(s), \(failureCount) failed; active_observers=\(automaticSyncActiveObserverCount)."
+        )
+        if allResponsesReceived {
+            backgroundSyncStatus = allSucceeded
+                ? "Apple Health background delivery re-armed for \(successCount) type(s). iOS still decides timing."
+                : "Apple Health background delivery re-arm had \(failureCount) failure(s). Sync Now still works."
         }
     }
 

@@ -275,7 +275,17 @@ public final class AutomaticSyncDiagnosticDraft {
 
     func noteObserverCompletionLatency(_ latency: TimeInterval) {
         guard wakeSource == .healthKitObserver else { return }
+        // A deadline acknowledgement is the stronger signal: the wake-up was acknowledged while the
+        // cycle was still running, so a later latency write must not hide that.
+        guard observerCompletionLatencyBucket != .deadline else { return }
         observerCompletionLatencyBucket = .bucket(for: latency)
+    }
+
+    /// The wake-up was acknowledged by the acknowledgement deadline instead of by a finished
+    /// admission cycle. This is the signature of a cycle that was too slow to answer in time.
+    func noteObserverAcknowledgedAtDeadline() {
+        guard wakeSource == .healthKitObserver else { return }
+        observerCompletionLatencyBucket = .deadline
     }
 
     func noteObserverAcknowledged() {

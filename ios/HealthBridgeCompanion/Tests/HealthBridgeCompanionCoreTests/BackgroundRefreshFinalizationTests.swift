@@ -34,6 +34,34 @@ final class BackgroundRefreshFinalizationTests: XCTestCase {
         XCTAssertEqual(finalizations, 1)
     }
 
+    func testCancelledBackgroundRefreshWorkStillFinalizesExactlyOnce() async {
+        // Every BGAppRefreshTask path must complete the task exactly once, including a path whose
+        // work is cancelled by expiration before the work body finishes.
+        let owner = BackgroundRefreshFinalizationOwner()
+        let started = expectation(description: "work started")
+        let finalized = expectation(description: "finalized")
+        var finalizations = 0
+        let task = Task { @MainActor in
+            await owner.run {
+                started.fulfill()
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            } finalize: {
+                finalizations += 1
+                finalized.fulfill()
+            }
+        }
+        await XCTWaiter.fulfillment(of: [started], timeout: 2)
+        task.cancel()
+        await XCTWaiter.fulfillment(of: [finalized], timeout: 2)
+        await task.value
+        await owner.run {
+            XCTFail("cancelled background refresh work must not run twice")
+        } finalize: {
+            XCTFail("setTaskCompleted equivalent must not run twice")
+        }
+        XCTAssertEqual(finalizations, 1)
+    }
+
     func testRequestCoalescingConsumptionGenerationAndSubmissionFailure() throws {
         let requests = BackgroundRefreshRequestCoalescer()
         var submissions = 0

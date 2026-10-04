@@ -167,6 +167,7 @@ public enum AutomaticSyncPendingAgeBucket: String, Codable, Equatable, Sendable 
 public enum AutomaticSyncObserverCompletionLatencyBucket: String, Codable, Equatable, Sendable {
     case pending
     case notApplicable = "not_applicable"
+    case deadline
     case underOneSecond = "<1s"
     case oneToFiveSeconds = "1–5s"
     case fiveToThirtySeconds = "5–30s"
@@ -203,30 +204,66 @@ public enum AutomaticSyncObserverEventAdmission {
     case complete(AutomaticSyncDiagnosticDraft?)
 }
 
+/// Tracks which path delivered the HealthKit observer completion handler so the diagnostic can say
+/// whether admission finished in time or the acknowledgement deadline ended the wait.
+@MainActor
+final class AutomaticSyncObserverAcknowledgementOutcome {
+    /// True only when the deadline, not the finished admission, delivered the completion handler.
+    private(set) var acknowledgedAtDeadline = false
+}
+
 @MainActor
 enum AutomaticSyncObserverEventLifecycle {
+    /// Injected so tests can acknowledge instantly instead of waiting out the real deadline.
+    static func sleepBeforeAcknowledgementDeadline(_ deadline: TimeInterval) async {
+        let nanoseconds = UInt64(max(0, deadline) * 1_000_000_000)
+        try? await Task.sleep(nanoseconds: nanoseconds)
+    }
+
+    /// Acknowledges the wake-up as soon as admission finishes or the deadline passes, whichever
+    /// comes first, and keeps processing the cycle either way. HealthKit backoff, and eventually
+    /// permanent loss of background delivery for the app, is driven by missing this handler.
     static func process(
         startedAt: Date,
         now: () -> Date = Date.init,
+        acknowledgementDeadline: TimeInterval = BackgroundObserverAcknowledgementPolicy
+            .observerAcknowledgementDeadline,
+        sleep: @escaping @Sendable (TimeInterval) async -> Void = sleepBeforeAcknowledgementDeadline,
         admissionHandler: () async -> AutomaticSyncObserverEventAdmission,
         eventHandler: () async -> AutomaticSyncDiagnosticDraft?,
-        acknowledge: () -> Void,
+        acknowledge: @escaping () -> Void,
         persistDiagnostic: (AutomaticSyncDiagnosticDraft, TimeInterval) -> Void
     ) async {
+        let acknowledgement = BackgroundObserverAcknowledgement(acknowledge)
+        let outcome = AutomaticSyncObserverAcknowledgementOutcome()
+        let deadlineTask = Task { @MainActor in
+            await sleep(acknowledgementDeadline)
+            if acknowledgement.call() {
+                outcome.acknowledgedAtDeadline = true
+            }
+        }
         let admission = await admissionHandler()
+        deadlineTask.cancel()
+        // A deadline wait that had already resumed runs to its acknowledgement before this yield
+        // returns, so the recorded reason matches the call that actually reached HealthKit.
+        await Task.yield()
+
         let diagnostic: AutomaticSyncDiagnosticDraft?
         let completionLatency: TimeInterval
         switch admission {
         case .continueProcessing:
             completionLatency = now().timeIntervalSince(startedAt)
-            acknowledge()
+            acknowledgement.call()
             diagnostic = await eventHandler()
         case .complete(let admittedDiagnostic):
             diagnostic = admittedDiagnostic
             completionLatency = now().timeIntervalSince(startedAt)
-            acknowledge()
+            acknowledgement.call()
         }
         guard let diagnostic else { return }
+        if outcome.acknowledgedAtDeadline {
+            diagnostic.noteObserverAcknowledgedAtDeadline()
+        }
         persistDiagnostic(diagnostic, completionLatency)
     }
 }

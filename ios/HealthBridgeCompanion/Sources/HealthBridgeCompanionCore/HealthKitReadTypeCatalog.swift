@@ -89,6 +89,37 @@ public enum HealthKitReadTypeCatalog {
     }
 }
 
+/// Seam over `HKHealthStore`'s background delivery registration calls so re-arm order can be
+/// verified without a live HealthKit store.
+public protocol BackgroundDeliveryRegistrationClient: AnyObject {
+    func disableBackgroundDelivery(
+        for sampleType: HKSampleType,
+        completion: @escaping (Bool, Error?) -> Void
+    )
+    func enableBackgroundDelivery(
+        for sampleType: HKSampleType,
+        frequency: HKUpdateFrequency,
+        completion: @escaping (Bool, Error?) -> Void
+    )
+}
+
+extension HKHealthStore: BackgroundDeliveryRegistrationClient {
+    public func disableBackgroundDelivery(
+        for sampleType: HKSampleType,
+        completion: @escaping (Bool, Error?) -> Void
+    ) {
+        disableBackgroundDelivery(for: sampleType, withCompletion: completion)
+    }
+
+    public func enableBackgroundDelivery(
+        for sampleType: HKSampleType,
+        frequency: HKUpdateFrequency,
+        completion: @escaping (Bool, Error?) -> Void
+    ) {
+        enableBackgroundDelivery(for: sampleType, frequency: frequency, withCompletion: completion)
+    }
+}
+
 public enum HealthKitAuthorizationError: Error, Equatable {
     case healthDataUnavailable
     case emptyReadTypeSet
@@ -146,9 +177,17 @@ public final class HealthKitBackgroundDeliveryCoordinator {
     private var registrationTypes: [String: HKSampleType] = [:]
     private var registrationHandler: @MainActor (String, Bool) -> Void = { _, _ in }
     private var isCurrent: @MainActor () -> Bool = { false }
+    private let deliveryClient: BackgroundDeliveryRegistrationClient
+    private let isHealthDataAvailable: @Sendable () -> Bool
 
-    public init(healthStore: HKHealthStore = HKHealthStore()) {
+    public init(
+        healthStore: HKHealthStore = HKHealthStore(),
+        deliveryClient: (any BackgroundDeliveryRegistrationClient)? = nil,
+        isHealthDataAvailable: @escaping @Sendable () -> Bool = { HKHealthStore.isHealthDataAvailable() }
+    ) {
         self.healthStore = healthStore
+        self.deliveryClient = deliveryClient ?? healthStore
+        self.isHealthDataAvailable = isHealthDataAvailable
     }
 
     public var activeObserverCount: Int {
@@ -258,6 +297,38 @@ public final class HealthKitBackgroundDeliveryCoordinator {
                           self.callbackGeneration == expectedGeneration,
                           self.isCurrent() else { return }
                     self.registrationHandler(typeCode, enabled)
+                }
+            }
+        }
+    }
+
+    /// Re-registers background delivery for the observed types without touching the observer
+    /// queries: HealthKit can stop launching the app after long gaps or after missed
+    /// acknowledgements, and a disable/enable pair restores the registration. Each type's
+    /// re-enable result is reported through `registrationHandler` with the type code.
+    public func rearmBackgroundDelivery(
+        healthTypes: [HealthBridgeHealthType] = HealthBridgeBackgroundSync.observedHealthTypes,
+        registrationHandler: @escaping @MainActor (_ typeCode: String, _ succeeded: Bool) -> Void = { _, _ in }
+    ) {
+        guard isHealthDataAvailable() else { return }
+        let expectedGeneration = callbackGeneration
+        let deliveryClient = deliveryClient
+        for healthType in healthTypes {
+            guard let sampleType = HealthKitReadTypeCatalog.observerSampleTypes(for: [healthType]).first else {
+                continue
+            }
+            let typeCode = healthType.typeCode
+            deliveryClient.disableBackgroundDelivery(for: sampleType) { _, _ in
+                deliveryClient.enableBackgroundDelivery(
+                    for: sampleType,
+                    frequency: .immediate
+                ) { succeeded, error in
+                    let enabled = succeeded && error == nil
+                    Task { @MainActor [weak self] in
+                        guard let self,
+                              self.callbackGeneration == expectedGeneration else { return }
+                        registrationHandler(typeCode, enabled)
+                    }
                 }
             }
         }

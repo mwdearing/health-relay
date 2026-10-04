@@ -14,6 +14,8 @@ final class AutomaticSyncRuntime {
     private var hasActivatedReadyWork = false
     private var foregroundOpportunityConsumed = false
     private var foregroundCatchUpTask: Task<Void, Never>?
+    private var lastBackgroundDeliveryRearmAt: Date?
+    private let backgroundDeliveryRearmMinimumInterval: TimeInterval = 600
     #if canImport(HealthKit)
     private let backgroundDeliveryCoordinator = HealthKitBackgroundDeliveryCoordinator()
     #endif
@@ -129,6 +131,30 @@ final class AutomaticSyncRuntime {
     func noteSceneLeftActive() {
         foregroundOpportunityConsumed = false
         viewModel.noteSceneLeftActive()
+    }
+
+    /// HealthKit stops launching a backgrounded app for a while, and a missed acknowledgement can
+    /// stop it outright. Re-arm the observed types on foreground so registrations survive a long gap.
+    /// Debounced: at most one re-arm per foreground session and never more than once per 10 minutes.
+    func noteSceneBecameActive(now: Date = Date()) {
+        guard isActivated else { return }
+        #if canImport(HealthKit)
+        guard HKHealthStore.isHealthDataAvailable() else { return }
+        guard viewModel.backgroundSyncEnabled else { return }
+        if let lastRearmAt = lastBackgroundDeliveryRearmAt,
+           now.timeIntervalSince(lastRearmAt) < backgroundDeliveryRearmMinimumInterval {
+            return
+        }
+        lastBackgroundDeliveryRearmAt = now
+        let healthTypes = viewModel.automaticSyncObserverHealthTypes()
+        viewModel.noteBackgroundDeliveryRearmStarted(expectedTypeCount: healthTypes.count)
+        backgroundDeliveryCoordinator.rearmBackgroundDelivery(
+            healthTypes: healthTypes,
+            registrationHandler: { [weak viewModel] typeCode, succeeded in
+                viewModel?.noteBackgroundDeliveryRearmResult(typeCode: typeCode, succeeded: succeeded)
+            }
+        )
+        #endif
     }
 
     func handleBackgroundRefresh() async {

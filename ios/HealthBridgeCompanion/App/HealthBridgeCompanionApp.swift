@@ -40,6 +40,10 @@ final class HealthBridgeCompanionApplicationRuntime {
         automaticSyncRuntime.noteSceneLeftActive()
     }
 
+    func noteSceneBecameActive() {
+        automaticSyncRuntime.noteSceneBecameActive()
+    }
+
     func handleBackgroundRefresh() async {
         await automaticSyncRuntime.handleBackgroundRefresh()
     }
@@ -68,6 +72,7 @@ struct HealthBridgeCompanionApp: App {
                 .task {
                     await applicationRuntime.bootstrap()
                     guard !Task.isCancelled, scenePhase == .active else { return }
+                    applicationRuntime.noteSceneBecameActive()
                     applicationRuntime.runForegroundCatchUpIfNeeded()
                 }
                 .onChange(of: scenePhase) { _, newPhase in
@@ -75,6 +80,7 @@ struct HealthBridgeCompanionApp: App {
                         Task { @MainActor in
                             await applicationRuntime.bootstrap()
                             guard !Task.isCancelled, scenePhase == .active else { return }
+                            applicationRuntime.noteSceneBecameActive()
                             applicationRuntime.runForegroundCatchUpIfNeeded()
                         }
                     } else {

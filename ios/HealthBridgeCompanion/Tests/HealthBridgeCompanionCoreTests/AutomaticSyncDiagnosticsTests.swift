@@ -169,6 +169,118 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
         XCTAssertEqual(corruptStore.history.count, 1)
     }
 
+    @MainActor
+    func testHangingAdmissionStillAcknowledgesByTheDeadline() async {
+        let draft = AutomaticSyncDiagnosticDraft(
+            reason: .observer(typeCode: HealthBridgeHealthType.sleepAnalysis.typeCode)
+        )
+        draft.noteRunAccepted()
+        draft.noteCompletion(.completed)
+        var acknowledgementCount = 0
+        var eventHandlerRan = false
+        var releaseAdmission: CheckedContinuation<AutomaticSyncObserverEventAdmission, Never>?
+        let startedAt = Date(timeIntervalSince1970: 1_788_000_000)
+
+        let processing = Task { @MainActor in
+            await AutomaticSyncObserverEventLifecycle.process(
+                startedAt: startedAt,
+                now: { startedAt.addingTimeInterval(15) },
+                sleep: { _ in },
+                admissionHandler: {
+                    await withCheckedContinuation { continuation in
+                        releaseAdmission = continuation
+                    }
+                },
+                eventHandler: {
+                    eventHandlerRan = true
+                    return draft
+                },
+                acknowledge: { acknowledgementCount += 1 },
+                persistDiagnostic: { _, _ in }
+            )
+        }
+
+        while releaseAdmission == nil { await Task.yield() }
+        XCTAssertEqual(
+            acknowledgementCount,
+            1,
+            "A hung admission cycle must still acknowledge the HealthKit observer wake-up at the deadline."
+        )
+        XCTAssertFalse(eventHandlerRan)
+
+        releaseAdmission?.resume(.continueProcessing)
+        await processing.value
+        XCTAssertEqual(acknowledgementCount, 1)
+        XCTAssertTrue(eventHandlerRan)
+    }
+
+    @MainActor
+    func testAdmissionFinishingAfterTheDeadlineAcknowledgesExactlyOnce() async {
+        let draft = AutomaticSyncDiagnosticDraft(
+            reason: .observer(typeCode: HealthBridgeHealthType.steps.typeCode)
+        )
+        draft.noteRunAccepted()
+        draft.noteCompletion(.completed)
+        var acknowledgementCount = 0
+        var releaseAdmission: CheckedContinuation<AutomaticSyncObserverEventAdmission, Never>?
+        let startedAt = Date(timeIntervalSince1970: 1_788_000_000)
+
+        let processing = Task { @MainActor in
+            await AutomaticSyncObserverEventLifecycle.process(
+                startedAt: startedAt,
+                now: { startedAt.addingTimeInterval(16) },
+                sleep: { _ in },
+                admissionHandler: {
+                    await withCheckedContinuation { continuation in
+                        releaseAdmission = continuation
+                    }
+                },
+                eventHandler: { draft },
+                acknowledge: { acknowledgementCount += 1 },
+                persistDiagnostic: { _, _ in }
+            )
+        }
+
+        while releaseAdmission == nil { await Task.yield() }
+        XCTAssertEqual(acknowledgementCount, 1)
+        releaseAdmission?.resume(.complete(nil))
+        await processing.value
+
+        XCTAssertEqual(
+            acknowledgementCount,
+            1,
+            "HealthKit must be acknowledged exactly once even when admission finishes after the deadline."
+        )
+    }
+
+    @MainActor
+    func testDiagnosticRecordsDeadlineAcknowledgement() {
+        let draft = AutomaticSyncDiagnosticDraft(
+            reason: .observer(typeCode: HealthBridgeHealthType.sleepAnalysis.typeCode)
+        )
+        draft.noteRunAccepted()
+        draft.noteCompletion(.completed)
+        draft.noteObserverAcknowledgedAtDeadline()
+        // A later latency write from the finished cycle must not hide the deadline acknowledgement.
+        draft.noteObserverCompletionLatency(0.2)
+
+        XCTAssertEqual(draft.record.observerCompletionLatencyBucket, .deadline)
+        XCTAssertFalse(draft.defersPersistenceUntilObserverAcknowledgement)
+        XCTAssertTrue(draft.record.latestLaneSummary.contains("observer completion=deadline"))
+    }
+
+    @MainActor
+    func testAcknowledgementDeadlineFitsInsideTheBackgroundWakeWindow() {
+        XCTAssertEqual(
+            BackgroundObserverAcknowledgementPolicy.observerAcknowledgementDeadline,
+            15
+        )
+        XCTAssertLessThanOrEqual(
+            BackgroundObserverAcknowledgementPolicy.observerAcknowledgementDeadline,
+            20
+        )
+    }
+
     func testPendingLaneAgeUsesCoarseObservedDurationBuckets() {
         let fileURL = temporaryFileURL()
         defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
