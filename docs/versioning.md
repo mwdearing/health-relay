@@ -22,6 +22,13 @@ healthrelay-receiver-<YYYY.MM.DD>
 
 - The tag is created at a merge commit and is never moved or reused for a different commit.
 - The release is **not** marked **Latest**. **Latest** stays the stable app release, chosen through the approval-gated `Promote IPA release` workflow.
+- Publish it with an explicit `--latest=false`; GitHub otherwise marks a new non-prerelease Latest automatically, which would move the README's `/releases/latest` download link off the stable app:
+
+  ```bash
+  gh release create healthrelay-receiver-<YYYY.MM.DD> --repo mwdearing/health-relay \
+    --target <merge commit> --title "HealthRelay receiver <YYYY.MM.DD>" \
+    --notes-file .github/release/notes-healthrelay-receiver-<YYYY.MM.DD>.md --latest=false
+  ```
 - The release is not a pre-release; it carries no beta framing.
 - The package version in `pyproject.toml` does not change. Helper manifests must carry the release tag `receiver-v<version>` and are validated against the receiver version (`src/health_bridge/mailbox/helper_lifecycle.py`, `cli_mailbox_helper.py`), so a version bump would make Mailbox helper installs require a notarized helper release that does not exist. The tag identifies the commit instead.
 - `receiver-v*` and `ios-v*` tags are never pushed from this fork, so `healthrelay-receiver-*` names a receiver release without matching any workflow tag trigger.

@@ -40,6 +40,36 @@ def tag_globs(text: str) -> list[str]:
     return globs
 
 
+def push_reaches_any_tag(text: str) -> bool:
+    """True when a `push` trigger fires for tag pushes without a positive `tags` filter.
+
+    A push workflow runs for every tag when it has no `branches`/`tags` filter, and
+    `tags-ignore` matches every tag it does not exclude, so both reach the tag.
+    """
+    if re.search(r"^on:[ \t]*(push\b|\[[^\]]*\bpush\b)", text, re.MULTILINE):
+        return True
+    match = re.search(
+        r"^(?P<indent>[ \t]+)push:[ \t]*(?P<rest>.*)\n", text, re.MULTILINE
+    )
+    if match is None:
+        return False
+    rest = match.group("rest").strip()
+    if rest and rest != "{}":
+        # Inline flow mapping such as `push: {branches: [main]}`.
+        keys = set(re.findall(r"([A-Za-z-]+)\s*:", rest))
+    else:
+        indent = len(match.group("indent"))
+        body: list[str] = []
+        for line in text[match.end() :].splitlines():
+            if line.strip() and len(line) - len(line.lstrip()) <= indent:
+                break
+            body.append(line)
+        keys = {line.strip().split(":", 1)[0] for line in body if line.strip()}
+    if "tags-ignore" in keys:
+        return True
+    return not ({"tags", "branches", "branches-ignore"} & keys)
+
+
 def test_no_workflow_tag_trigger_matches_the_receiver_release_tag() -> None:
     workflows = sorted(WORKFLOWS.glob("*.y*ml"))
     assert workflows, "no workflows found; the tag filter parser must stay honest"
@@ -95,3 +125,23 @@ def test_versioning_documents_the_scheme_without_a_version_bump() -> None:
 
     init = (ROOT / "src/health_bridge/__init__.py").read_text(encoding="utf-8")
     assert f'__version__: Final = "{PACKAGE_VERSION}"' in init
+
+
+def test_no_workflow_push_trigger_reaches_tags_without_a_filter() -> None:
+    offenders = sorted(
+        path.name
+        for path in WORKFLOWS.glob("*.y*ml")
+        if push_reaches_any_tag(path.read_text(encoding="utf-8"))
+    )
+    assert not offenders, f"push triggers that would run for {TAG}: {offenders}"
+
+
+def test_push_trigger_detection_is_not_vacuous() -> None:
+    assert push_reaches_any_tag("on: push\njobs: {}\n")
+    assert push_reaches_any_tag("on: [push, pull_request]\n")
+    assert push_reaches_any_tag("on:\n  push:\n  pull_request:\n")
+    assert push_reaches_any_tag("on:\n  push:\n    tags-ignore: ['v*']\n")
+    assert push_reaches_any_tag("on:\n  push:\n    paths: ['src/**']\n")
+    assert not push_reaches_any_tag("on:\n  push:\n    branches: [main]\n")
+    assert not push_reaches_any_tag("on:\n  pull_request:\n")
+    assert not push_reaches_any_tag("on:\n  push: {branches: [main]}\n")
