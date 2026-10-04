@@ -377,18 +377,40 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
     func testDeadlineSubtractsTimeAlreadyElapsedSinceTheObserverCallback() async {
         let acknowledgementCount = AcknowledgementCounter()
         let recordedDelays: DeadlineDelayRecorder = DeadlineDelayRecorder()
+        let startedAt = Date(timeIntervalSince1970: 1_788_000_000)
         let deadline = ObserverAcknowledgementDeadline(
             acknowledgement: BackgroundObserverAcknowledgement { acknowledgementCount.increment() },
             sleep: { delay in recordedDelays.record(delay) },
-            now: { Date(timeIntervalSince1970: 1_788_000_060) }
+            now: { startedAt.addingTimeInterval(10) }
         )
 
-        deadline.start(startedAt: Date(timeIntervalSince1970: 1_788_000_000), deadline: 15)
+        deadline.start(startedAt: startedAt, deadline: 15)
 
         XCTAssertEqual(recordedDelays.delays.count, 1)
         XCTAssertEqual(recordedDelays.delays.first ?? -1, 5, accuracy: 1)
         for _ in 0..<100 where acknowledgementCount.count == 0 { await Task.yield() }
         XCTAssertEqual(acknowledgementCount.count, 1)
+    }
+
+    /// A wake-up whose budget is already spent is acknowledged at once rather than being slept on.
+    func testExpiredDeadlineAcknowledgesImmediatelyWithoutSleeping() {
+        let acknowledgementCount = AcknowledgementCounter()
+        let recordedDelays: DeadlineDelayRecorder = DeadlineDelayRecorder()
+        let startedAt = Date(timeIntervalSince1970: 1_788_000_000)
+        let deadline = ObserverAcknowledgementDeadline(
+            acknowledgement: BackgroundObserverAcknowledgement { acknowledgementCount.increment() },
+            sleep: { delay in recordedDelays.record(delay) },
+            now: { startedAt.addingTimeInterval(20) }
+        )
+
+        deadline.start(startedAt: startedAt, deadline: 15)
+
+        XCTAssertTrue(
+            recordedDelays.delays.isEmpty,
+            "An already-expired deadline must not start a wait that outlives the budget."
+        )
+        XCTAssertEqual(acknowledgementCount.count, 1)
+        XCTAssertTrue(deadline.acknowledgedAtDeadline)
     }
 
     /// The engine creates the run's draft after admission, so the deadline outcome must be recorded

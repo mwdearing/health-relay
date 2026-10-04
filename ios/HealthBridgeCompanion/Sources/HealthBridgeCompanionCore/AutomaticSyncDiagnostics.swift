@@ -242,8 +242,15 @@ public final class ObserverAcknowledgementDeadline: @unchecked Sendable {
 
     /// Starts the deadline off the main actor. Safe to call before, during, or after the main-actor
     /// hop that runs the admission cycle; only the first call starts a timer.
+    ///
+    /// A wake-up whose budget is already spent is acknowledged immediately instead of being put to
+    /// sleep: waiting out a deadline that has passed is exactly the miss this guards against.
     public func start(startedAt: Date, deadline: TimeInterval) {
         let remaining = max(0, deadline - now().timeIntervalSince(startedAt))
+        guard remaining > 0 else {
+            fire()
+            return
+        }
         let timer = Task.detached(priority: .high) { [weak self] in
             guard let self else { return }
             await self.sleep(remaining)
