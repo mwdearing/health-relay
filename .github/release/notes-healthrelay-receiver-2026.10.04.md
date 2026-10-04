@@ -13,7 +13,7 @@ The tag names one immutable commit. It is not marked **Latest** (**Latest** stay
 
 ## What this receiver adds that matters to plugin users
 
-- A read-only MCP tool, `get_intake_evidence_v1`, that answers one question per intake component: is the HealthKit sample the producer claims stored here, and is it the right kind of sample from the right writer. It reports `verified`, `pending`, `unlinked` or `mismatch` per component link, with identifiers and metadata only, no sample values ([reference](https://github.com/mwdearing/health-relay/blob/healthrelay-receiver-2026.10.04/docs/reference/intake-evidence.md)). The same page is available in a terminal as `health-bridge query intake-evidence`.
+- A read-only MCP tool, `get_intake_evidence_v1`, that answers one question per intake component: is the HealthKit sample the producer claims stored here, and is it the right kind of sample from the right writer. It reports `verified`, `pending`, `unlinked` or `mismatch` per component link, with identifiers, metadata and the producer-supplied component amount and unit, never HealthKit sample values ([reference](https://github.com/mwdearing/health-relay/blob/healthrelay-receiver-2026.10.04/docs/reference/intake-evidence.md)). The same page is available in a terminal as `health-bridge query intake-evidence`.
 - Intake-context routes for producers that push intake context. They are **off by default**; start the receiver with `--enable-intake-context` to serve them. While off, both paths answer 404 like any unknown path, and each CLI start reports whether they are enabled.
 - A guided intake-setup command, `health-bridge receiver intake-setup`, that does the whole database half of intake setup in one safe step: it registers the producer, issues its intake token into a mode-0600 private file that is never printed, and prints the restart, smoke-check and secret-handling steps in order. Registration is idempotent; issuing a token is not, so the command as a whole is not repeatable ([guide](https://github.com/mwdearing/health-relay/blob/healthrelay-receiver-2026.10.04/docs/pairing.md)).
 
@@ -45,5 +45,5 @@ uv tool install --force "git+https://github.com/mwdearing/health-relay.git"
 ## Privacy and operating boundaries
 
 - HealthKit access remains read-only, and the MCP server stays read-only.
-- The intake evidence tool carries metadata and identifiers only, no sample values.
+- The intake evidence tool returns identifiers, link status and metadata, plus the component amount and unit the producer supplied with the intake (for example `95 mg`). It never returns HealthKit sample values.
 - No telemetry, advertising, data broker, or third-party AI upload path is added.

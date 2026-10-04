@@ -8,7 +8,6 @@ files under the repository root.
 
 from __future__ import annotations
 
-import fnmatch
 import re
 import tomllib
 from pathlib import Path
@@ -38,6 +37,40 @@ def tag_globs(text: str) -> list[str]:
             if line.strip()
         ]
     return globs
+
+
+def github_filter_matches(pattern: str, ref: str) -> bool:
+    """Match a ref against a GitHub Actions filter pattern.
+
+    `*` matches any run without `/`, `**` any run, `?` zero or one and `+` one
+    or more of the preceding character, `[...]` a character class. A leading
+    `!` negates and never counts as a positive match here.
+    """
+    if pattern.startswith("!"):
+        return False
+    out: list[str] = []
+    i = 0
+    while i < len(pattern):
+        char = pattern[i]
+        if pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+            continue
+        if char == "*":
+            out.append("[^/]*")
+        elif char in "?+":
+            out.append(char)
+        elif char == "[":
+            end = pattern.find("]", i + 1)
+            if end == -1:
+                out.append(re.escape(char))
+            else:
+                out.append(pattern[i : end + 1])
+                i = end
+        else:
+            out.append(re.escape(char))
+        i += 1
+    return re.fullmatch("".join(out), ref) is not None
 
 
 def push_reaches_any_tag(text: str) -> bool:
@@ -83,7 +116,7 @@ def test_no_workflow_tag_trigger_matches_the_receiver_release_tag() -> None:
         f"{name}: {glob}"
         for name, globs in triggers.items()
         for glob in globs
-        if fnmatch.fnmatch(TAG, glob)
+        if github_filter_matches(glob, TAG)
     )
     assert not offenders, (
         f"{TAG} must not trigger any workflow release; filters: {offenders}"
@@ -145,3 +178,13 @@ def test_push_trigger_detection_is_not_vacuous() -> None:
     assert not push_reaches_any_tag("on:\n  push:\n    branches: [main]\n")
     assert not push_reaches_any_tag("on:\n  pull_request:\n")
     assert not push_reaches_any_tag("on:\n  push: {branches: [main]}\n")
+
+
+def test_github_filter_matching_follows_github_semantics() -> None:
+    assert github_filter_matches("healthrelay-receiver-[0-9]+.[0-9]+.[0-9]+", TAG)
+    assert github_filter_matches("healthrelay-*", TAG)
+    assert github_filter_matches("**", TAG)
+    assert not github_filter_matches("receiver-v*", TAG)
+    assert not github_filter_matches("ios-v*", TAG)
+    assert not github_filter_matches("!healthrelay-*", TAG)
+    assert not github_filter_matches("v[0-9]+", TAG)
