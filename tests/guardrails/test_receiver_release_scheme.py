@@ -12,6 +12,7 @@ import fnmatch
 import re
 import tomllib
 from pathlib import Path
+from typing import cast
 
 ROOT = Path(__file__).resolve().parents[2]
 TAG = "healthrelay-receiver-2026.10.04"
@@ -24,11 +25,13 @@ PACKAGE_VERSION = "1.1.1"
 def tag_globs(text: str) -> list[str]:
     """Return every tag filter a workflow declares, inline or as a list."""
     globs: list[str] = []
-    for inline in re.findall(r"tags:\s*\[([^\]]*)\]", text):
+    for inline_match in re.finditer(r"tags:\s*\[([^\]]*)\]", text):
+        inline = inline_match.group(1)
         globs += [
             item.strip().strip("\"'") for item in inline.split(",") if item.strip()
         ]
-    for block in re.findall(r"tags:\s*\n((?:[ \t]*-[ \t]*\S.*\n)+)", text):
+    for block_match in re.finditer(r"tags:\s*\n((?:[ \t]*-[ \t]*\S.*\n)+)", text):
+        block = block_match.group(1)
         globs += [
             line.split("-", 1)[1].strip().strip("\"'")
             for line in block.splitlines()
@@ -87,7 +90,7 @@ def test_versioning_documents_the_scheme_without_a_version_bump() -> None:
     assert "ios-v*" in versioning
 
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    project = tomllib.loads(pyproject)["project"]
+    project = cast("dict[str, object]", tomllib.loads(pyproject)["project"])
     assert project["version"] == PACKAGE_VERSION
 
     init = (ROOT / "src/health_bridge/__init__.py").read_text(encoding="utf-8")
