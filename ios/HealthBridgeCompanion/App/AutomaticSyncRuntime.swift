@@ -16,7 +16,7 @@ final class AutomaticSyncRuntime {
     private var foregroundCatchUpTask: Task<Void, Never>?
     private var lastBackgroundDeliveryRearmAt: Date?
     #if canImport(HealthKit)
-    private let backgroundDeliveryCoordinator = HealthKitBackgroundDeliveryCoordinator()
+    private let backgroundDeliveryCoordinator: HealthKitBackgroundDeliveryCoordinator
     #endif
 
     private lazy var engine = AutomaticSyncEngine(
@@ -48,6 +48,11 @@ final class AutomaticSyncRuntime {
 
     init(viewModel: HealthBridgeCompanionViewModel) {
         self.viewModel = viewModel
+        #if canImport(HealthKit)
+        backgroundDeliveryCoordinator = HealthKitBackgroundDeliveryCoordinator(
+            deadlineRegistry: viewModel.observerDeadlineRegistry
+        )
+        #endif
     }
 
     func prepareForBackgroundLaunch() {

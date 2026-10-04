@@ -519,8 +519,13 @@ final class AutomaticSyncEngineContractTests: XCTestCase {
         var durableAdmissions = Array(repeating: false, count: callbackCount)
         var acknowledgements = Array(repeating: 0, count: callbackCount)
         let admit: @MainActor (Int, String) async -> Void = { index, typeCode in
+            let acknowledgement = BackgroundObserverAcknowledgement {
+                XCTAssertTrue(durableAdmissions[index])
+                acknowledgements[index] += 1
+            }
             await AutomaticSyncObserverEventLifecycle.process(
                 startedAt: Date(timeIntervalSince1970: 1_788_000_000),
+                deadline: ObserverAcknowledgementDeadline(acknowledgement: acknowledgement),
                 admissionHandler: {
                     do {
                         try fixture.store.markPendingObserverTypeCodes([typeCode])
@@ -537,10 +542,6 @@ final class AutomaticSyncEngineContractTests: XCTestCase {
                         diagnosticRunID: index == 0 ? firstObserverRunID : UUID()
                     )
                     return nil
-                },
-                acknowledge: {
-                    XCTAssertTrue(durableAdmissions[index])
-                    acknowledgements[index] += 1
                 },
                 persistDiagnostic: { _, _ in
                     XCTFail("Observer callbacks must not own diagnostic finalization.")

@@ -204,71 +204,153 @@ public enum AutomaticSyncObserverEventAdmission {
     case complete(AutomaticSyncDiagnosticDraft?)
 }
 
-/// Tracks which path delivered the HealthKit observer completion handler so the diagnostic can say
-/// whether admission finished in time or the acknowledgement deadline ended the wait.
-@MainActor
-final class AutomaticSyncObserverAcknowledgementOutcome {
-    /// True only when the deadline, not the finished admission, delivered the completion handler.
-    private(set) var acknowledgedAtDeadline = false
+/// Injected into the acknowledgement deadline so tests can acknowledge instantly instead of
+/// waiting out the real deadline.
+public func sleepBeforeObserverAcknowledgementDeadline(_ deadline: TimeInterval) async {
+    let nanoseconds = UInt64(max(0, deadline) * 1_000_000_000)
+    try? await Task.sleep(nanoseconds: nanoseconds)
+}
 
-    /// Records that the deadline wait, not a finished admission, acknowledged HealthKit.
-    func noteDeadlineAcknowledgement() {
-        acknowledgedAtDeadline = true
+/// Acknowledges one HealthKit observer wake-up either as soon as its admission cycle finishes or at
+/// the acknowledgement deadline, whichever comes first.
+///
+/// The timer runs on a detached task, never on the main actor, and `start` subtracts the time
+/// already spent since `startedAt`. A blocked or backlogged main actor therefore cannot delay or
+/// skip the acknowledgement, which is what HealthKit's backoff (and, after three misses, the end of
+/// background delivery for the app) is triggered by.
+public final class ObserverAcknowledgementDeadline: @unchecked Sendable {
+    private let acknowledgement: BackgroundObserverAcknowledgement
+    private let onDeadline: @Sendable () -> Void
+    private let sleep: @Sendable (TimeInterval) async -> Void
+    private let now: @Sendable () -> Date
+    private let lock = NSLock()
+    private var timer: Task<Void, Never>?
+    private var isSettled = false
+    private var didAcknowledgeAtDeadline = false
+
+    public init(
+        acknowledgement: BackgroundObserverAcknowledgement,
+        onDeadline: @escaping @Sendable () -> Void = {},
+        sleep: @escaping @Sendable (TimeInterval) async -> Void = sleepBeforeObserverAcknowledgementDeadline,
+        now: @escaping @Sendable () -> Date = Date.init
+    ) {
+        self.acknowledgement = acknowledgement
+        self.onDeadline = onDeadline
+        self.sleep = sleep
+        self.now = now
+    }
+
+    /// Starts the deadline off the main actor. Safe to call before, during, or after the main-actor
+    /// hop that runs the admission cycle; only the first call starts a timer.
+    public func start(startedAt: Date, deadline: TimeInterval) {
+        let remaining = max(0, deadline - now().timeIntervalSince(startedAt))
+        let timer = Task.detached(priority: .high) { [weak self] in
+            guard let self else { return }
+            await self.sleep(remaining)
+            self.fire()
+        }
+        lock.lock()
+        let alreadySettled = isSettled
+        if !alreadySettled { self.timer = timer }
+        lock.unlock()
+        if alreadySettled { timer.cancel() }
+    }
+
+    /// Acknowledges immediately unless the deadline already did. Returns true only when this call
+    /// delivered the completion handler, so callers never double-acknowledge HealthKit.
+    @discardableResult
+    public func acknowledge() -> Bool {
+        lock.lock()
+        let hadDeadlineAcknowledgement = didAcknowledgeAtDeadline
+        isSettled = true
+        let timer = timer
+        self.timer = nil
+        lock.unlock()
+        timer?.cancel()
+        return acknowledgement.call() && !hadDeadlineAcknowledgement
+    }
+
+    /// True only when the deadline, not a finished admission, delivered the completion handler.
+    public var acknowledgedAtDeadline: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return didAcknowledgeAtDeadline
+    }
+
+    private func fire() {
+        lock.lock()
+        let alreadySettled = isSettled
+        isSettled = true
+        timer = nil
+        lock.unlock()
+        guard !alreadySettled else { return }
+        guard acknowledgement.call() else { return }
+        lock.lock()
+        didAcknowledgeAtDeadline = true
+        lock.unlock()
+        onDeadline()
     }
 }
 
-/// Injected into the observer lifecycle so tests can acknowledge instantly instead of waiting out
-/// the real deadline.
-func sleepBeforeObserverAcknowledgementDeadline(_ deadline: TimeInterval) async {
-    let nanoseconds = UInt64(max(0, deadline) * 1_000_000_000)
-    try? await Task.sleep(nanoseconds: nanoseconds)
+/// Remembers which observer wake-ups the acknowledgement deadline answered, so the draft the engine
+/// creates later can report that its admission exceeded the deadline. Entries carry run identifiers
+/// only, never health values, and the set is bounded.
+public final class ObserverAcknowledgementDeadlineRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var runIDs: [UUID] = []
+    private var acknowledged: Set<UUID> = []
+    private let capacity: Int
+
+    public init(capacity: Int = 64) {
+        self.capacity = max(1, capacity)
+    }
+
+    public func noteAcknowledgedAtDeadline(runID: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !acknowledged.contains(runID) else { return }
+        acknowledged.insert(runID)
+        runIDs.append(runID)
+        while runIDs.count > capacity, let oldest = runIDs.first {
+            runIDs.removeFirst()
+            acknowledged.remove(oldest)
+        }
+    }
+
+    public func containsDeadlineAcknowledgement(runID: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return acknowledged.contains(runID)
+    }
 }
 
 @MainActor
 enum AutomaticSyncObserverEventLifecycle {
     /// Acknowledges the wake-up as soon as admission finishes or the deadline passes, whichever
-    /// comes first, and keeps processing the cycle either way. HealthKit backoff, and eventually
-    /// permanent loss of background delivery for the app, is driven by missing this handler.
+    /// comes first, and keeps processing the cycle either way. The deadline is started by the caller
+    /// from the HealthKit callback, before this main-actor hop, so it holds even when the main actor
+    /// is blocked.
     static func process(
         startedAt: Date,
         now: () -> Date = Date.init,
-        acknowledgementDeadline: TimeInterval = BackgroundObserverAcknowledgementPolicy
-            .observerAcknowledgementDeadline,
-        sleep: @escaping @Sendable (TimeInterval) async -> Void = sleepBeforeObserverAcknowledgementDeadline,
+        deadline: ObserverAcknowledgementDeadline,
         admissionHandler: () async -> AutomaticSyncObserverEventAdmission,
         eventHandler: () async -> AutomaticSyncDiagnosticDraft?,
-        acknowledge: @escaping () -> Void,
         persistDiagnostic: (AutomaticSyncDiagnosticDraft, TimeInterval) -> Void
     ) async {
-        let acknowledgement = BackgroundObserverAcknowledgement(acknowledge)
-        let outcome = AutomaticSyncObserverAcknowledgementOutcome()
-        let deadlineTask = Task { @MainActor in
-            await sleep(acknowledgementDeadline)
-            guard !Task.isCancelled else { return }
-            if acknowledgement.call() {
-                outcome.noteDeadlineAcknowledgement()
-            }
-        }
         let admission = await admissionHandler()
-        deadlineTask.cancel()
-        // Settling the deadline wait here means the recorded reason always matches the call that
-        // actually reached HealthKit: either the deadline won, or admission did.
-        await deadlineTask.value
+        deadline.acknowledge()
 
         let diagnostic: AutomaticSyncDiagnosticDraft?
-        let completionLatency: TimeInterval
+        let completionLatency = now().timeIntervalSince(startedAt)
         switch admission {
         case .continueProcessing:
-            completionLatency = now().timeIntervalSince(startedAt)
-            acknowledgement.call()
             diagnostic = await eventHandler()
         case .complete(let admittedDiagnostic):
             diagnostic = admittedDiagnostic
-            completionLatency = now().timeIntervalSince(startedAt)
-            acknowledgement.call()
         }
         guard let diagnostic else { return }
-        if outcome.acknowledgedAtDeadline {
+        if deadline.acknowledgedAtDeadline {
             diagnostic.noteObserverAcknowledgedAtDeadline()
         }
         persistDiagnostic(diagnostic, completionLatency)

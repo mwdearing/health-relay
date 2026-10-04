@@ -441,6 +441,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     private var backgroundDeliveryRearmExpectedCount = 0
     private var backgroundDeliveryRearmResults: [String: Bool] = [:]
     #endif
+    /// Observer wake-ups the acknowledgement deadline answered. Shared with the background delivery
+    /// coordinator so the engine-owned diagnostic can report the deadline outcome.
+    let observerDeadlineRegistry = ObserverAcknowledgementDeadlineRegistry()
 
     init(
         receiverClient: ReceiverClient = ReceiverClient(),
@@ -3498,7 +3501,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             reason: reason,
             runID: diagnosticRunID
         )
-        diagnostic.noteObserverAcknowledged()
+        noteObserverAcknowledgementOutcome(on: diagnostic)
         let expectedGeneration = settingsStore.receiverSettingsGenerationToken
         let taskID = UUID()
         let task = Task { @MainActor [weak self] in
@@ -3547,6 +3550,17 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 .latestLaneSummary ?? "No automatic-sync lane diagnostic recorded."
         }
         return diagnostic
+    }
+
+    /// The observer wake-up answers HealthKit before the engine creates this draft, so the deadline
+    /// outcome is looked up by run identifier: a wake-up answered at the deadline must not be
+    /// persisted as an ordinary acknowledgement.
+    private func noteObserverAcknowledgementOutcome(on diagnostic: AutomaticSyncDiagnosticDraft) {
+        if observerDeadlineRegistry.containsDeadlineAcknowledgement(runID: diagnostic.runID) {
+            diagnostic.noteObserverAcknowledgedAtDeadline()
+        } else {
+            diagnostic.noteObserverAcknowledged()
+        }
     }
 
     private func noteAutomaticSyncPending(
@@ -3818,6 +3832,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             }
         }
         noteAutomaticSyncPending(diagnostic, initial: false)
+        // The deadline can fire while the run is still in flight, so re-check before persisting.
+        if observerDeadlineRegistry.containsDeadlineAcknowledgement(runID: diagnostic.runID) {
+            diagnostic.noteObserverAcknowledgedAtDeadline()
+        }
         if !diagnostic.defersPersistenceUntilObserverAcknowledgement {
             if automaticSyncDiagnosticStore.recordFinal(diagnostic.record) {
                 automaticSyncLaneDiagnosticLine = automaticSyncDiagnosticStore.latestRecord?
