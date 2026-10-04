@@ -20,7 +20,7 @@ The tag names one immutable commit. It is not marked **Latest** (**Latest** stay
 ## Compatibility
 
 - Batch Protocol: `health_bridge.batch.v1` (`1.0.0`). No wire change; a compatible receiver patch does not bump the protocol.
-- HealthRelay app: `1.2.30` beta or later is what forwards the allowlisted intake metadata from HealthKit samples, and that is what makes intake evidence links verifiable. No app update is required to install this receiver or to use any other receiver feature; an older app simply produces no intake metadata, so its intake components report as unlinked.
+- HealthRelay app: forwarding of the allowlisted intake metadata from HealthKit samples, which makes intake evidence links verifiable, first shipped in the `1.2.29` beta; the `1.2.30` beta or later is recommended because it also restores background delivery. No app update is required to install this receiver or to use any other receiver feature; an older app simply produces no intake metadata, so its intake components report as unlinked.
 - Mailbox helper: unchanged at `1.1.1`. The signed Mac helper is validated against the receiver version, and helper manifests must carry the release tag `receiver-v<version>`. That is why the package version stays `1.1.1` and this release is identified by its tag instead of by a version bump. The Mailbox helper release is not republished here.
 - Agent plugin: `hermes-healthrelay` `0.3.0` or later exposes the `get_intake_evidence_v1` tool to agents. Earlier plugin versions expose the other nine read-only tools only.
 
