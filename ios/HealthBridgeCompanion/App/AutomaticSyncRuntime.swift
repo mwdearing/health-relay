@@ -22,7 +22,6 @@ final class AutomaticSyncRuntime {
 
     private lazy var engine = AutomaticSyncEngine(
         pendingStore: viewModel.automaticSyncSettingsStore,
-        deadlineRegistry: viewModel.observerDeadlineRegistry,
         processType: { @MainActor [weak viewModel] typeCode, pendingGenerations in
             guard let viewModel else { return .blocked }
             return await viewModel.processAutomaticSyncType(
@@ -45,7 +44,8 @@ final class AutomaticSyncRuntime {
         },
         startOwner: { @MainActor [weak self] cancelOwner in
             self?.beginOwner(cancelOwner: cancelOwner) ?? {}
-        }
+        },
+        deadlineRegistry: viewModel.observerDeadlineRegistry
     )
 
     init(

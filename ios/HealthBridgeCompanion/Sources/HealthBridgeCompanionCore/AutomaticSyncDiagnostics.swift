@@ -301,28 +301,59 @@ public final class ObserverAcknowledgementDeadline: @unchecked Sendable {
 
 /// Remembers which observer wake-ups the acknowledgement deadline answered, so the draft the engine
 /// creates later can report that its admission exceeded the deadline. Entries carry run identifiers
-/// only, never health values, and the set is bounded.
+/// and a timestamp only, never health values.
+///
+/// One observer query runs per observed type and a burst can hit every one of them at once, so the
+/// registry holds a generous number of marks and only evicts entries that are older than a retention
+/// window (or beyond that bound), never a mark that a run may still look up.
 public final class ObserverAcknowledgementDeadlineRegistry: @unchecked Sendable {
-    private let lock = NSLock()
-    private var runIDs: [UUID] = []
-    private var acknowledged: Set<UUID> = []
-    private let capacity: Int
+    /// Comfortably above the number of types the HealthKit catalog can observe.
+    public static let defaultCapacity = 512
+    /// Far longer than a sync run takes, so a live run's mark is never dropped.
+    public static let defaultRetention: TimeInterval = 3_600
 
-    public init(capacity: Int = 64) {
+    private struct Entry {
+        let runID: UUID
+        let recordedAt: Date
+    }
+
+    private let lock = NSLock()
+    private var entries: [Entry] = []
+    private var capacity: Int
+    private let retention: TimeInterval
+    private let now: @Sendable () -> Date
+
+    public init(
+        capacity: Int = ObserverAcknowledgementDeadlineRegistry.defaultCapacity,
+        retention: TimeInterval = ObserverAcknowledgementDeadlineRegistry.defaultRetention,
+        now: @escaping @Sendable () -> Date = Date.init
+    ) {
         self.capacity = max(1, capacity)
+        self.retention = retention
+        self.now = now
+    }
+
+    /// Raises the bound so a burst covering every observed type cannot evict a mark before the run
+    /// that owns it looks it up.
+    public func reserveCapacity(forObserverCount observerCount: Int) {
+        lock.lock()
+        capacity = max(capacity, observerCount + 1)
+        lock.unlock()
     }
 
     public func noteAcknowledgedAtDeadline(runID: UUID) {
         lock.lock()
         defer { lock.unlock() }
-        guard !acknowledged.contains(runID) else { return }
-        insert(runID)
+        prune()
+        guard !entries.contains(where: { $0.runID == runID }) else { return }
+        insert(runID: runID, recordedAt: now())
     }
 
     public func containsDeadlineAcknowledgement(runID: UUID) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return acknowledged.contains(runID)
+        prune()
+        return entries.contains { $0.runID == runID }
     }
 
     /// Carries a coalesced wake-up's deadline acknowledgement onto the run that survives the merge.
@@ -332,19 +363,21 @@ public final class ObserverAcknowledgementDeadlineRegistry: @unchecked Sendable 
         guard runID != survivingRunID else { return }
         lock.lock()
         defer { lock.unlock() }
-        guard acknowledged.contains(runID) else { return }
-        acknowledged.remove(runID)
-        if let index = runIDs.firstIndex(of: runID) { runIDs.remove(at: index) }
-        insert(survivingRunID)
+        prune()
+        guard let index = entries.firstIndex(where: { $0.runID == runID }) else { return }
+        let recordedAt = entries.remove(at: index).recordedAt
+        insert(runID: survivingRunID, recordedAt: recordedAt)
     }
 
-    private func insert(_ runID: UUID) {
-        acknowledged.insert(runID)
-        runIDs.append(runID)
-        while runIDs.count > capacity, let oldest = runIDs.first {
-            runIDs.removeFirst()
-            acknowledged.remove(oldest)
-        }
+    private func insert(runID: UUID, recordedAt: Date) {
+        entries.append(Entry(runID: runID, recordedAt: recordedAt))
+        while entries.count > capacity, !entries.isEmpty { entries.removeFirst() }
+    }
+
+    /// Callers hold the lock.
+    private func prune() {
+        let cutoff = now().addingTimeInterval(-retention)
+        entries.removeAll { $0.recordedAt < cutoff }
     }
 }
 

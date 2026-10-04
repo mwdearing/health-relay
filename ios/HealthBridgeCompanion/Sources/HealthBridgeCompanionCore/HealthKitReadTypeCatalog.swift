@@ -290,6 +290,9 @@ public final class HealthKitBackgroundDeliveryCoordinator {
         self.isCurrent = isCurrent
         registrationTypes = [:]
         stopActiveObserverQueries()
+        // One observer query per observed type, all of which can be woken at once, so the registry
+        // must hold a mark for every one of them before it evicts anything.
+        deadlineRegistry.reserveCapacity(forObserverCount: healthTypes.count)
         guard HKHealthStore.isHealthDataAvailable(), isCurrent() else { return }
 
         let registry = deadlineRegistry

@@ -480,7 +480,68 @@ final class AutomaticSyncDiagnosticsTests: XCTestCase {
         XCTAssertFalse(registry.containsDeadlineAcknowledgement(runID: coalescedRunID))
     }
 
-    func testDeadlineOutcomeReachesTheLaterEngineOwnedDraft() {
+    /// A burst that hits every observed type at once must not evict a mark before its run looks it up:
+/// the old 64-entry bound was smaller than the number of eligible types.
+func testDeadlineRegistrySurvivesABurstLargerThanTheOldBound() {
+    let registry = ObserverAcknowledgementDeadlineRegistry()
+    let observedTypeCount = 200
+    registry.reserveCapacity(forObserverCount: observedTypeCount)
+    let runIDs = (0..<observedTypeCount).map { _ in UUID() }
+
+    for runID in runIDs {
+        registry.noteAcknowledgedAtDeadline(runID: runID)
+    }
+
+    let missing = runIDs.filter { !registry.containsDeadlineAcknowledgement(runID: $0) }
+    XCTAssertTrue(
+        missing.isEmpty,
+        "A burst covering every observed type must keep every deadline mark: \(missing.count) were evicted."
+    )
+    XCTAssertGreaterThan(
+        ObserverAcknowledgementDeadlineRegistry.defaultCapacity,
+        64,
+        "The default bound must exceed the number of eligible observed types."
+    )
+}
+
+/// Marks are only dropped once they are older than the retention window, not merely because newer
+/// ones arrived.
+func testDeadlineRegistryEvictsOnlyMarksOlderThanTheRetentionWindow() {
+    let now = Date(timeIntervalSince1970: 1_788_000_000)
+    let registry = ObserverAcknowledgementDeadlineRegistry(
+        capacity: 2,
+        retention: 600,
+        now: { now }
+    )
+    let staleRunID = UUID()
+    registry.noteAcknowledgedAtDeadline(runID: staleRunID)
+
+    // Two newer marks push the registry past its bound; the oldest mark is evicted first.
+    let keptRunIDs = [UUID(), UUID()]
+    for runID in keptRunIDs {
+        registry.noteAcknowledgedAtDeadline(runID: runID)
+    }
+    XCTAssertTrue(
+        keptRunIDs.allSatisfy { registry.containsDeadlineAcknowledgement(runID: $0) }
+    )
+
+    // Move past the retention window and the mark is gone even though nothing else arrived.
+    let laterNow = now.addingTimeInterval(1_200)
+    let expiredRegistry = ObserverAcknowledgementDeadlineRegistry(
+        capacity: 512,
+        retention: 600,
+        now: { laterNow }
+    )
+    expiredRegistry.noteAcknowledgedAtDeadline(runID: staleRunID)
+    XCTAssertFalse(expiredRegistry.containsDeadlineAcknowledgement(runID: staleRunID))
+    XCTAssertEqual(
+        ObserverAcknowledgementDeadlineRegistry.defaultRetention,
+        3_600,
+        "The default retention must outlast a sync run."
+    )
+}
+
+func testDeadlineOutcomeReachesTheLaterEngineOwnedDraft() {
         let registry = ObserverAcknowledgementDeadlineRegistry()
         let acknowledgedRunID = UUID()
         let ordinaryRunID = UUID()
