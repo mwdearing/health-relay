@@ -39,8 +39,13 @@ uv tool install --force "git+https://github.com/mwdearing/health-relay.git"
 
 ## Verify what you have
 
-- `health-bridge --version` prints the package version, which is `1.1.1` for this release.
-- The release tag names the commit, which is the exact receiver source installed.
+`health-bridge --version` prints `1.1.1` for `main` and for every pinned release, so it cannot tell them apart. uv records the source it installed; compare it with this release:
+
+```bash
+cat "$(uv tool dir)"/apple-health-ai-bridge/lib/python*/site-packages/apple_health_ai_bridge-*.dist-info/direct_url.json
+```
+
+`vcs_info.requested_revision` must be `healthrelay-receiver-2026.10.04`, and `vcs_info.commit_id` must equal the commit the release tag points to (`git ls-remote https://github.com/mwdearing/health-relay.git refs/tags/healthrelay-receiver-2026.10.04`).
 
 ## Privacy and operating boundaries
 
