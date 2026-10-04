@@ -276,7 +276,7 @@ uv run health-bridge receiver intake-setup \
   --producer-label "Nutrition app" \
   --token-label phone \
   --output-secret .private/intake-token.json \
-  --url http://192.168.1.20:8765 \
+  --url "http://<receiver-lan-host>:8765" \
   --start-option=--service-config=.private/receiver.json
 ```
 
