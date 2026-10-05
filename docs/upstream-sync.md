@@ -19,7 +19,12 @@ git remote set-url --push upstream DISABLED   # nothing should ever be pushed up
 ```
 
 The disabled push URL is deliberate: it makes an accidental `git push upstream …` fail rather than
-offer to open a pull request against the project we forked from.
+offer to open a pull request against the project we forked from. Confirm it, because the setting
+lives in `.git/config` and silently does not hold on a new machine:
+
+```bash
+git remote -v | grep upstream     # upstream … (push) DISABLED
+```
 
 ```bash
 git fetch upstream
@@ -151,19 +156,31 @@ uv run ruff check .
 uv run basedpyright
 uv run bandit -r src -q
 uv run pip-audit --local --skip-editable
-PYTHONPATH=src python -m pytest -q
+uv run pytest -q
+rm -rf dist
+uv build --build-constraints build-constraints.txt --require-hashes --out-dir dist
 uv run python scripts/package-smoke.py --dist-dir dist
 ```
+
+The last three are one gate, not three independent checks. The smoke test validates the
+**artifacts** `uv build` just produced, so it needs `rm -rf dist` first: in a fresh worktree it
+rejects an empty `dist`, and in a reused one it can quietly pass against stale artifacts from a
+previous build. `rm -rf dist` is what makes the result mean anything.
+
+Run everything through `uv run`, as above. A bare `python -m pytest` uses whatever interpreter the
+shell finds, so on a machine set up with `uv sync` it fails with `No module named pytest` — and
+`PYTHONPATH` only changes module lookup, it does not install anything.
 
 The iOS workflow runs `swift test` and unsigned app builds, and only when the change is
 app-affecting. `swift test` builds for macOS, so an iOS-only Swift modifier needs `#if os(iOS)`.
 
 Two traps worth knowing before you trust a local result:
 
-- **`PYTHONPATH=src` is required** for the test suite. Without it the interpreter may import the
-  package from a different checkout and report phantom failures.
 - **The type checker fails on warnings**, not just errors. Bind discarded results to `_`, which is
   how the rest of the test suite already writes them.
+- **`PYTHONPATH=src` is still needed for ad-hoc pytest runs** outside `uv run`, or the interpreter
+  may import the package from a different checkout and report phantom failures. The commands above
+  avoid the problem by using `uv run`.
 
 For a documentation-only change, `ruff format --check .`, `ruff check .` and
 `scripts/public-release-audit.py --strict` are the ones that bite — the last of those rejects

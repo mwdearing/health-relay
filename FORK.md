@@ -3,7 +3,9 @@
 HealthRelay is a fork of [Apple Health AI Bridge](https://github.com/roian6/apple-health-ai-bridge)
 (Apache-2.0). Forked 2026-09-27 at upstream `4818cdc` (iOS companion 1.1.1 build 50,
 receiver 1.1.1, batch schema `health_bridge.batch.v1` 1.0.0). Upstream is the `upstream`
-git remote (fetch only; its push URL is disabled so nothing can be pushed by accident);
+git remote (fetch only; its push URL is set to `DISABLED` so nothing can be pushed by accident —
+re-establish it with the commands in §1 of that doc, since remotes are local configuration and do
+not travel with a clone);
 `origin` is the public repo `mwdearing/health-relay`.
 
 **To sync from upstream, follow [`docs/upstream-sync.md`](docs/upstream-sync.md).** The
