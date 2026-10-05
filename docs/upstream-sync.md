@@ -11,7 +11,6 @@ That line is the only source of truth. Read it first.
 ## 1. See what we have not seen
 
 ```bash
-cd /home/michael/data/health-relay-review
 git fetch upstream
 git log --oneline <recorded-sha>..upstream/main
 ```
@@ -107,13 +106,15 @@ The repository's own checks, the same way CI runs them:
 
 ```bash
 cd <worktree>
-PYTHONPATH=src /home/michael/data/health-relay-review/.venv/bin/python \
-  -m pytest -q -p no:cacheprovider tests/guardrails
+PYTHONPATH=src python -m pytest -q -p no:cacheprovider tests/guardrails
 ```
 
-Never run acceptance, tests or builds from the **live** receiver tree
-`/home/michael/data/health-relay` — the receiver runs from it, and any restart deploys whatever is
-checked out there. Worktrees come from the review clone only.
+Without `PYTHONPATH=src` the interpreter may import the package from a different checkout and report
+phantom failures.
+
+Never run acceptance, tests or builds from the **live receiver tree** — the receiver process runs
+from it, and any restart deploys whatever is checked out there. Create worktrees from the review
+clone only; if you do not have it, clone this repository somewhere safe and work there.
 
 ## Why there is no automation
 
