@@ -1,0 +1,256 @@
+# Syncing from upstream Apple Health AI Bridge
+
+HealthRelay is a fork of [`roian6/apple-health-ai-bridge`](https://github.com/roian6/apple-health-ai-bridge)
+(Apache-2.0). Upstream moves slowly — roughly monthly — so this is a manual procedure, run when you
+want to know where we stand. Nothing here is automated on purpose: a periodic alert about a
+documentation commit trains you to ignore the alerts, and a false alarm costs a human a diff review.
+
+**Where we last synced:** recorded in [`FORK.md`](../FORK.md) as an `Upstream sync, <date>:` line.
+That line is the only source of truth. Read it first.
+
+## 1. See what we have not seen
+
+Remotes live in local Git configuration and are **not** committed with the repository, so a fresh
+clone has only `origin`. If `git remote -v` does not list `upstream`, add it first:
+
+```bash
+git remote add upstream https://github.com/roian6/apple-health-ai-bridge.git
+git remote set-url --push upstream DISABLED   # nothing should ever be pushed upstream
+```
+
+The disabled push URL is deliberate: it makes an accidental `git push upstream …` fail rather than
+offer to open a pull request against the project we forked from. Confirm it, because the setting
+lives in `.git/config` and silently does not hold on a new machine:
+
+```bash
+git remote -v | grep upstream     # upstream … (push) DISABLED
+```
+
+```bash
+git fetch --no-tags upstream
+git log --oneline <recorded-sha>..upstream/main
+```
+
+`--no-tags` is not optional. A plain `git fetch` follows any tag pointing into the history it
+fetches, so upstream's `receiver-v*` and `ios-v*` arrive in `refs/tags` anyway — and those are the
+tags this fork must never push, because they trigger the release workflows. Set it once so you
+cannot forget it:
+
+```bash
+git config --local remote.upstream.tagOpt --no-tags
+```
+
+`<recorded-sha>` is the upstream commit in the **newest** `Upstream sync, <date>:` entry in
+`FORK.md`. That section is newest-first, so "newest" means the one nearest the heading — not the one
+physically last in the file, and not the first one you happen to see. `test_sync_entries_are_newest_first`
+enforces the ordering, so a wrongly-placed entry is caught rather than silently becoming the
+checkpoint for the next sync. If no entry exists at all, the answer is "we have not synced since
+the fork point", which is `4818cdc`.
+
+Also worth checking, because a release may have shipped without the commits being interesting:
+
+```bash
+gh release list -R roian6/apple-health-ai-bridge --limit 5
+```
+
+Then, to see whether a release tag is ahead of `main`:
+
+```bash
+git fetch upstream refs/tags/<release-tag>:refs/upstream-tags/<release-tag>
+git log --oneline upstream/main..refs/upstream-tags/<release-tag>
+```
+
+Use the tag from the `gh release list` output above rather than a hard-coded one — pinning the
+current release would let a later sync quietly compare against a stale tag and still record itself
+complete.
+
+**Do not use `git fetch upstream --tags`.** It copies every upstream tag into your ordinary local
+tag namespace, including `receiver-v*` and `ios-v*` — and `FORK.md` is explicit that this fork never
+pushes those, because they trigger the upstream release workflows. A later `git push --tags origin`
+would then publish tags this repository forbids. The explicit refspec above fetches the one object
+you need and puts it somewhere `git push --tags` cannot reach.
+
+## 2. Read the direction of a diff before believing it
+
+This is the mistake worth guarding against. `git diff ours upstream` shows our additions as
+**deletions**, which reads as though upstream removed our features:
+
+```
+$ git diff --stat main upstream/main -- src/
+ src/health_bridge/storage/intake_context.py | 1354 --------------
+ src/health_bridge/storage/migrations/013_intake_context.sql | 386 ----
+```
+
+Nothing was removed. Those ~8,300 lines are **ours** — the intake-context subsystem that upstream
+does not have. Always confirm which side owns a change before acting on it:
+
+```bash
+git show <sha> --stat          # who wrote it, and what it touched
+git log --oneline main..upstream/main   # commits we do not have
+```
+
+## 3. Classify each commit
+
+| Change | Action |
+|---|---|
+| `src/`, `ios/` bug fix that preserves this fork's invariants | **Take it.** Write a test first if it is a fix. |
+| `src/`, `ios/` **feature**, or anything touching data flow | **Stop and review it first.** See §3a. |
+| `tests/` regression test for a fix we also took | **Take it.** Prefer theirs to a test we wrote. |
+| Dependency bump in `uv.lock` | Take the dependency delta, **not** the file. See below. |
+| `pyproject.toml` or `__init__.py` **version bump** | **Skip.** See §4. |
+| Release docs, release guardrails, `component-versions.json` receiver values | **Skip.** See §4. |
+| README / brand / public-language guardrails | **Skip by default.** See §4. |
+
+Never take an upstream `uv.lock` wholesale. It records the editable root package's own version, so
+once upstream is at `1.1.2` its lock says `1.1.2` while our `pyproject.toml` stays at `1.1.1` — the
+locked sync then fails. Port the dependency delta and regenerate the lock from our own metadata:
+
+```bash
+uv lock
+```
+
+## 3a. Behaviour changes need review before they are ported
+
+**Do not auto-import upstream `src/` or `ios/` changes, however small they look.** The rule in §3
+is deliberately narrow: a bug fix that leaves this fork's guarantees intact. Anything that changes
+what the software *does* is a candidate to evaluate, not a candidate to take.
+
+This fork's invariants, which an imported change must not weaken:
+
+- **HealthKit access is read-only.** A write, or a new health type read, is a privacy decision.
+- **No telemetry, no advertising, no data broker, no hosted sync, no third-party AI upload path.**
+  Upstream's own release notes state they hold these; an upstream change that adds one would be a
+  deliberate upstream decision, and adopting it here is ours to make, not a merge resolution.
+- **Your data stays on your infrastructure.** The receiver and database run locally; the CLI and
+  MCP surfaces are read-only.
+- **Batch and pairing protocols are unchanged** unless a release says otherwise, and changing them
+  is a breaking change for every deployed client.
+
+So before porting a behaviour change, read the diff for: what new data is read, what new data is
+written, what leaves the device, and whether a protocol or schema version moved. If any of those
+changed and you did not intend it, that is a **privacy review**, not a merge — the same review
+`AGENTS.md` requires for hosted relay or remote MCP work, and the approver is whoever
+`.github/CODEOWNERS` names for this repository. If no owner is recorded there, stop and ask rather
+than proceeding.
+
+A fix that *preserves* all four — say, a corrected error message or a null check — is fine to take
+directly. The distinction is whether behaviour moved, not how large the diff is.
+
+## 4. What must never be taken wholesale
+
+Three categories are ours to decide, not upstream's to set.
+
+**Version bumps.** `pyproject.toml` and `__init__.py` stay at `1.1.1` forever. Our pinned receiver
+releases identify a commit with a `healthrelay-receiver-<date>` tag, and `docs/versioning.md`
+requires the package version *not* to change, because a bump would make the Mailbox helper's
+manifest check demand a notarized `receiver-v<version>` helper release that does not exist. See
+`docs/versioning.md:34` and `:45`.
+
+**`component-versions.json` and upstream release bookkeeping.** Ours deliberately declares
+`release_scope: "ios"` and the iOS marketing version we actually ship; upstream's
+`receiver-v1.1.2` / `1.1.1` values are *upstream* identifiers, not HealthRelay numbers. Reconciling
+them would break our release tooling. See `docs/versioning.md:52`.
+
+**README, brand and public-language guardrails — the attribution constraint.** This is the one that
+will bite. Upstream commit `40aa1c9` (2026-10-04) adds guardrail assertions that the README must
+**not** contain the strings `Health Bridge for AI` or `open-source project behind`, on the grounds
+that upstream is now a single named project with no separate product to distinguish from.
+
+Our fork asserts the opposite: `test_product_and_project_names_have_an_explicit_relationship`
+requires `HealthRelay is a fork of Apple Health AI Bridge` in `README.md`, `docs/brand.md` and
+`assets/brand/README.md`. **Taking upstream's version deletes our rule.**
+
+That rule is not cosmetic, but it is worth being precise about why, because overstating it would
+give a future maintainer a false constraint.
+
+`NOTICE` already carries the attribution Apache-2.0 §4(d) requires, and that requirement — as
+reproduced in `LICENSE:107-121` — is about distributing a readable copy of the applicable NOTICE
+attribution. It does **not** require this particular relationship sentence in three further
+documents. So the guardrail is a **product-identification policy we choose**, not a licence
+condition: a user who installs HealthRelay should be able to tell which project they are running,
+that it is a fork, and where to report a problem — and that is worth keeping on its own merits.
+
+Keep the test, and keep the reasoning honest about which kind of constraint it is. Upstream's rule
+is correct for upstream, where there is no second product to distinguish from, and wrong here.
+
+So: record upstream's commit as a **deliberate skip with its reason**. Skipping is a decision, not
+an oversight, and it belongs in `FORK.md`.
+
+## 5. Record what you did
+
+Append one line to `FORK.md`, in date order, naming the upstream commit you synced through:
+
+```
+- Upstream sync, <YYYY-MM-DD>: upstream checked through <sha>; took <what>; skipped <what and why>.
+```
+
+Then, if you skipped something with a reason worth keeping, say the reason in the line. That line
+is what §1 reads next time, so it is worth thirty seconds.
+
+## 6. Verify
+
+**If you took a behaviour change from `src/` or `ios/`, the guardrail tests are not enough.** They
+check the release scheme, not the code. The complete gates are what CI runs, and for an imported
+change remote CI is the first place the real suite would notice a problem — so run it first.
+
+The Python workflow runs, in order:
+
+```bash
+cd <worktree>
+uv sync --all-extras --dev --locked
+uv run python scripts/public-release-audit.py --strict
+uv run ruff format --check .
+uv run ruff check .
+uv run basedpyright
+uv run bandit -r src -q
+uv run pip-audit --local --skip-editable
+uv run pytest -q
+rm -rf dist
+uv build --build-constraints build-constraints.txt --require-hashes --out-dir dist
+uv run python scripts/package-smoke.py --dist-dir dist
+```
+
+The last three are one gate, not three independent checks. The smoke test validates the
+**artifacts** `uv build` just produced, so it needs `rm -rf dist` first: in a fresh worktree it
+rejects an empty `dist`, and in a reused one it can quietly pass against stale artifacts from a
+previous build. `rm -rf dist` is what makes the result mean anything.
+
+The leading `uv sync --locked` matters most when the sync changed dependency metadata. `--locked`
+asserts that `uv.lock` does not change; without it, a bare `uv run` may resolve and **rewrite** a
+stale lock before testing, so your local run passes against a different dependency graph than CI
+saw. If `uv sync --locked` reports the lock is out of date, that is a finding — regenerate the lock
+deliberately and say so in `FORK.md`.
+
+Run everything through `uv run`, as above. A bare `python -m pytest` uses whatever interpreter the
+shell finds, so on a machine set up with `uv sync` it fails with `No module named pytest` — and
+`PYTHONPATH` only changes module lookup, it does not install anything.
+
+The iOS workflow runs `swift test` and unsigned app builds, and only when the change is
+app-affecting. `swift test` builds for macOS, so an iOS-only Swift modifier needs `#if os(iOS)`.
+
+Two traps worth knowing before you trust a local result:
+
+- **The type checker fails on warnings**, not just errors. Bind discarded results to `_`, which is
+  how the rest of the test suite already writes them.
+- **`PYTHONPATH=src` is still needed for ad-hoc pytest runs** outside `uv run`, or the interpreter
+  may import the package from a different checkout and report phantom failures. The commands above
+  avoid the problem by using `uv run`.
+
+For a documentation-only change, `ruff format --check .`, `ruff check .` and
+`scripts/public-release-audit.py --strict` are the ones that bite — the last of those rejects
+machine-specific paths and other public-surface problems, and it is strict by design. Add
+`pytest -q tests/guardrails/test_upstream_sync_procedure.py`: a sync entry in the wrong order, or
+one stripped of its checkpoint SHA, is exactly the kind of change that looks like documentation and
+breaks the next sync.
+
+Never run acceptance, tests or builds from the **live receiver tree** — the receiver process runs
+from it, and any restart deploys whatever is checked out there. Create worktrees from a review
+clone; if you do not have one, clone this repository somewhere safe and work there.
+
+## Why there is no automation
+
+Upstream shipped five releases between 2026-07-19 and 2026-10-01. A scheduled check would fire
+roughly monthly, and most of those firings would be documentation. The cost of a missed upstream
+fix is bounded — we would notice it as a missing behaviour, and the fix is reviewable on its own
+merits — while the cost of a habituated alert is that we stop looking. Run this when you are
+curious, not on a timer.
