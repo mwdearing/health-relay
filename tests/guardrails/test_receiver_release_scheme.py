@@ -36,34 +36,67 @@ Do not "improve" this back into a shape parser. To let a real workflow through,
 either name its event in `CLEARABLE_EVENTS`, or record its tag filter in
 `REVIEWED_TAG_ALLOWANCES` with a stated reason, or ask a human to look.
 
+**The published-ref checks fail in the same direction.** A documented ref that
+does not exist ships a receiver that cannot install, and a documented ref whose
+notes were never written ships one with no release record; both are reported.
+Nothing here is narrowed to make a check pass, and each boundary is defined by
+what a ref *cannot* contain rather than by an enumeration of delimiters, because
+an enumeration failed open: `healthrelay-receiver-2026.10.04-typo!` matched no
+pattern at all and so satisfied no assertion anywhere. A ref's alphabet is spelled
+out in ASCII — digits, ASCII letters, `_`, `-` and `.` — so **every non-ASCII
+character ends a ref and none of them joins it**, in a document written in any
+language.
+
 These tests are stdlib only and read files under the repository root.
 """
 
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
+import sys
 import tempfile
 import tomllib
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple, cast
+from typing import TYPE_CHECKING, NamedTuple, cast
+from unittest import mock
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 ROOT = Path(__file__).resolve().parents[2]
 PINNED_TAG_PREFIX = "healthrelay-receiver-"
-PINNED_TAG_RE = re.compile(r"healthrelay-receiver-\d{4}\.\d{2}\.\d{2}")
+# The tag itself. Anchored at neither end on purpose when scanning prose: a
+# mention is malformed if the *ref* runs on past the date, so the tag must not be
+# allowed to satisfy a check by matching only its own prefix. `-typo`, a fourth
+# digit group and a dotted digit are all continuations; a closing backtick, a
+# quote, a slash into a docs path and `.md` in a filename are not, and matching
+# those would report every correctly-written reference in the repository.
+PINNED_TAG_BODY = r"\d{4}\.\d{2}\.\d{2}"
+PINNED_TAG_RE = re.compile(
+    r"healthrelay-receiver-\d{4}\.\d{2}\.\d{2}(?![0-9]|-[A-Za-z0-9]|\.[0-9])"
+)
 WORKFLOWS = ROOT / ".github/workflows"
 RELEASE_NOTES = ROOT / ".github/release"
 VERSIONING = ROOT / "docs/versioning.md"
 PACKAGE_VERSION = "1.1.1"
 
-# Places that may name a pinned receiver tag. Every tag named in any of them
-# must have its own release-notes file.
-PINNED_TAG_SOURCES = (
-    RELEASE_NOTES,
-    ROOT / "docs",
-    ROOT / "README.md",
-    ROOT / "FORK.md",
-)
+# Markdown that publishes an install command and so can name a pinned tag, beyond
+# the documents named by hand: the remaining public documents at the repository
+# root and the templates and policy files under `.github`. Naming them
+# individually was the bug — a new public document, or a pinned tag added to
+# SUPPORT.md or SECURITY.md, would be invisible to the "every documented tag has
+# release notes" assertion, which is exactly the assertion meant to catch a
+# release that was published without them. Discovery asks git which Markdown is
+# tracked rather than walking the working tree, and the release notes are composed
+# in separately by `_release_note_sources()`; see the comment above that function
+# for why the two sets are kept apart.
+#
+# This tuple is the fallback scan root, used only when git cannot answer.
+PINNED_TAG_SCAN_ROOTS = (ROOT,)
 
 # Reviewed exceptions for rule 1: (path relative to the repository root, reason).
 # Empty by default. A deliberate appearance of the pinned prefix in a workflow
@@ -176,12 +209,26 @@ def pinned_release_tags(notes_dir: Path = RELEASE_NOTES) -> tuple[str, ...]:
 
     Discovered from the notes filenames, never hard-coded to one literal, so a
     second pinned release is picked up without editing this module.
+
+    A file whose name starts with the pinned prefix but is not a well-formed tag
+    is a **problem**, not something to skip: `notes-healthrelay-receiver-2026.10.5.md`
+    looks exactly like a release whose date lost a zero, and silently dropping it
+    would let that release ship with none of the heading, install-command and
+    content checks below ever running.
     """
     tags: list[str] = []
+    malformed: list[str] = []
     for path in sorted(notes_dir.glob(f"notes-{PINNED_TAG_PREFIX}*.md")):
         candidate = path.name[len("notes-") : -len(".md")]
         if PINNED_TAG_RE.fullmatch(candidate):
             tags.append(candidate)
+        else:
+            malformed.append(path.name)
+    assert not malformed, (
+        f"these files look like pinned receiver releases but are not named like one: "
+        f"{malformed}. A pinned tag is {PINNED_TAG_PREFIX}<YYYY.MM.DD>; if the date is "
+        "wrong, rename the file rather than leaving it unchecked."
+    )
     return tuple(sorted(tags))
 
 
@@ -189,14 +236,444 @@ def release_notes_path(tag: str, notes_dir: Path = RELEASE_NOTES) -> Path:
     return notes_dir / f"notes-{tag}.md"
 
 
+_SCAN_EXCLUDED_DIRS = frozenset({".git", ".venv", "build", "dist", "__pycache__"})
+
+
+# A character a ref is made of. Spelled out in ASCII rather than as `\w`, which is
+# Unicode-aware in Python: `\w` counts every Unicode letter, mark and number as part
+# of a ref, so a boundary written as its complement let a non-ASCII character be
+# *absorbed* into a ref instead of ending it. Both directions of that were wrong.
+# A run followed by `!` was reported correctly, but a run followed by a CJK
+# character, `é` or `т` was not reported at all — the regex backtracked off the
+# whole broken suffix, matched the clean prefix before it, and that prefix is a
+# well-formed tag, so the broken ref satisfied no assertion anywhere. The same
+# Unicode-aware complement also truncated a *correct* ref: `…2026.10.04²` was read
+# as `…2026.10` and reported as malformed.
+# `test_a_non_ascii_character_ends_a_ref_without_joining_it` pins both.
+#
+# The characters git permits in a ref name beyond ASCII letters, digits, `_`, `-`
+# and `.`. Each was checked with `git check-ref-format`, which accepts refs such as
+# `refs/tags/healthrelay-receiver-2026.10.04+typo` and `…=typo`: an install target
+# ending in one of these names a real, distinct ref that is not a tag of this scheme.
+# Without them the run stopped at the date, the valid prefix was captured, and both
+# checks passed over the broken revision.
+# `test_git_valid_ref_characters_are_part_of_a_ref` pins the whole set rather than
+# one character at a time.
+#
+# This is the ASCII set git documents as permitted, minus the control characters,
+# space, `~`, `^`, `:`, `?`, `*`, `[`, `\`, and DEL — all of which git forbids in a
+# ref name, so a run cannot legally continue into them.
+REF_CHAR = r"[0-9A-Za-z_+=~-]"
+
+# A whole ref run after the prefix: at least one digit, then characters from the
+# ref alphabet, plus any `.` groups that are themselves part of the ref. The `(?!md\b)`
+# keeps `notes-healthrelay-receiver-2026.10.04.md` correct — `.md` is a filename
+# extension that follows the ref, not part of it — and the body cannot end in `.`, so
+# `healthrelay-receiver-2026.10.04.` captures the bare tag and stays green.
+REF_RUN = rf"[0-9]{REF_CHAR}*(?:\.(?!md\b){REF_CHAR}+)*"
+
+# ...and the two things that could still continue it, which is therefore the
+# boundary. See the comment on `ANY_PINNED_REF_RUN` for why this is not `\w`.
+REF_CONTINUATION = rf"{REF_CHAR}|\.(?!md\b){REF_CHAR}"
+
+# The `.md` exemption above is a *filename* convention, so it is honoured only for
+# the one filename shape that carries a ref: a release note is literally
+# `notes-<tag>.md`. A global `(?!md\b)` also swallowed the broken part of a
+# checkout URL — an `…@…-2026.10.04.md` install target and
+# `/blob/…-2026.10.04.md-typo/…`
+# both stopped the run at `.md`, leaving the valid `…10.04` prefix for both checks
+# to pass. `test_md_is_exempt_only_in_a_release_note_filename` pins the difference.
+#
+# The embedded tag must be a *complete* one. An earlier version reused `REF_RUN`,
+# which validates only a generic character run, so `notes-…-2026.10.4.md` and
+# `notes-…-2026.10.04-typo.md` were exempted wholesale — a broken link to a note that
+# does not exist, which `pinned_release_tags()` cannot catch because it reads the
+# notes *directory*, not the links pointing into it.
+# `test_a_note_filename_exemption_still_requires_a_complete_tag` pins that.
+#
+# And the extension must be the *end* of the token, not merely present in it: a
+# link to `notes-…-2026.10.04.md.typo` matched through `.md`, the embedded date is
+# complete, and both checks passed over the broken link.
+MD_EXTENSION = r"\.md(?![\w+=~-]|\.[\w+=~-])"
+NOTE_FILENAME_RUN = rf"notes-{PINNED_TAG_PREFIX}{PINNED_TAG_BODY}{MD_EXTENSION}"
+
+# `healthrelay-receiver-<YYYY.MM.DD>` is the documented placeholder for the tag
+# form, and it appears as prose in five tracked files (FORK.md, .github/release/
+# README.md, a published note, the error message below, and the version policy). It
+# names no release, so it is exempt by name rather than by accident of shape.
+#
+# The exemption is the whole token: matched without a boundary it also covered
+# `…<YYYY.MM.DD>-typo`, so following the published template would create a ref
+# outside the date-only scheme and neither check noticed.
+PLACEHOLDER_REF = f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>"
+
+# A run of the pinned prefix that is not a bare, complete tag at all — including
+# one that never reaches a full date (`2026.10.4`, the same lost-zero shape this
+# module rejects in a release-notes filename). This is the catch-all, and whether
+# a run is reported is decided afterwards by asking whether it is a complete tag
+# in full. Two things about the boundary decide which refs are ever seen:
+#
+# - **The body cannot end in `.`.** A sentence-ending period is punctuation, not
+#   part of the ref, so `healthrelay-receiver-2026.10.04.` captures the bare tag
+#   and stays green. The previous character class allowed a trailing `.` and
+#   swallowed it, so a correctly written reference ending a sentence was reported
+#   as malformed.
+# - **The boundary is "a character that cannot be part of a ref", not a list of
+#   terminators.** The version before this enumerated `` ` ``, quotes, whitespace,
+#   `,`, `;`, `:`, `)`, `]` — and a run followed by `!`, `?` or `>` matched
+#   *nothing at all*. `healthrelay-receiver-2026.10.04-typo!` therefore satisfied
+#   no assertion anywhere: the broken-ref check passed because the ref was
+#   invisible, not because it was judged well-formed. That is the fail-open this
+#   guard exists to prevent, and an enumeration of delimiters cannot close it —
+#   the next punctuation mark someone writes would reopen it.
+#
+# The boundary is therefore the complement of `REF_CHAR`, plus the one `.` case the
+# body treats as part of a ref: a `.` followed by a ref character. Writing it out
+# states the rule in one place and keeps the guarantee independent of the
+# enumeration; it does not currently change any result, because the body is greedy
+# and so already ends where a ref character cannot continue. It is kept for the
+# same reason the rest of this guard states its rules rather than relying on what a
+# regex happens to do: a later edit that loosened the body cannot silently reopen
+# the fail-open this comment describes.
+# The catch-all body for a ref that is *not* a well-formed tag: it must start at
+# the prefix and run as far as a ref character can, whatever that character is. The
+# earlier body began `[0-9]`, so a wholly nonnumeric suffix (`…-latest`, `…-rc1`,
+# `…-v2026.10.04`) matched nothing at all and both checks passed on a public ref
+# that violates the `YYYY.MM.DD` scheme and may install nothing.
+#
+# `ANY_REF_RUN` therefore allows any ref character to start the body. It is only
+# used in the third alternative, where the alternative order means a complete tag
+# or a note filename never reaches it, and where a captured run is always asked
+# afterwards whether it is a complete tag in full.
+ANY_REF_RUN = rf"{REF_CHAR}+(?:\.{REF_CHAR}+)*"
+
+# A `.md` extension, and what may follow it in a filename. A note filename whose
+# extension is itself extended — `notes-…-2026.10.04.md.typo` — is a broken link,
+# so the extension has to be the end of the token rather than merely present in it.
+
+# The placeholder alternative, which must also cover a *malformed* template: an
+# earlier version matched the bare placeholder and relied on a following-character
+# guard, and `…<YYYY.MM.DD>-typo` therefore matched neither alternative at all —
+# invisible, so both checks passed over a template that would create a ref outside
+# the date-only scheme. The extension is optional and is captured whole, so the
+# decision is made afterwards by string equality against `PLACEHOLDER_REF`.
+PLACEHOLDER_EXTENSION = r"(?:[0-9A-Za-z_+.-]*[0-9A-Za-z_+-][0-9A-Za-z_+.-]*)?"
+
+ANY_PINNED_REF_ALTERNATIVES = "|".join(
+    (
+        rf"{NOTE_FILENAME_RUN}",
+        rf"{PINNED_TAG_PREFIX}<YYYY\.MM\.DD>{PLACEHOLDER_EXTENSION}",
+        rf"{PINNED_TAG_PREFIX}{ANY_REF_RUN}(?!{REF_CONTINUATION})",
+    )
+)
+ANY_PINNED_REF_RUN = re.compile(rf"(?:{ANY_PINNED_REF_ALTERNATIVES})")
+
+# Marks a ref can legitimately be followed by in prose, in Markdown, or in a URL.
+# The regex above does not consult this list — it recognises "a character that
+# cannot be part of a ref" — so this list is a test fixture, not a specification
+# the guard depends on. It is here so a boundary regression is reported against a
+# set of marks someone actually writes, including the three the previous
+# delimiter-enumerating version could not see (`!`, `?`, `>`).
+#
+# These are ASCII marks only. A non-ASCII character is covered separately, by
+# `test_a_non_ascii_character_ends_a_ref_without_joining_it`, because it is the
+# one class of terminator that used to be invisible to the guard.
+# Refs whose suffix contains no digit at all. Each matched nothing before the
+# catch-all body stopped requiring a leading digit.
+# Git permits `+` in a ref name, so an install target ending `…2026.10.04+typo`
+# names a real distinct ref rather than being a prose delimiter. Checked against
+# `git check-ref-format` before being treated as part of the ref alphabet.
+PLUS_SUFFIX_REFS: tuple[str, ...] = (
+    f"{PINNED_TAG_PREFIX}2026.10.04+typo",
+    f"{PINNED_TAG_PREFIX}2026.10.04+",
+    # Every character the ref alphabet adds beyond letters, digits, `_`, `-` and
+    # `.`, each confirmed with `git check-ref-format`. Fixing `+` alone left the
+    # same fail-open for the rest of the permitted set.
+    f"{PINNED_TAG_PREFIX}2026.10.04=typo",
+    f"{PINNED_TAG_PREFIX}2026.10.04~typo",
+)
+
+# A template that extends the documented placeholder: following it would create a
+# ref outside the date-only scheme. Must be reported, while the bare placeholder in
+# prose must not be.
+PLACEHOLDER_EXTENSIONS: tuple[str, ...] = (
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>-typo",
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>-2026.10.04",
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>typo",
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>+typo",
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>_typo",
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>5",
+    # A dotted extension is only exempt for the one real filename form. A broad
+    # `startswith(f"{PLACEHOLDER_REF}.")` test let every one of these through.
+)
+
+# Dotted extensions after the placeholder. Only `.md` is exempt.
+PLACEHOLDER_DOTTED_EXTENSIONS: tuple[str, ...] = (
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>.typo",
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>.md-typo",
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>.md.typo",
+)
+
+# A link to a note filename whose tag is not complete. The file does not exist, so
+# `pinned_release_tags()` cannot catch it: it reads the notes directory, not the
+# links pointing into it.
+BROKEN_NOTE_FILENAMES: tuple[str, ...] = (
+    f"notes-{PINNED_TAG_PREFIX}2026.10.4.md",
+    f"notes-{PINNED_TAG_PREFIX}2026.10.04-typo.md",
+    f"notes-{PINNED_TAG_PREFIX}latest.md",
+    # The tag is complete here; the extension is what runs on.
+    f"notes-{PINNED_TAG_PREFIX}2026.10.04.md.typo",
+)
+
+NONNUMERIC_REFS: tuple[str, ...] = (
+    f"{PINNED_TAG_PREFIX}latest",
+    f"{PINNED_TAG_PREFIX}rc1",
+    f"{PINNED_TAG_PREFIX}v2026.10.04",
+    f"{PINNED_TAG_PREFIX}next",
+)
+
+# A ref immediately followed by `.md`, which is a filename extension in one shape
+# only. `(ref, want_reported)`.
+MD_AFTER_A_REF: tuple[tuple[str, bool], ...] = (
+    (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md", False),
+    # A checkout URL written with the https form rather than an account-linked
+    # remote, because `scripts/public-release-audit.py --strict` rejects a tracked
+    # `git@host/path` as an unreviewed account-linked email.
+    (
+        f"uv tool install git+https://example.invalid/x.git@{PINNED_TAG_PREFIX}2026.10.04.md",
+        True,
+    ),
+    (f"/blob/{PINNED_TAG_PREFIX}2026.10.04.md-typo/docs/pairing.md", True),
+    (f"install {PINNED_TAG_PREFIX}2026.10.04.md now", True),
+)
+
+PUNCTUATION_AFTER_A_REF: tuple[str, ...] = (
+    "!",
+    "?",
+    ">",
+    ".",
+    ",",
+    ";",
+    ":",
+    ")",
+    "]",
+    "`",
+    '"',
+    "'",
+    " ",
+    "\n",
+)
+
+# Refs `test_every_malformed_ref_shape_is_recognised` asserts on, each of which was a
+# real gap in an earlier version of that check. Module constants rather than locals
+# because a local literal is narrowed to its own length by the type checker, which
+# would then report the non-emptiness guard below as unreachable.
+MALFORMED_REFS: tuple[str, ...] = (
+    "healthrelay-receiver-2026.10.4",
+    "healthrelay-receiver-2026.10.041",
+    "healthrelay-receiver-2026.10.04-typo",
+    "healthrelay-receiver-2026.10.04typo",
+    "healthrelay-receiver-2026.1.04",
+    # A date short a digit anywhere, in either component.
+    "healthrelay-receiver-2026.1.4",
+    "healthrelay-receiver-202.10.04",
+    # The date runs on past the day it names.
+    "healthrelay-receiver-2026.10.04.5",
+)
+WELL_FORMED_REFS: tuple[str, ...] = (
+    "healthrelay-receiver-2026.10.04",
+    "notes-healthrelay-receiver-2026.10.04.md",
+    "/blob/healthrelay-receiver-2026.10.04/docs/pairing.md",
+    "`healthrelay-receiver-2026.10.04`",
+    "healthrelay-receiver-2026.10.04/docs",
+)
+
+
+def _is_a_correct_reference(ref: str) -> bool:
+    """Whether a captured run is a reference written correctly, so not reported.
+
+    Three shapes are correct, and each is correct for a stated reason rather than
+    because it happens not to match:
+
+    - the bare tag itself, `healthrelay-receiver-2026.10.04`;
+    - a release-note filename, `notes-healthrelay-receiver-2026.10.04.md`, where the
+      ref is part of a filename rather than prose after the prefix;
+    - the documented placeholder `healthrelay-receiver-<YYYY.MM.DD>`, which names no
+      release and appears as prose in several tracked files.
+    """
+    if PINNED_TAG_RE.fullmatch(ref):
+        return True
+    if ref == f"{PLACEHOLDER_REF}.md":
+        # The placeholder as a *filename extension*: the shape the release-notes
+        # README documents, appearing in `.github/release/README.md` and
+        # `docs/versioning.md`. It names no release, so it is exempt on the same
+        # grounds as the bare placeholder.
+        #
+        # Exactly `.md` and nothing else. A `startswith(f"{PLACEHOLDER_REF}.")` test
+        # silently exempted every dotted extension, so `…<YYYY.MM.DD>.typo` and
+        # `…<YYYY.MM.DD>.md-typo` passed both checks.
+        return True
+    if ref == PLACEHOLDER_REF:
+        return True
+    return bool(re.fullmatch(NOTE_FILENAME_RUN, ref))
+
+
+def malformed_pinned_refs() -> list[tuple[str, str]]:
+    """Every mention of the pinned prefix in the docs that is not a bare tag.
+
+    Returns `(path, ref)` pairs. A correctly written reference is followed by a
+    character that cannot be part of a ref, so a well-formed tag is exactly a run
+    that `PINNED_TAG_RE` matches in full. Anything else is reported, whether it is
+    a complete date with a bad suffix or a date that is short a digit.
+    """
+    found: list[tuple[str, str]] = []
+    for path in _tracked_documentation_sources():
+        text = path.read_text(encoding="utf-8")
+        for match in ANY_PINNED_REF_RUN.finditer(text):
+            ref = match.group(0)
+            if _is_a_correct_reference(ref):
+                continue
+            found.append((str(path.relative_to(ROOT)), ref))
+    return found
+
+
+# Two source sets, with different questions and different answers, composed per
+# check below. They are deliberately separate rather than one filtered list,
+# because each check needs an exclusion the other must not have:
+#
+# - `_markdown_sources()` answers **"which documents are public?"** — git-tracked,
+#   non-generated Markdown, so a draft pinned ref in `.tmp/` or a `.build`
+#   dependency tree cannot fail the release guard for a reason that has nothing
+#   to do with any release. Asked of `git` rather than guessed from a directory
+#   list, so a newly ignored directory is covered without editing this module.
+# - `_release_note_sources()` answers **"which files are release notes?"** — the
+#   notes themselves, which are published documentation like any other.
+#
+# Why they differ: an ordinary public release note (`notes-v1.1.1.md`) naming a
+# valid new pinned ref is a claim that the ref is published, so tag discovery has
+# to read it — and a mistyped `/blob/healthrelay-receiver-.../...` link inside a
+# published note is a broken ref, so the malformed-ref check has to read it too.
+# A single exclusion set cannot serve both: dropping the notes from discovery
+# (as an earlier version did) made a documented-but-unnoted ref invisible, and
+# reconciling that by dropping them from the malformed scan too hid a mistyped
+# link in a file that was already published.
+
+
+def _markdown_sources() -> list[Path]:
+    """Public documentation: git-tracked, non-generated Markdown, excluding notes.
+
+    Git-tracked rather than merely not-ignored, so a file that exists only in this
+    working tree — a scratch document, a dependency tree checked out under
+    `.build`, a stale `.pytest_cache` — is never read as something a reader could
+    be shown. Falls back to walking the tree with the ignored set removed if git
+    cannot answer, which leaves the scan stricter rather than looser: an
+    untracked file would then be reported, never silently skipped.
+    """
+    tracked = _git_tracked_paths()
+    paths: list[Path] = []
+    if tracked is not None:
+        paths = [path for path in tracked if path.suffix == ".md"]
+    else:
+        ignored = _git_ignored_paths()
+        for root in PINNED_TAG_SCAN_ROOTS:
+            for path in sorted(root.rglob("*.md")):
+                relative = path.relative_to(root)
+                if relative.parts and relative.parts[0] in _SCAN_EXCLUDED_DIRS:
+                    continue
+                if path.resolve() not in ignored:
+                    paths.append(path)
+    notes = RELEASE_NOTES.resolve()
+    return [p for p in paths if notes not in p.resolve().parents and p.is_file()]
+
+
+def _release_note_sources() -> list[Path]:
+    """Every release note this module is pointed at: published docs, must be scanned.
+
+    A note is public documentation only once it is committed, so an untracked
+    draft under `.github/release/` must not fail the missing-notes or malformed-ref
+    guard before it could ever be published.
+
+    The filter is by resolved path against the directory the module is currently
+    pointed at, NOT by asking git: a test repoints `RELEASE_NOTES` at a copy under
+    `.pytest_cache`, and that copy is deliberately untracked, so a git-based
+    filter would make those probes vacuous. The untracked-draft case is covered by
+    `test_an_untracked_release_note_is_not_published_documentation` instead, which
+    writes a draft into the real notes directory and asserts that neither composed
+    scan reads it.
+    """
+    if not RELEASE_NOTES.is_dir():
+        return []
+    return sorted(p for p in RELEASE_NOTES.rglob("*.md") if p.is_file())
+
+
+def _tracked_documentation_sources() -> list[Path]:
+    """Every published Markdown file: the public documents and the tracked notes.
+
+    The composition the two checks actually read. A note is included only once it
+    is git-tracked, so an untracked draft cannot fail the guard; the tracked set
+    comes from the notes' own tracked paths, which is what lets a test repoint
+    `RELEASE_NOTES` at a copy and still have the checks read it.
+    """
+    documents = _markdown_sources()
+    tracked = _git_tracked_paths()
+    if tracked is None:
+        # Git cannot answer, so nothing can be proven unpublishable. Read every
+        # note: the fallback is noisier, never weaker.
+        return documents + _release_note_sources()
+    tracked_resolved = {path.resolve() for path in tracked}
+    published = [
+        path for path in _release_note_sources() if path.resolve() in tracked_resolved
+    ]
+    return documents + published
+
+
+def _git_tracked_paths() -> list[Path] | None:
+    """Absolute paths git reports as tracked, or None if git cannot answer."""
+    result = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-z", "--cached"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return [
+        (ROOT / line).resolve() for line in result.stdout.split("\0") if line.strip()
+    ]
+
+
+def _git_ignored_paths() -> frozenset[Path]:
+    """Absolute paths `git` reports as ignored.
+
+    Used only by the fallback in `_markdown_sources`, and asserted directly by
+    `test_an_ignored_file_is_not_public_documentation`. Falls back to an empty set
+    if git cannot answer, which leaves that scan stricter rather than looser.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "--others", "-i", "--exclude-standard"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return frozenset()
+    return frozenset(
+        (ROOT / line).resolve() for line in result.stdout.splitlines() if line.strip()
+    )
+
+
 def pinned_tags_named_in_docs() -> set[str]:
-    """Pinned tags mentioned in release notes, docs, README.md or FORK.md."""
+    """Pinned tags mentioned in any published Markdown in the repository.
+
+    Scans the public documents *and* the release notes, rather than a hand-listed
+    set of sources, so a pinned tag published in a new file — or added to a release
+    note, which is published documentation like any other — still requires release
+    notes of its own. Excluded are git-ignored and untracked paths, which are not
+    publishable, and the usual build and virtualenv directories.
+    """
     named: set[str] = set()
-    for source in PINNED_TAG_SOURCES:
-        paths = sorted(source.rglob("*.md")) if source.is_dir() else [source]
-        for path in paths:
-            if path.is_file():
-                named.update(PINNED_TAG_RE.findall(path.read_text(encoding="utf-8")))
+    for path in _tracked_documentation_sources():
+        named.update(PINNED_TAG_RE.findall(path.read_text(encoding="utf-8")))
     return named
 
 
@@ -633,10 +1110,17 @@ def scan_workflow_file(
         )
         return [fail_closed]
     relative = _relative_to_root(path)
-    allowed = dict(allowances)
-    if relative in allowed and PINNED_TAG_PREFIX in text:
-        return []
     problems = workflow_problems(text, tag_allowance)
+    if relative in dict(allowances) and PINNED_TAG_PREFIX in text:
+        # The allowance covers the *prefix-appearance* rule and nothing else, so
+        # only that one problem is dropped. Returning early here would silence
+        # every other finding in the file: an allowlisted mention in a comment
+        # plus an unfiltered `push:` would report nothing at all.
+        prefix_problem = (
+            f"the file mentions {PINNED_TAG_PREFIX!r}; a pinned receiver release"
+            " must never appear in a workflow, not even in a comment"
+        )
+        problems = [problem for problem in problems if problem != prefix_problem]
     return [f"{relative}: {problem}" for problem in problems]
 
 
@@ -813,6 +1297,578 @@ def test_release_notes_must_name_the_commit_in_its_base_commit_field() -> None:
     assert not release_notes_name_their_base_commit("| Artifact commit | `deadbeef` |")
     assert not release_notes_name_their_base_commit("| Previous commit | `4677570` |")
     assert not release_notes_name_their_base_commit("| commit | `4677570` |")
+
+
+def test_a_malformed_pinned_ref_in_the_docs_is_reported() -> None:
+    """A ref that runs on past its date is a broken install command.
+
+    `PINNED_TAG_RE` refuses to match `healthrelay-receiver-2026.10.04-typo` or
+    `healthrelay-receiver-2026.10.041` as a tag, so those mentions are skipped
+    entirely by discovery — which means they satisfy no assertion at all. They
+    have to be reported in their own right, because each one is a documented ref
+    that does not exist.
+
+    A date short a digit is included: `healthrelay-receiver-2026.10.4` is the same
+    lost-zero shape this module rejects in a release-notes filename, and a
+    pattern that needed a complete date before it could object would never see it.
+    """
+    malformed = sorted(malformed_pinned_refs())
+    detail = "\n".join(f"  {path}: {ref!r}" for path, ref in malformed)
+    assert not malformed, (
+        "these mentions of a pinned receiver tag are not a well-formed tag and"
+        f" would install nothing:\n{detail}"
+    )
+
+
+def test_git_valid_ref_characters_are_part_of_a_ref() -> None:
+    """`+` is legal in a git ref name, so it cannot be a prose delimiter.
+
+    `git check-ref-format refs/tags/healthrelay-receiver-2026.10.04+typo` succeeds,
+    so an install target ending `…2026.10.04+typo` names a real, distinct ref that
+    is not a tag of this scheme. The run used to stop at the date, the valid prefix
+    was captured, and both checks passed over the broken revision.
+    """
+    assert PLUS_SUFFIX_REFS, "the plus-suffix fixture is empty, so this asserts nothing"
+    for ref in PLUS_SUFFIX_REFS:
+        runs: list[str] = ANY_PINNED_REF_RUN.findall(f"uv tool install git+x.git@{ref}")
+        assert runs, f"{ref!r} is not recognised at all"
+        assert not _is_a_correct_reference(runs[0]), (
+            f"{ref!r} captured {runs[0]!r} and was accepted, but git permits `+` in "
+            "a ref name, so this is a distinct broken ref rather than prose"
+        )
+
+
+def test_a_note_filename_exemption_still_requires_a_complete_tag() -> None:
+    """The `.md` exemption must not become a hole in its own right.
+
+    The filename alternative once reused the permissive `REF_RUN`, which validates
+    only a generic character run, so every `notes-<anything>.md` was exempt — a link
+    to `notes-…-2026.10.4.md` or `notes-…-2026.10.04-typo.md` passed both checks.
+    `pinned_release_tags()` cannot catch it: it reads the notes directory, not the
+    links pointing into it, so the broken link is the only evidence.
+    """
+    assert BROKEN_NOTE_FILENAMES, "the fixture is empty, so this asserts nothing"
+    for filename in BROKEN_NOTE_FILENAMES:
+        runs: list[str] = ANY_PINNED_REF_RUN.findall(f"see [{filename}](../x.md)")
+        assert runs, f"{filename!r} is not recognised at all"
+        assert not _is_a_correct_reference(runs[0]), (
+            f"{filename!r} was accepted, but its tag is not complete, so the link is "
+            "broken and the filename exemption must not cover it"
+        )
+    good = f"notes-{PINNED_TAG_PREFIX}2026.10.04.md"
+    assert _is_a_correct_reference(good), f"{good!r} is a correct reference"
+
+
+def test_the_placeholder_exemption_covers_only_the_whole_token() -> None:
+    """Exempting the placeholder must not exempt a malformed template.
+
+    The placeholder alternative matched the bare token and nothing more, so
+    `…<YYYY.MM.DD>-typo` matched neither alternative at all: invisible to the
+    malformed-ref check and contributing no tag to discovery. Following the
+    published template would create a ref outside the date-only scheme.
+    """
+    assert PLACEHOLDER_EXTENSIONS, "the fixture is empty, so this asserts nothing"
+    for ref in PLACEHOLDER_EXTENSIONS:
+        runs: list[str] = ANY_PINNED_REF_RUN.findall(f"see {ref} for the form")
+        assert runs, f"{ref!r} is not recognised at all, so neither check can see it"
+        assert not _is_a_correct_reference(runs[0]), (
+            f"{ref!r} captured {runs[0]!r} and was accepted; it extends the "
+            "placeholder, so it is not the documented form"
+        )
+    # Only `.md` is exempt as a dotted extension. The allowance was once a
+    # `startswith(f"{PLACEHOLDER_REF}.")`, which exempted every dotted suffix.
+    for ref in PLACEHOLDER_DOTTED_EXTENSIONS:
+        dotted: list[str] = ANY_PINNED_REF_RUN.findall(f"see {ref} for the form")
+        assert dotted, f"{ref!r} is not recognised at all"
+        assert not _is_a_correct_reference(dotted[0]), (
+            f"{ref!r} captured {dotted[0]!r} and was accepted, but only the exact "
+            f"{PLACEHOLDER_REF}.md filename form is exempt"
+        )
+    assert _is_a_correct_reference(PLACEHOLDER_REF), (
+        "the bare placeholder names no release and must stay exempt"
+    )
+    assert _is_a_correct_reference(f"{PLACEHOLDER_REF}.md"), (
+        f"{PLACEHOLDER_REF}.md is the documented note-filename form in "
+        ".github/release/README.md and docs/versioning.md"
+    )
+    assert ANY_PINNED_REF_RUN.findall(f"see {PLACEHOLDER_REF} for the form"), (
+        "the bare placeholder must still be recognised"
+    )
+
+
+def test_a_ref_with_no_digits_at_all_is_still_reported() -> None:
+    """A wholly nonnumeric suffix names no release and must not pass unnoticed.
+
+    The catch-all body began `[0-9]`, so `healthrelay-receiver-latest`,
+    `-rc1` and `-v2026.10.04` matched nothing at all: invisible to the
+    malformed-ref check, and contributing no tag to discovery, so a public ref
+    violating the `YYYY.MM.DD` scheme passed both. Only the documented
+    `<YYYY.MM.DD>` placeholder is exempt, and it is exempt by name.
+    """
+    assert NONNUMERIC_REFS, (
+        "the nonnumeric-ref fixture is empty, so this asserts nothing"
+    )
+    for ref in NONNUMERIC_REFS:
+        runs: list[str] = ANY_PINNED_REF_RUN.findall(f"install {ref} now")
+        assert runs, (
+            f"{ref!r} is not recognised as a pinned ref run at all, so neither the "
+            "malformed-ref check nor tag discovery can see it"
+        )
+        assert not _is_a_correct_reference(runs[0]), (
+            f"{ref!r} is reported as a correct reference"
+        )
+    # And the placeholder, which is prose about the tag form in several tracked
+    # files, must still be accepted rather than reported by this same rule.
+    assert _is_a_correct_reference(PLACEHOLDER_REF), (
+        "the documented placeholder names no release and must not be reported"
+    )
+    assert ANY_PINNED_REF_RUN.findall(f"checkout {PLACEHOLDER_REF}"), (
+        "the placeholder must still be recognised as a pinned ref run"
+    )
+
+
+def test_md_is_exempt_only_in_a_release_note_filename() -> None:
+    """`.md` after a ref is a filename extension only in a release note's name.
+
+    The `(?!md\\b)` exemption was global, so it also stopped the run at `.md` in a
+    checkout URL. An `…@healthrelay-receiver-2026.10.04.md` install target and
+    `/blob/healthrelay-receiver-2026.10.04.md-typo/...` both left the valid
+    `...10.04` prefix for both checks to pass, over a broken ref. The exemption is
+    now keyed on the one filename shape that carries a ref.
+    """
+    assert MD_AFTER_A_REF, "the .md fixture is empty, so this asserts nothing"
+    for ref, want_reported in MD_AFTER_A_REF:
+        runs: list[str] = ANY_PINNED_REF_RUN.findall(ref)
+        assert runs, f"{ref!r} is not recognised at all"
+        assert (not _is_a_correct_reference(runs[0])) == want_reported, (
+            f"{ref!r} captured {runs[0]!r} and reported="
+            f"{not _is_a_correct_reference(runs[0])}, expected reported={want_reported}"
+        )
+
+
+def test_every_malformed_ref_shape_is_recognised() -> None:
+    """The recogniser covers the shapes it is claimed to, and not the good ones.
+
+    Pinned here rather than only in the acceptance script, because each of these
+    was a real gap in an earlier version of this check.
+
+    Both fixtures are asserted non-empty before either loop, in the style of
+    `test_workflow_guard_is_not_vacuous`. A loop over an empty fixture never runs,
+    so emptying either one used to leave the whole suite green while this test
+    asserted nothing at all — the same vacuity as an empty
+    `RELEASE_TRIGGERING_WORKFLOWS`, and invisible unless someone tries it. They are
+    module constants rather than locals because a local literal is narrowed to its
+    own length by the type checker, which would report the guard as unreachable.
+    """
+    malformed = MALFORMED_REFS
+    well_formed = WELL_FORMED_REFS
+    assert malformed, (
+        "the malformed-ref fixture is empty, so this test asserts nothing about a "
+        "broken ref"
+    )
+    assert well_formed, (
+        "the well-formed-ref fixture is empty, so this test asserts nothing about a "
+        "correct ref"
+    )
+    for ref in malformed:
+        runs: list[str] = ANY_PINNED_REF_RUN.findall(f"install {ref} now")
+        assert runs, f"{ref!r} is not recognised as a pinned ref run at all"
+        assert not _is_a_correct_reference(runs[0]), (
+            f"{ref!r} is reported as a correct reference"
+        )
+    for ref in well_formed:
+        found: list[str] = ANY_PINNED_REF_RUN.findall(f"see {ref} for details")
+        assert found, f"{ref!r} is not recognised at all"
+        assert _is_a_correct_reference(found[0]), (
+            f"the correct reference {ref!r} was read as {found[0]!r}, so it would be "
+            "reported as malformed"
+        )
+
+
+def test_an_ignored_file_is_not_public_documentation() -> None:
+    """Local output is not public documentation.
+
+    A working tree carries `.pytest_cache`, `.build` trees and scratch
+    directories. Without this a draft pinned ref in a scratch file fails the
+    release guard for a reason that has nothing to do with a release — which
+    teaches everyone to ignore the guard.
+
+    The exclusion is asked of git rather than guessed from a directory list, so a
+    newly ignored directory is covered without editing this module.
+    """
+    scratch = ROOT / ".pytest_cache" / "README.md"
+    if scratch.exists():
+        scratch.unlink()
+    scratch.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _ = scratch.write_text(
+            "scratch\n\nhealthrelay-receiver-2027.03.03\n", encoding="utf-8"
+        )
+        ignored = _git_ignored_paths()
+        if not ignored:
+            # No git repository here — the acceptance script runs the suite in a
+            # throwaway copy of the tracked tree. The exclusion is a no-op rather
+            # than a wrong answer, so the invariant that matters is simply that
+            # nothing crashed and the scan still returns a list.
+            assert isinstance(_markdown_sources(), list)
+            return
+        assert scratch.resolve() in ignored, (
+            "git reports .pytest_cache/README.md as ignored, so the scan must "
+            "skip it; local output is not public documentation"
+        )
+        assert scratch not in _markdown_sources(), (
+            "an ignored scratch file is not a public document"
+        )
+        assert scratch not in _markdown_sources() + _release_note_sources(), (
+            "the git-ignored exclusion applies to both source sets: an ignored "
+            "file is not public documentation, and it is not a release note "
+            "either, so neither the malformed-ref scan nor tag discovery may "
+            "read it"
+        )
+    finally:
+        shutil.rmtree(scratch.parent, ignore_errors=True)
+
+
+def test_an_untracked_file_is_not_public_documentation() -> None:
+    """Not merely ignored: a file git does not track cannot be published.
+
+    `.pytest_cache` and `.tmp/` are covered by `.gitignore`, but an *untracked*
+    file that no ignore rule covers is equally unpublishable — a scratch document
+    left in `docs/`, or a dependency tree a build wrote somewhere unexpected.
+    Discovery asks git what is tracked, so an untracked Markdown file is not
+    public documentation even when nothing ignores it.
+    """
+    scratch = ROOT / "docs" / "scratch-untracked.md"
+    tracked = _git_tracked_paths()
+    if tracked is None:
+        return
+    assert not scratch.exists(), f"{scratch.name} exists; the probe needs a fresh name"
+    _ = scratch.write_text("healthrelay-receiver-2099.09.09\n", encoding="utf-8")
+    try:
+        after = _git_tracked_paths()
+        assert after is not None, "git stopped answering mid-test"
+        assert scratch not in after, (
+            "the probe must be untracked, or it is testing nothing"
+        )
+        assert scratch not in _markdown_sources(), (
+            "an untracked file is not publishable documentation, so a draft "
+            "pinned ref in it must not fail the release guard"
+        )
+    finally:
+        scratch.unlink()
+
+
+def test_an_untracked_release_note_is_not_published_documentation() -> None:
+    """The notes set is tracked-only too, for the same reason as `_markdown_sources`.
+
+    `_markdown_sources` excludes the notes directory and defines public
+    documentation as git-tracked. An earlier version of this set was a bare
+    `rglob`, so a draft under `.github/release/` — not ignored by any rule, simply
+    not committed — was read as published documentation, and a date-shaped ref in it
+    failed the guard before it could ever be published.
+    """
+    scratch = RELEASE_NOTES / "scratch-untracked-note.md"
+    tracked = _git_tracked_paths()
+    if tracked is None:
+        return
+    assert not scratch.exists(), f"{scratch.name} exists; the probe needs a fresh name"
+    _ = scratch.write_text("healthrelay-receiver-2099.09.09\n", encoding="utf-8")
+    try:
+        after = _git_tracked_paths()
+        assert after is not None, "git stopped answering mid-test"
+        assert scratch not in after, (
+            "the probe must be untracked, or it is testing nothing"
+        )
+        # It is absent from the set the checks actually read. It is still *in*
+        # `_release_note_sources()`, which enumerates the directory rather than
+        # asking git — that function is the notes a test repoints at a copy, and
+        # the copy is deliberately untracked.
+        assert scratch not in _tracked_documentation_sources(), (
+            "an untracked note is not published documentation, so a draft pinned "
+            "ref in it must not fail the release guard"
+        )
+        # And the composed scans must not see it either, which is the consequence
+        # that matters: these are the two checks' real inputs.
+        assert not [
+            r for r in malformed_pinned_refs() if r[0].endswith(scratch.name)
+        ], "an untracked release note must not be read by the malformed-ref scan"
+        assert "healthrelay-receiver-2099.09.09" not in pinned_tags_named_in_docs(), (
+            "an untracked release note must not contribute a tag to discovery"
+        )
+    finally:
+        scratch.unlink()
+
+
+@contextmanager
+def release_notes_replaced_by_a_copy() -> Generator[Path]:
+    """Yield a writable copy of the release notes, standing in for the real ones.
+
+    Two checks have to read release notes, and proving that they do needs a note
+    naming a ref it should not. That proof used to be written into the tracked
+    `.github/release/` files themselves and put back in a `finally`, which no
+    `finally` can promise: a timeout, a CI cancellation or an OOM kills the process
+    between the write and the restore, and what survives is published release notes
+    containing a fabricated `healthrelay-receiver-2099.01.02` or
+    `healthrelay-receiver-2026.10.04-typo`, one `git commit -a` from being the
+    release record for a release that never happened. Every other `write_text` in
+    this module targets a `TemporaryDirectory` tree or this git-ignored cache
+    directory; these two were the only ones to reach a tracked file.
+
+    The copy lives under `.pytest_cache` for that reason — the same scratch root
+    `test_an_ignored_file_is_not_public_documentation` already uses — so even a copy
+    leaked by an abnormal exit is neither tracked, nor readable as public
+    documentation, nor publishable.
+
+    `RELEASE_NOTES` is repointed for the duration because that is the one path both
+    `_release_note_sources()` and `_markdown_sources()` resolve, and repointing it is
+    the only way to prove the checks *read* the notes rather than merely agreeing
+    that they should. `mock.patch.object` does the repointing because the constant is
+    spelled in upper case and a direct rebinding of it reads as a mistake.
+
+    `release_notes_path`'s default argument is bound when the function is defined, so
+    it still resolves against the real notes directory inside the block. That is
+    deliberate: whether a notes file exists for a ref is a question about the
+    repository, not about the copy.
+
+    The copy is untracked, and `_tracked_documentation_sources()` filters the notes
+    it returns down to git-tracked paths — so this helper patches
+    `_tracked_documentation_sources` as well. Without that, every probe below would
+    silently scan nothing and pass for the wrong reason, which is exactly how the
+    two release-note assertions became vacuous once already.
+    """
+    cache = ROOT / ".pytest_cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    scratch = Path(tempfile.mkdtemp(dir=cache, prefix="release-notes-copy-"))
+    module = sys.modules[__name__]
+    public_documents = _markdown_sources
+
+    def sources_including_the_copy() -> list[Path]:
+        """The checks' sources, with the copy standing in for the tracked notes.
+
+        Patched in place of a git query because the copy is untracked by
+        construction: the tracked-notes filter is what stops an unpublished draft
+        from failing the guard, and it is the one rule a probe of the published
+        notes has to stand in for.
+        """
+        return public_documents() + sorted(scratch.rglob("*.md"))
+
+    try:
+        _ = shutil.copytree(RELEASE_NOTES, scratch, dirs_exist_ok=True)
+        with (
+            mock.patch.object(module, "RELEASE_NOTES", scratch),
+            mock.patch.object(
+                module, "_tracked_documentation_sources", sources_including_the_copy
+            ),
+        ):
+            yield scratch
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_a_pinned_tag_named_in_a_release_note_is_discovered() -> None:
+    """An ordinary public release note naming a ref still requires its own notes.
+
+    The notes were excluded from tag discovery on the reasoning that a release
+    note is what discovery looks up rather than a source of claims. That is true
+    of the *pinned* note being looked up and false of every other note:
+    `notes-receiver-v1.1.1.md` naming `healthrelay-receiver-2099.01.02` is a claim
+    that the ref is published, and with the notes excluded
+    `test_every_pinned_tag_named_in_docs_has_its_own_release_notes` passed while
+    the documented ref had no release notes at all.
+    """
+    # The two source sets really are disjoint, and that is what makes composing
+    # them necessary: a note is reached only because each check adds
+    # `_release_note_sources()` to `_markdown_sources()`. This replaces an assertion
+    # of the form `assert path in _markdown_sources() + sources`, which held by
+    # construction — `sources` was the right-hand operand, so it was true even if
+    # no check ever read a note — and therefore proved nothing.
+    notes = _release_note_sources()
+    documents = {path.resolve() for path in _markdown_sources()}
+    assert notes, f"no release notes found under {RELEASE_NOTES}"
+    assert documents, f"no public documentation found under {ROOT}"
+    for path in notes:
+        assert path.resolve() not in documents, (
+            f"{path.name} is being read as a public document as well as a release"
+            " note; the two sets answer different questions and have to stay"
+            " separate, or the composition below is not what makes notes visible"
+        )
+
+    with release_notes_replaced_by_a_copy() as notes_dir:
+        note = notes_dir / "notes-receiver-v1.1.1.md"
+        assert note.is_file(), (
+            f"{note.name} is missing from the copy, so the probe is testing nothing"
+        )
+        ref = f"{PINNED_TAG_PREFIX}2099.01.02"
+        _ = note.write_text(
+            note.read_text(encoding="utf-8")
+            + f"\ninstall this build at {ref} to pin it\n",
+            encoding="utf-8",
+        )
+        # The copy has to be the source set these checks read, or every assertion
+        # below is vacuous for a second and more subtle reason.
+        assert note in _release_note_sources(), (
+            "the release-notes copy is not the source set the checks read, so "
+            "writing to it cannot prove anything about them"
+        )
+        assert ref in pinned_tags_named_in_docs(), (
+            f"{note.name} names {ref}, so discovery must see it; an ordinary "
+            "release note is published documentation and a claim in it that the "
+            "ref is released"
+        )
+        missing = sorted(
+            tag
+            for tag in pinned_tags_named_in_docs()
+            if not release_notes_path(tag).is_file()
+        )
+        assert missing == [ref], (
+            f"{note.name} names {ref} and there is no notes file for it, so "
+            "test_every_pinned_tag_named_in_docs_has_its_own_release_notes must "
+            f"fail; it passes only if the notes are excluded from discovery "
+            f"(got {missing})"
+        )
+
+
+def test_release_notes_are_scanned_for_malformed_refs() -> None:
+    """A mistyped ref inside a published note is a broken link in public docs.
+
+    The notes share the malformed-ref scan with the rest of the documentation. A
+    `/blob/healthrelay-receiver-2026.10.04-typo/...` link in a note that has
+    already been published reaches every reader of it, and the per-note checks
+    still pass as long as the heading and install command remain elsewhere in
+    the file — so only this scan can see it.
+    """
+    with release_notes_replaced_by_a_copy() as notes_dir:
+        note = notes_dir / f"notes-{PINNED_TAG_PREFIX}2026.10.04.md"
+        assert note.is_file(), (
+            f"{note.name} is missing from the copy, so the probe is testing nothing"
+        )
+        broken = f"{PINNED_TAG_PREFIX}2026.10.04-typo"
+        _ = note.write_text(
+            note.read_text(encoding="utf-8") + f"\n/blob/{broken}/docs/pairing.md\n",
+            encoding="utf-8",
+        )
+        assert note in _release_note_sources(), (
+            "the release-notes copy is not the source set the malformed-ref scan"
+            " reads, so writing to it cannot prove anything about the scan"
+        )
+        assert (str(note.relative_to(ROOT)), broken) in malformed_pinned_refs(), (
+            "a mistyped /blob link inside a published release note must be"
+            f" reported as {broken!r} in {note.relative_to(ROOT)}; the per-note"
+            " checks cannot see it. Reported findings were"
+            f" {sorted(malformed_pinned_refs())}"
+        )
+
+
+def test_a_malformed_ref_is_reported_however_it_is_punctuated() -> None:
+    """The boundary must recognise punctuation without capturing it.
+
+    Two failures hid behind one boundary. A ref run followed immediately by `!`,
+    `?` or `>` had no recognised terminator, so `finditer` returned *no match* —
+    `healthrelay-receiver-2026.10.04-typo!` satisfied no assertion anywhere and
+    the guard was green. And a sentence-ending period was consumed into the
+    captured ref, so the perfectly correct `healthrelay-receiver-2026.10.04.` was
+    reported as malformed.
+
+    Both directions are asserted for every punctuation mark below: punctuation
+    after a broken ref must not hide it, and punctuation after a correct ref must
+    not invent a finding. The list is deliberately not exhaustive — the point is
+    that the boundary is "a character that cannot be part of a ref", so it does
+    not depend on this list being complete.
+    """
+    # Without this the loop below never runs: emptying the fixture left the whole
+    # suite green while this test asserted nothing, which is the vacuity
+    # `test_workflow_guard_is_not_vacuous` already guards against for the workflow
+    # fixtures.
+    assert PUNCTUATION_AFTER_A_REF, (
+        "the punctuation fixture is empty, so this test asserts nothing"
+    )
+    broken = f"{PINNED_TAG_PREFIX}2026.10.04-typo"
+    correct = f"{PINNED_TAG_PREFIX}2026.10.04"
+    for punctuation in PUNCTUATION_AFTER_A_REF:
+        for ref, want_malformed in ((broken, True), (correct, False)):
+            line = f"install {ref}{punctuation}"
+            runs: list[str] = ANY_PINNED_REF_RUN.findall(line)
+            assert runs, (
+                f"{line!r} produced no match at all, so the ref is invisible to "
+                f"every check; punctuation {punctuation!r} is not recognised as "
+                "terminating a ref run"
+            )
+            # The captured ref must never carry the punctuation with it.
+            assert runs[0] == ref, (
+                f"{line!r} captured {runs[0]!r} instead of {ref!r}; the boundary "
+                "must recognise punctuation without including it in the ref"
+            )
+            assert (PINNED_TAG_RE.fullmatch(runs[0]) is None) == want_malformed, (
+                f"{line!r} was read as {runs[0]!r}; want "
+                f"{'a malformed ref' if want_malformed else 'the bare tag'}"
+            )
+
+
+# The two refs every boundary test contrasts: one broken by a suffix, one correct.
+BROKEN_SUFFIX = f"{PINNED_TAG_PREFIX}2026.10.04-typo"
+BARE_TAG = f"{PINNED_TAG_PREFIX}2026.10.04"
+
+# (label, lead-in, the non-ASCII character that follows, the ref that must be
+# captured, and whether that ref must be reported).
+#
+# The non-ASCII characters are the ones a document in another language actually puts
+# next to a ref: a CJK word, a Latin-1 accented letter, a Cyrillic letter pasted
+# from a keyboard, and a superscript. The first four rows are broken refs and the
+# last four are correct ones, and the required verdict differs between them — which
+# is the whole point. A terminator that ends a ref must not be able to hide a
+# broken one, and must not be able to invent a finding on a correct one.
+NON_ASCII_AFTER_A_REF: tuple[tuple[str, str, str, str, bool], ...] = (
+    ("broken_cjk", "请安装 ", "版本", BROKEN_SUFFIX, True),
+    ("broken_accented", "pin ", "\u00e9", BROKEN_SUFFIX, True),
+    ("broken_cyrillic", "pin ", "\u0442", BROKEN_SUFFIX, True),
+    ("broken_superscript", "install ", "\u00b2", BROKEN_SUFFIX, True),
+    ("correct_cjk", "请安装 ", "版本", BARE_TAG, False),
+    ("correct_accented", "pin ", "\u00e9", BARE_TAG, False),
+    ("correct_cyrillic", "pin ", "\u0442", BARE_TAG, False),
+    ("correct_superscript", "install ", "\u00b2", BARE_TAG, False),
+)
+
+
+def test_a_non_ascii_character_ends_a_ref_without_joining_it() -> None:
+    """A non-ASCII character terminates a ref and is never absorbed into one.
+
+    The boundary used to be the complement of `\\w`, and Python's `\\w` is
+    Unicode-aware, so every Unicode letter, mark and number counted as part of a
+    ref. Both directions of that were wrong, and each had its own reproduction:
+
+    - **Fail-open.** `请安装 healthrelay-receiver-2026.10.04-typo版本` reported
+      nothing. The regex could not end the run on `版`, so it backtracked off the
+      entire broken suffix `-typo`, matched `healthrelay-receiver-2026.10.04`, and
+      that prefix is a well-formed tag — so a documented ref that installs nothing
+      satisfied no assertion anywhere. `PINNED_TAG_RE.findall` returns `[]` for the
+      same text, so tag discovery cannot see it either.
+    - **False positive.** `install healthrelay-receiver-2026.10.04²` reported
+      `healthrelay-receiver-2026.10` as malformed, because the run had to be cut
+      short before the superscript and shortening it too far was enough to break the
+      tag shape.
+
+    A ref's alphabet is ASCII — digits, ASCII letters, `_`, `-` and `.` — so the
+    expected ref is always the ASCII part of what was written, and the non-ASCII
+    character is always outside it.
+    """
+    assert NON_ASCII_AFTER_A_REF, "the non-ASCII boundary fixture was dropped"
+    for label, lead, trail, want_ref, want_malformed in NON_ASCII_AFTER_A_REF:
+        text = lead + want_ref + trail
+        runs: list[str] = ANY_PINNED_REF_RUN.findall(text)
+        assert runs, (
+            f"{text!r} ({label}) produced no match at all, so the ref is invisible"
+            " to every check; a non-ASCII character is being read as part of a ref"
+            " rather than as the end of one"
+        )
+        assert runs[0] == want_ref, (
+            f"{text!r} ({label}) captured {runs[0]!r} instead of {want_ref!r}; a"
+            " non-ASCII character must end a ref without joining it, so the"
+            " captured ref is exactly the ASCII part of what was written"
+        )
+        assert (PINNED_TAG_RE.fullmatch(runs[0]) is None) == want_malformed, (
+            f"{text!r} ({label}) was read as {runs[0]!r}; want "
+            f"{'a malformed ref' if want_malformed else 'the bare tag'}"
+        )
 
 
 def test_release_notes_name_the_tag_install_command_and_intake_tool() -> None:
@@ -1067,6 +2123,32 @@ def test_reviewed_allowlist_suppresses_only_the_named_file() -> None:
         ]
     assert flagged, "the allowlist must not silence other files"
     assert all("other.yml" in problem for problem in flagged)
+
+
+def test_allowlisting_a_prefix_mention_keeps_the_other_findings() -> None:
+    """The allowance exempts one rule, not the whole file.
+
+    An allowlisted prefix mention used to return early, so any other problem in
+    that file went unreported: a comment carrying the prefix alongside an
+    unfiltered `push:` produced nothing at all. The prefix rule is the only
+    thing an allowance waives.
+    """
+    body = f"# this workflow never publishes {PINNED_TAG_PREFIX} tags\non:\n  push:\n"
+    with tempfile.TemporaryDirectory() as raw:
+        tmp_path = Path(raw)
+        allowed = tmp_path / "allowed.yml"
+        _ = allowed.write_text(body, encoding="utf-8")
+        with_allowance = scan_workflow_file(
+            allowed, ((str(allowed), "reviewed: example"),)
+        )
+        without = scan_workflow_file(allowed)
+    assert not any(PINNED_TAG_PREFIX in problem for problem in with_allowance), (
+        f"the allowance did not suppress the prefix finding: {with_allowance}"
+    )
+    assert len(with_allowance) == len(without) - 1, (
+        "the allowance must suppress exactly the prefix finding and nothing else: "
+        f"with {with_allowance} vs without {without}"
+    )
 
 
 def test_declared_tag_literals_reports_what_a_workflow_asks_for() -> None:
