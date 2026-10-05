@@ -10,6 +10,17 @@ That line is the only source of truth. Read it first.
 
 ## 1. See what we have not seen
 
+Remotes live in local Git configuration and are **not** committed with the repository, so a fresh
+clone has only `origin`. If `git remote -v` does not list `upstream`, add it first:
+
+```bash
+git remote add upstream https://github.com/roian6/apple-health-ai-bridge.git
+git remote set-url --push upstream DISABLED   # nothing should ever be pushed upstream
+```
+
+The disabled push URL is deliberate: it makes an accidental `git push upstream …` fail rather than
+offer to open a pull request against the project we forked from.
+
 ```bash
 git fetch upstream
 git log --oneline <recorded-sha>..upstream/main
