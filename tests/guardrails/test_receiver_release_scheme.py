@@ -779,6 +779,42 @@ def test_every_pinned_tag_named_in_docs_has_its_own_release_notes() -> None:
     assert not missing, f"pinned tags without release notes: {missing}"
 
 
+# The label must be exactly "base commit". Matching any row whose label merely
+# contains "commit" left the false-pass open through unrelated metadata such as
+# `| Artifact commit | ... |` or `| Previous commit | ... |`.
+BASE_COMMIT_FIELD = re.compile(
+    r"^\|[ \t]*base[ \t]+commit[ \t]*\|[ \t]*`(?P<sha>[0-9a-f]{7,40})`[ \t]*\|",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def release_notes_name_their_base_commit(notes: str) -> bool:
+    """Whether the notes name the release's base commit as that field's value.
+
+    A bare hex search is too weak to be evidence: any copied checksum, example
+    digest or unrelated commit reference would satisfy it while the notes still
+    failed to say which commit the release pins.
+    """
+    return BASE_COMMIT_FIELD.search(notes) is not None
+
+
+def test_release_notes_must_name_the_commit_in_its_base_commit_field() -> None:
+    """A stray hex string is not a base commit; the designated field is.
+
+    Without this the check can silently go back to a bare hex search.
+    """
+    assert release_notes_name_their_base_commit("| Base commit | `4677570` |")
+    assert release_notes_name_their_base_commit("| base commit | `0b42c4fafb13` |")
+    assert not release_notes_name_their_base_commit("artifact sha256: deadbeefcafe")
+    assert not release_notes_name_their_base_commit("see also 4677570 for context")
+    assert not release_notes_name_their_base_commit("| Base commit | see main |")
+    assert not release_notes_name_their_base_commit("")
+    # Another row whose label merely contains "commit" must not stand in for it.
+    assert not release_notes_name_their_base_commit("| Artifact commit | `deadbeef` |")
+    assert not release_notes_name_their_base_commit("| Previous commit | `4677570` |")
+    assert not release_notes_name_their_base_commit("| commit | `4677570` |")
+
+
 def test_release_notes_name_the_tag_install_command_and_intake_tool() -> None:
     for tag in pinned_release_tags():
         notes_path = release_notes_path(tag)
@@ -798,8 +834,9 @@ def test_release_notes_name_the_tag_install_command_and_intake_tool() -> None:
         assert "get_intake_evidence_v1" in notes
         assert "--enable-intake-context" in notes
         assert "health_bridge.batch.v1" in notes
-        assert re.search(r"\b[0-9a-f]{7,40}\b", notes) is not None, (
-            "notes name the commit"
+        assert release_notes_name_their_base_commit(notes), (
+            f"{notes_path.name} must name the release's base commit in a "
+            "`Base commit` field, so an unrelated checksum cannot stand in for it"
         )
 
 
