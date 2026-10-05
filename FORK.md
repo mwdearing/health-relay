@@ -3,7 +3,12 @@
 HealthRelay is a fork of [Apple Health AI Bridge](https://github.com/roian6/apple-health-ai-bridge)
 (Apache-2.0). Forked 2026-09-27 at upstream `4818cdc` (iOS companion 1.1.1 build 50,
 receiver 1.1.1, batch schema `health_bridge.batch.v1` 1.0.0). Upstream is the `upstream`
-git remote; `origin` is the public repo `mwdearing/health-relay`.
+git remote (fetch only; its push URL is disabled so nothing can be pushed by accident);
+`origin` is the public repo `mwdearing/health-relay`.
+
+**To sync from upstream, follow [`docs/upstream-sync.md`](docs/upstream-sync.md).** The
+`Upstream sync, <date>:` entries below are the record of what has been taken and, more importantly,
+what has been deliberately skipped and why.
 
 ## Why a fork
 The upstream companion syncs 67 HealthKit read types in the background to a receiver
@@ -58,6 +63,11 @@ receiver-specific parts stay here.
   reuse it only for the same credential and shared caches never store it. `IntakeRateLimiter` treats
   an empty window as idle instead of indexing into it. Closes #65, #66.
 - Upstream sync, 2026-10-01: upstream checked through 8e4065e; took the live-read test from 27ef4a4; skipped version bump, release docs, release-guardrail tests; urllib3 already in PR #35.
+- Upstream sync, 2026-10-05: upstream checked through `40aa1c9`. **Nothing taken — both commits are deliberate skips, and neither touches `src/` or `ios/`.**
+  - `40aa1c9` (README led with upstream's own product value) adds guardrail assertions that the README must **not** contain `Health Bridge for AI` or `open-source project behind`. Our `test_product_and_project_names_have_an_explicit_relationship` requires the opposite — `HealthRelay is a fork of Apple Health AI Bridge` in `README.md`, `docs/brand.md` and `assets/brand/README.md`. **Taking it would delete our rule**, and that rule is load-bearing: `NOTICE` records that those names and the brand assets are outside the Apache-2.0 grant, §4(d) requires retaining attribution, and a user needs to know which project they run and where to report problems. Correct for upstream, wrong for a fork that is a distinct product with its own issue tracker.
+  - `8e4065e` (verified receiver install instructions point at 1.1.2) corrects `docs/versioning.md` and `docs/roadmap.md` for *upstream's* release identifiers. Ours describe our own pinned `healthrelay-receiver-<date>` scheme and must not adopt upstream's `receiver-v1.1.2` values.
+  - Verified rather than assumed: upstream's only `src/` change between our merge-base `4818cdc` and `receiver-v1.1.2` is the one-line version string. The three capabilities in that release's highlights — native CLI/MCP reads while the receiver runs, lifecycle protection without a lifetime lock, and connections closed on error paths — all landed in `e6416f6`, which is already an ancestor of our `main`.
+  - The `upstream` remote is now configured (fetch only; push disabled), and the repeatable procedure is `docs/upstream-sync.md`.
 - 2026-09-29: ZIP64 support and clearer errors in the export.zip reader (`MinimalZipReader`), including a disk-number check for split archives. Issue and privacy links, SUPPORT/SECURITY routing, plain-language usage strings, plurals, a Diagnostics page and export-sheet fixes; no sync, outbox or pairing change.
 - 2026-09-29: README gains a "Use it with Hermes Agent" section linking the companion plugins `hermes-healthrelay` (read-only MCP + skills) and `hermes-health-insights` (local analysis CLI + skills). No code change.
 - 2026-09-29: beta/stable release channels. `Publish IPA release` now creates only GitHub
