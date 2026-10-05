@@ -50,7 +50,15 @@ from typing import NamedTuple, cast
 
 ROOT = Path(__file__).resolve().parents[2]
 PINNED_TAG_PREFIX = "healthrelay-receiver-"
-PINNED_TAG_RE = re.compile(r"healthrelay-receiver-\d{4}\.\d{2}\.\d{2}")
+# The tag itself. Anchored at neither end on purpose when scanning prose: a
+# mention is malformed if the *ref* runs on past the date, so the tag must not be
+# allowed to satisfy a check by matching only its own prefix. `-typo`, a fourth
+# digit group and a dotted digit are all continuations; a closing backtick, a
+# quote, a slash into a docs path and `.md` in a filename are not, and matching
+# those would report every correctly-written reference in the repository.
+PINNED_TAG_RE = re.compile(
+    r"healthrelay-receiver-\d{4}\.\d{2}\.\d{2}(?![0-9]|-[A-Za-z0-9]|\.[0-9])"
+)
 WORKFLOWS = ROOT / ".github/workflows"
 RELEASE_NOTES = ROOT / ".github/release"
 VERSIONING = ROOT / "docs/versioning.md"
@@ -64,6 +72,16 @@ PINNED_TAG_SOURCES = (
     ROOT / "README.md",
     ROOT / "FORK.md",
 )
+
+# Markdown that publishes an install command and so can name a pinned tag, beyond
+# the sources above: the remaining public documents at the repository root and
+# the templates and policy files under `.github`. Naming them individually was
+# the bug — a new public document, or a pinned tag added to SUPPORT.md or
+# SECURITY.md, would be invisible to the "every documented tag has release notes"
+# assertion, which is exactly the assertion meant to catch a release that was
+# published without them. Every Markdown file in the repository is scanned except
+# the release notes themselves, which are the thing being looked up.
+PINNED_TAG_SCAN_ROOTS = (ROOT,)
 
 # Reviewed exceptions for rule 1: (path relative to the repository root, reason).
 # Empty by default. A deliberate appearance of the pinned prefix in a workflow
@@ -176,12 +194,26 @@ def pinned_release_tags(notes_dir: Path = RELEASE_NOTES) -> tuple[str, ...]:
 
     Discovered from the notes filenames, never hard-coded to one literal, so a
     second pinned release is picked up without editing this module.
+
+    A file whose name starts with the pinned prefix but is not a well-formed tag
+    is a **problem**, not something to skip: `notes-healthrelay-receiver-2026.10.5.md`
+    looks exactly like a release whose date lost a zero, and silently dropping it
+    would let that release ship with none of the heading, install-command and
+    content checks below ever running.
     """
     tags: list[str] = []
+    malformed: list[str] = []
     for path in sorted(notes_dir.glob(f"notes-{PINNED_TAG_PREFIX}*.md")):
         candidate = path.name[len("notes-") : -len(".md")]
         if PINNED_TAG_RE.fullmatch(candidate):
             tags.append(candidate)
+        else:
+            malformed.append(path.name)
+    assert not malformed, (
+        f"these files look like pinned receiver releases but are not named like one: "
+        f"{malformed}. A pinned tag is {PINNED_TAG_PREFIX}<YYYY.MM.DD>; if the date is "
+        "wrong, rename the file rather than leaving it unchecked."
+    )
     return tuple(sorted(tags))
 
 
@@ -189,14 +221,71 @@ def release_notes_path(tag: str, notes_dir: Path = RELEASE_NOTES) -> Path:
     return notes_dir / f"notes-{tag}.md"
 
 
-def pinned_tags_named_in_docs() -> set[str]:
-    """Pinned tags mentioned in release notes, docs, README.md or FORK.md."""
-    named: set[str] = set()
-    for source in PINNED_TAG_SOURCES:
-        paths = sorted(source.rglob("*.md")) if source.is_dir() else [source]
-        for path in paths:
+_SCAN_EXCLUDED_DIRS = frozenset({".git", ".venv", "build", "dist", "__pycache__"})
+
+
+# A mention of the pinned prefix whose date runs on. The continuation is
+# restricted to what a well-formed reference cannot end with: a further digit
+# group, or a hyphenated suffix such as `-typo`. A closing backtick, a quote, a
+# comma, a slash into a docs path and `.md` in a filename all legitimately follow
+# a correct tag, so matching those would report every reference in the repository.
+# Matched greedily because the discovery pattern refuses to match these at all,
+# which means without this they would satisfy no assertion in this module.
+_REF_CONTINUATION = r"(?:\d[A-Za-z0-9._-]*|[.-]\d[A-Za-z0-9._-]*|-[A-Za-z0-9._-]+)"
+MALFORMED_PINNED_REF = re.compile(
+    rf"{PINNED_TAG_PREFIX}\d{{4}}\.\d{{2}}\.\d{{2}}{_REF_CONTINUATION}"
+)
+
+
+def malformed_pinned_refs() -> list[tuple[str, str]]:
+    """Every mention of the pinned prefix in the docs that is not a bare tag.
+
+    Returns `(path, ref)` pairs. A correctly written reference is followed by a
+    delimiter — a closing backtick, a quote, a slash into a docs path, or `.md`
+    in a filename — so the malformed run is the part of the mention that carries
+    a character a tag cannot.
+    """
+    found: list[tuple[str, str]] = []
+    for path in _markdown_sources():
+        text = path.read_text(encoding="utf-8")
+        for match in MALFORMED_PINNED_REF.finditer(text):
+            ref = match.group(0)
+            if PINNED_TAG_RE.fullmatch(ref):
+                continue
+            found.append((str(path.relative_to(ROOT)), ref))
+    return found
+
+
+def _markdown_sources() -> list[Path]:
+    """Every Markdown file a pinned tag could be published in."""
+    paths: list[Path] = []
+    for root in PINNED_TAG_SCAN_ROOTS:
+        for path in sorted(root.rglob("*.md")):
+            relative = path.relative_to(root)
+            if relative.parts and relative.parts[0] in _SCAN_EXCLUDED_DIRS:
+                continue
+            # Compared resolved: `path` is built from an absolute root while
+            # RELEASE_NOTES is likewise absolute, and a relative parent would
+            # silently never match.
+            if path.parent.resolve() == RELEASE_NOTES.resolve():
+                continue
             if path.is_file():
-                named.update(PINNED_TAG_RE.findall(path.read_text(encoding="utf-8")))
+                paths.append(path)
+    return paths
+
+
+def pinned_tags_named_in_docs() -> set[str]:
+    """Pinned tags mentioned in any Markdown in the repository.
+
+    Scans every Markdown file rather than a hand-listed set of public documents,
+    so a pinned tag published in a new file — or added to one that was not on the
+    list — still requires release notes. Excluded are the release notes
+    themselves, which are what the assertion looks up rather than a source of
+    claims, and the usual build and virtualenv directories.
+    """
+    named: set[str] = set()
+    for path in _markdown_sources():
+        named.update(PINNED_TAG_RE.findall(path.read_text(encoding="utf-8")))
     return named
 
 
@@ -633,10 +722,17 @@ def scan_workflow_file(
         )
         return [fail_closed]
     relative = _relative_to_root(path)
-    allowed = dict(allowances)
-    if relative in allowed and PINNED_TAG_PREFIX in text:
-        return []
     problems = workflow_problems(text, tag_allowance)
+    if relative in dict(allowances) and PINNED_TAG_PREFIX in text:
+        # The allowance covers the *prefix-appearance* rule and nothing else, so
+        # only that one problem is dropped. Returning early here would silence
+        # every other finding in the file: an allowlisted mention in a comment
+        # plus an unfiltered `push:` would report nothing at all.
+        prefix_problem = (
+            f"the file mentions {PINNED_TAG_PREFIX!r}; a pinned receiver release"
+            " must never appear in a workflow, not even in a comment"
+        )
+        problems = [problem for problem in problems if problem != prefix_problem]
     return [f"{relative}: {problem}" for problem in problems]
 
 
@@ -813,6 +909,23 @@ def test_release_notes_must_name_the_commit_in_its_base_commit_field() -> None:
     assert not release_notes_name_their_base_commit("| Artifact commit | `deadbeef` |")
     assert not release_notes_name_their_base_commit("| Previous commit | `4677570` |")
     assert not release_notes_name_their_base_commit("| commit | `4677570` |")
+
+
+def test_a_malformed_pinned_ref_in_the_docs_is_reported() -> None:
+    """A ref that runs on past its date is a broken install command.
+
+    `PINNED_TAG_RE` refuses to match `healthrelay-receiver-2026.10.04-typo` or
+    `healthrelay-receiver-2026.10.041` as a tag, so those mentions are skipped
+    entirely by discovery — which means they satisfy no assertion at all. They
+    have to be reported in their own right, because each one is a documented ref
+    that does not exist.
+    """
+    malformed = sorted(malformed_pinned_refs())
+    detail = "\n".join(f"  {path}: {ref!r}" for path, ref in malformed)
+    assert not malformed, (
+        "these mentions of a pinned receiver tag are not a well-formed tag and"
+        f" would install nothing:\n{detail}"
+    )
 
 
 def test_release_notes_name_the_tag_install_command_and_intake_tool() -> None:
@@ -1067,6 +1180,32 @@ def test_reviewed_allowlist_suppresses_only_the_named_file() -> None:
         ]
     assert flagged, "the allowlist must not silence other files"
     assert all("other.yml" in problem for problem in flagged)
+
+
+def test_allowlisting_a_prefix_mention_keeps_the_other_findings() -> None:
+    """The allowance exempts one rule, not the whole file.
+
+    An allowlisted prefix mention used to return early, so any other problem in
+    that file went unreported: a comment carrying the prefix alongside an
+    unfiltered `push:` produced nothing at all. The prefix rule is the only
+    thing an allowance waives.
+    """
+    body = f"# this workflow never publishes {PINNED_TAG_PREFIX} tags\non:\n  push:\n"
+    with tempfile.TemporaryDirectory() as raw:
+        tmp_path = Path(raw)
+        allowed = tmp_path / "allowed.yml"
+        _ = allowed.write_text(body, encoding="utf-8")
+        with_allowance = scan_workflow_file(
+            allowed, ((str(allowed), "reviewed: example"),)
+        )
+        without = scan_workflow_file(allowed)
+    assert not any(PINNED_TAG_PREFIX in problem for problem in with_allowance), (
+        f"the allowance did not suppress the prefix finding: {with_allowance}"
+    )
+    assert len(with_allowance) == len(without) - 1, (
+        "the allowance must suppress exactly the prefix finding and nothing else: "
+        f"with {with_allowance} vs without {without}"
+    )
 
 
 def test_declared_tag_literals_reports_what_a_workflow_asks_for() -> None:
