@@ -24,6 +24,39 @@ receiver-specific parts stay here.
 - Version: do not bump the iOS version by hand. The `Build unsigned IPA` workflow stamps both the marketing version and the build number as `1.2.<run number>`; the tracked values (`MARKETING_VERSION` 1.2.0, `CURRENT_PROJECT_VERSION` 50, `component-versions.json` `ios_companion`) are placeholders that never change on an app change.
 
 ## Modifications (newest first)
+- 2026-10-04 (`0b42c4f`): pinned receiver releases. A receiver release in this fork is the tag
+  `healthrelay-receiver-<YYYY.MM.DD>` on an immutable merge commit, created through `gh release
+  create` with `--latest=false`; the first one is `healthrelay-receiver-2026.10.04`, with notes in
+  `.github/release/notes-healthrelay-receiver-2026.10.04.md` (`.github/release/README.md:5`). The
+  tag names the commit, not a version: `version` in `pyproject.toml` is unchanged, because helper
+  manifests must carry `receiver-v<version>` and are validated against the receiver version
+  (`docs/versioning.md:34`). Tag distinction: `receiver-v*` and `ios-v*` are upstream tags and are
+  never pushed from this fork — they trigger upstream release workflows HealthRelay does not use
+  (`docs/versioning.md:48`, `.github/release/README.md:7`) — while the app's own releases use
+  `app-v<marketing-version>`; the fork's pinned receiver releases therefore use the
+  `healthrelay-receiver-<YYYY.MM.DD>` form, which matches no workflow tag trigger, enforced by the
+  new guardrail `tests/guardrails/test_receiver_release_scheme.py` (`:184` asserts the
+  `healthrelay-receiver-` filter matches, `:187` that `receiver-v*` does not). README and
+  `docs/versioning.md` corrected accordingly. Follow-up: #81.
+- 2026-10-04 (`4677570`): observer wake-up acknowledgement by deadline, and background-delivery
+  re-arm. HealthKit stops background updates for an app that misses the observer completion handler
+  three times, so every observer update now arms a 15-second acknowledgement deadline first thing in
+  the callback, off the main actor; an already expired budget acknowledges at once. When the app
+  becomes active with automatic sync on, background delivery is disabled and re-enabled per observed
+  type, at most once per 10 minutes across relaunches, atomically with `stop()`. Diagnostics record
+  deadline acknowledgements. Part of #64, closes #76. No build or release.
+- 2026-10-04 (`86b2f0e`): guided receiver intake-setup command. `health-bridge receiver
+  intake-setup` registers the intake producer and writes a new intake token into `--output-secret`
+  (exclusive `0600` create, never printed); `--rotate` revokes the old token when it can be
+  identified and fails loudly with the still-active prefix otherwise, serialized by a lock file;
+  `--url` is validated before any database change, and the printed next steps quote every path and
+  respect `--start-option`. Docs: `docs/pairing.md`, `docs/architecture.md`. Closes #74.
+- 2026-10-03 (`260d74e`): rate limiting on the intake capabilities endpoint. `GET
+  /v1/intake-context/capabilities` gets its own per-token sliding window — 30 requests per minute,
+  `429` with `Retry-After` — separate from the batch budget, so polling never blocks uploads. A
+  `200` carries `Cache-Control: private, max-age=300` and `Vary: Authorization`, so a client may
+  reuse it only for the same credential and shared caches never store it. `IntakeRateLimiter` treats
+  an empty window as idle instead of indexing into it. Closes #65, #66.
 - Upstream sync, 2026-10-01: upstream checked through 8e4065e; took the live-read test from 27ef4a4; skipped version bump, release docs, release-guardrail tests; urllib3 already in PR #35.
 - 2026-09-29: ZIP64 support and clearer errors in the export.zip reader (`MinimalZipReader`), including a disk-number check for split archives. Issue and privacy links, SUPPORT/SECURITY routing, plain-language usage strings, plurals, a Diagnostics page and export-sheet fixes; no sync, outbox or pairing change.
 - 2026-09-29: README gains a "Use it with Hermes Agent" section linking the companion plugins `hermes-healthrelay` (read-only MCP + skills) and `hermes-health-insights` (local analysis CLI + skills). No code change.
