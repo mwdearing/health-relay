@@ -42,6 +42,8 @@ These tests are stdlib only and read files under the repository root.
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 import tempfile
 import tomllib
 from dataclasses import dataclass
@@ -229,11 +231,31 @@ _SCAN_EXCLUDED_DIRS = frozenset({".git", ".venv", "build", "dist", "__pycache__"
 # group, or a hyphenated suffix such as `-typo`. A closing backtick, a quote, a
 # comma, a slash into a docs path and `.md` in a filename all legitimately follow
 # a correct tag, so matching those would report every reference in the repository.
-# Matched greedily because the discovery pattern refuses to match these at all,
-# which means without this they would satisfy no assertion in this module.
 _REF_CONTINUATION = r"(?:\d[A-Za-z0-9._-]*|[.-]\d[A-Za-z0-9._-]*|-[A-Za-z0-9._-]+)"
+
+# The date is matched **partially on purpose**: `\d{2}` will take the first two
+# digits of `10.4` and then the continuation has to account for what is left.
+# Requiring a complete `\d{4}\.\d{2}\.\d{2}` first meant `2026.10.4` — the same
+# lost-zero shape this module rejects in a notes filename — matched nothing at
+# all and was therefore never reported.
 MALFORMED_PINNED_REF = re.compile(
-    rf"{PINNED_TAG_PREFIX}\d{{4}}\.\d{{2}}\.\d{{2}}{_REF_CONTINUATION}"
+    rf"{PINNED_TAG_PREFIX}\d{{2,4}}\.\d{{1,2}}\.\d{{1,2}}{_REF_CONTINUATION}"
+)
+
+# A run of the pinned prefix that is not a bare, complete tag at all — including
+# one that never reaches a full date. This is the catch-all for the shapes the
+# continuation pattern cannot describe, such as `2026.10.4`. Two boundaries keep
+# it from reporting correct references:
+#
+# - at least one character is required after the prefix, so the bare string
+#   `healthrelay-receiver-` — which appears in this module's own prose and in
+#   documentation describing the scheme — is not itself a malformed ref;
+# - it stops before a `.md` extension or a `/`, because
+#   `notes-healthrelay-receiver-2026.10.04.md` and a `/blob/<tag>/...` link are
+#   correct references whose tag happens to be followed by more path. Only a
+#   `.md` stops it, not any dot: the dots in `2026.10.04` are part of the date.
+ANY_PINNED_REF_RUN = re.compile(
+    rf"{PINNED_TAG_PREFIX}[0-9][0-9A-Za-z._-]*?(?=\.md\b|/[A-Za-z0-9]|[`\"'\s,;:)\]]|\Z)"
 )
 
 
@@ -242,13 +264,14 @@ def malformed_pinned_refs() -> list[tuple[str, str]]:
 
     Returns `(path, ref)` pairs. A correctly written reference is followed by a
     delimiter — a closing backtick, a quote, a slash into a docs path, or `.md`
-    in a filename — so the malformed run is the part of the mention that carries
-    a character a tag cannot.
+    in a filename — so a well-formed tag is exactly a run that `PINNED_TAG_RE`
+    matches in full. Anything else is reported, whether it is a complete date with
+    a bad suffix or a date that is short a digit.
     """
     found: list[tuple[str, str]] = []
-    for path in _markdown_sources():
+    for path in _markdown_sources(include_release_notes=True):
         text = path.read_text(encoding="utf-8")
-        for match in MALFORMED_PINNED_REF.finditer(text):
+        for match in ANY_PINNED_REF_RUN.finditer(text):
             ref = match.group(0)
             if PINNED_TAG_RE.fullmatch(ref):
                 continue
@@ -256,22 +279,58 @@ def malformed_pinned_refs() -> list[tuple[str, str]]:
     return found
 
 
-def _markdown_sources() -> list[Path]:
-    """Every Markdown file a pinned tag could be published in."""
+def _markdown_sources(include_release_notes: bool = False) -> list[Path]:
+    """Every Markdown file a pinned tag could be published in.
+
+    Two exclusions, both deliberate and both narrow:
+
+    - **Git-ignored paths.** A working tree carries local output — `.pytest_cache`,
+      `.build` dependency trees, scratch directories — and treating that as public
+      documentation means a draft pinned ref in a scratch file fails the release
+      guard for a reason that has nothing to do with the release. Asked of `git`
+      rather than guessed from a directory list, so a new ignored directory is
+      covered without editing this module.
+    - **The release notes themselves**, for *tag discovery* only. A release note
+      is what discovery looks up, not a source of claims about which tags exist.
+      They are scanned for malformed refs, because a mistyped
+      `/blob/healthrelay-receiver-.../...` link inside a published note is exactly
+      the broken ref this is looking for.
+    """
+    ignored = _git_ignored_paths()
     paths: list[Path] = []
     for root in PINNED_TAG_SCAN_ROOTS:
         for path in sorted(root.rglob("*.md")):
             relative = path.relative_to(root)
             if relative.parts and relative.parts[0] in _SCAN_EXCLUDED_DIRS:
                 continue
-            # Compared resolved: `path` is built from an absolute root while
-            # RELEASE_NOTES is likewise absolute, and a relative parent would
-            # silently never match.
-            if path.parent.resolve() == RELEASE_NOTES.resolve():
+            resolved = path.resolve()
+            if resolved in ignored:
+                continue
+            if not include_release_notes and resolved.parent == RELEASE_NOTES.resolve():
                 continue
             if path.is_file():
                 paths.append(path)
     return paths
+
+
+def _git_ignored_paths() -> frozenset[Path]:
+    """Absolute paths `git` reports as ignored or untracked-but-not-ours.
+
+    Falls back to an empty set if git cannot answer, which leaves the scan
+    stricter rather than looser: an ignored file would then be reported, never
+    silently skipped.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "--others", "-i", "--exclude-standard"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return frozenset()
+    return frozenset(
+        (ROOT / line).resolve() for line in result.stdout.splitlines() if line.strip()
+    )
 
 
 def pinned_tags_named_in_docs() -> set[str]:
@@ -919,6 +978,10 @@ def test_a_malformed_pinned_ref_in_the_docs_is_reported() -> None:
     entirely by discovery — which means they satisfy no assertion at all. They
     have to be reported in their own right, because each one is a documented ref
     that does not exist.
+
+    A date short a digit is included: `healthrelay-receiver-2026.10.4` is the same
+    lost-zero shape this module rejects in a release-notes filename, and a
+    pattern that needed a complete date before it could object would never see it.
     """
     malformed = sorted(malformed_pinned_refs())
     detail = "\n".join(f"  {path}: {ref!r}" for path, ref in malformed)
@@ -926,6 +989,81 @@ def test_a_malformed_pinned_ref_in_the_docs_is_reported() -> None:
         "these mentions of a pinned receiver tag are not a well-formed tag and"
         f" would install nothing:\n{detail}"
     )
+
+
+def test_every_malformed_ref_shape_is_recognised() -> None:
+    """The recogniser covers the shapes it is claimed to, and not the good ones.
+
+    Pinned here rather than only in the acceptance script, because each of these
+    was a real gap in an earlier version of this check.
+    """
+    malformed = (
+        "healthrelay-receiver-2026.10.4",
+        "healthrelay-receiver-2026.10.041",
+        "healthrelay-receiver-2026.10.04-typo",
+        "healthrelay-receiver-2026.10.04typo",
+        "healthrelay-receiver-2026.1.04",
+    )
+    well_formed = (
+        "healthrelay-receiver-2026.10.04",
+        "notes-healthrelay-receiver-2026.10.04.md",
+        "/blob/healthrelay-receiver-2026.10.04/docs/pairing.md",
+        "`healthrelay-receiver-2026.10.04`",
+        "healthrelay-receiver-2026.10.04/docs",
+    )
+    for ref in malformed:
+        runs: list[str] = ANY_PINNED_REF_RUN.findall(f"install {ref} now")
+        assert runs, f"{ref!r} is not recognised as a pinned ref run at all"
+        assert not PINNED_TAG_RE.fullmatch(runs[0]), (
+            f"{ref!r} is reported as a well-formed tag"
+        )
+    for ref in well_formed:
+        found: list[str] = ANY_PINNED_REF_RUN.findall(f"see {ref} for details")
+        assert found, f"{ref!r} is not recognised at all"
+        assert PINNED_TAG_RE.fullmatch(found[0]), (
+            f"the correct reference {ref!r} was read as {found[0]!r}, so it would be "
+            "reported as malformed"
+        )
+
+
+def test_an_ignored_file_is_not_public_documentation() -> None:
+    """Local output is not public documentation.
+
+    A working tree carries `.pytest_cache`, `.build` trees and scratch
+    directories. Without this a draft pinned ref in a scratch file fails the
+    release guard for a reason that has nothing to do with a release — which
+    teaches everyone to ignore the guard.
+
+    The exclusion is asked of git rather than guessed from a directory list, so a
+    newly ignored directory is covered without editing this module.
+    """
+    scratch = ROOT / ".pytest_cache" / "README.md"
+    if scratch.exists():
+        scratch.unlink()
+    scratch.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _ = scratch.write_text(
+            "scratch\n\nhealthrelay-receiver-2027.03.03\n", encoding="utf-8"
+        )
+        ignored = _git_ignored_paths()
+        if not ignored:
+            # No git repository here — the acceptance script runs the suite in a
+            # throwaway copy of the tracked tree. The exclusion is a no-op rather
+            # than a wrong answer, so the invariant that matters is simply that
+            # nothing crashed and the scan still returns a list.
+            assert isinstance(_markdown_sources(), list)
+            return
+        assert scratch.resolve() in ignored, (
+            "git reports .pytest_cache/README.md as ignored, so the scan must "
+            "skip it; local output is not public documentation"
+        )
+        assert scratch not in _markdown_sources()
+        assert scratch not in _markdown_sources(include_release_notes=True), (
+            "the git-ignored exclusion applies in both modes; only the "
+            "release-notes exclusion is lifted by include_release_notes"
+        )
+    finally:
+        shutil.rmtree(scratch.parent, ignore_errors=True)
 
 
 def test_release_notes_name_the_tag_install_command_and_intake_tool() -> None:
