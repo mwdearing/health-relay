@@ -254,7 +254,16 @@ def _yaml_lines(text: str) -> tuple[tuple[_Line, ...] | None, str]:
                 None,
                 f"line {number} is indented with a tab, which the guard cannot place",
             )
-        lines.append(_Line(number=number, indent=len(margin), content=raw.strip()))
+        content = raw.strip()
+        # A YAML comment carries no structure, so it must not be able to end the
+        # block it sits in. A comment at column zero inside an `on:` mapping used
+        # to stop the scan there, hiding every trigger that followed it -- an
+        # unfiltered `push:` or a `release:` was then never reported. Comments are
+        # dropped from the structural view and kept in the text for rule 1, which
+        # is textual on purpose.
+        if content.startswith("#"):
+            continue
+        lines.append(_Line(number=number, indent=len(margin), content=content))
     return tuple(lines), ""
 
 
@@ -916,6 +925,40 @@ def test_workflow_guard_reports_every_release_triggering_shape() -> None:
 def test_workflow_guard_clears_every_positively_recognised_safe_shape() -> None:
     for name, body in SAFE_WORKFLOWS.items():
         assert not workflow_problems(body), f"false alarm on {name}:\n{body}"
+
+
+def test_a_comment_cannot_hide_the_triggers_that_follow_it() -> None:
+    """A comment carries no structure, so it must not end the block it sits in.
+
+    A comment at column zero inside an `on:` mapping used to stop the scan
+    there. Every trigger written after it was then invisible: an unfiltered
+    `push:` and a `release:` were both cleared. Comments are dropped from the
+    structural view and kept only for the textual prefix rule, which is
+    deliberately textual.
+    """
+    for name, hidden in (
+        ("unfiltered push", "  push:\n"),
+        ("release", "  release:\n    types: [published]\n"),
+        ("create", "  create:\n"),
+        ("quoted-key push", '  "push":\n'),
+        ("pinned tag filter", '  push:\n    tags:\n      - "healthrelay-receiver-*"\n'),
+    ):
+        body = (
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "# a comment at column zero\n"
+            f"{hidden}"
+            "jobs: {}\n"
+        )
+        assert workflow_problems(body), (
+            f"a comment hid a {name} trigger from the guard:\n{body}"
+        )
+        indented = body.replace(
+            "# a comment at column zero\n", "  # an indented comment\n"
+        )
+        assert workflow_problems(indented), (
+            f"an indented comment hid a {name} trigger from the guard:\n{indented}"
+        )
 
 
 def test_workflow_guard_is_not_vacuous() -> None:
