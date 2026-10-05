@@ -779,8 +779,11 @@ def test_every_pinned_tag_named_in_docs_has_its_own_release_notes() -> None:
     assert not missing, f"pinned tags without release notes: {missing}"
 
 
+# The label must be exactly "base commit". Matching any row whose label merely
+# contains "commit" left the false-pass open through unrelated metadata such as
+# `| Artifact commit | ... |` or `| Previous commit | ... |`.
 BASE_COMMIT_FIELD = re.compile(
-    r"^\|[^|\n]*commit[^|\n]*\|\s*`(?P<sha>[0-9a-f]{7,40})`\s*\|",
+    r"^\|[ \t]*base[ \t]+commit[ \t]*\|[ \t]*`(?P<sha>[0-9a-f]{7,40})`[ \t]*\|",
     re.MULTILINE | re.IGNORECASE,
 )
 
@@ -806,6 +809,10 @@ def test_release_notes_must_name_the_commit_in_its_base_commit_field() -> None:
     assert not release_notes_name_their_base_commit("see also 4677570 for context")
     assert not release_notes_name_their_base_commit("| Base commit | see main |")
     assert not release_notes_name_their_base_commit("")
+    # Another row whose label merely contains "commit" must not stand in for it.
+    assert not release_notes_name_their_base_commit("| Artifact commit | `deadbeef` |")
+    assert not release_notes_name_their_base_commit("| Previous commit | `4677570` |")
+    assert not release_notes_name_their_base_commit("| commit | `4677570` |")
 
 
 def test_release_notes_name_the_tag_install_command_and_intake_tool() -> None:
