@@ -91,7 +91,7 @@ Either way, the IPA you get is **unsigned**. You must sign it with your own Appl
 
 Sign with a **provisioning profile for an explicit App ID that has the HealthKit capability**, and keep that profile's HealthKit entitlement in the signed app. A wildcard App ID, or a signer that drops the entitlement, still installs the app, but Apple Health will not list it and its permissions cannot work.
 
-- **Set the bundle identifier to that App ID *before* the IPA is built.** Run the `Build unsigned IPA` workflow with your final App ID as the bundle identifier. The app derives its background-refresh task identifier (`<bundle id>.refresh`) from the bundle identifier at run time, while the permitted identifier is written into the IPA at build time, so an IPA that is only re-signed under a different bundle identifier will have background refresh requests rejected unless the signer also rewrites `BGTaskSchedulerPermittedIdentifiers` to match.
+- **Set the bundle identifier to that App ID *before* the IPA is built.** Run the `Build unsigned IPA` workflow with your final App ID as the bundle identifier. The app reads its background-refresh task identifier from `BGTaskSchedulerPermittedIdentifiers`, which is written into the IPA at build time, and falls back to `<bundle id>.refresh` only when that list is absent, so the refresh task still registers after a re-sign. Other identifiers are derived from the bundle identifier at run time, including the Keychain service that holds the receiver pairing and the background upload session, so an IPA that is only re-signed under a different bundle identifier does not find a pairing saved under the earlier one.
 - **Check the Health listing:** after installing, look under Health › Profile › Privacy › Apps. HealthRelay should already be listed; if it is not, open the app, allow Health access when asked, and look again. If it is still missing, the signature lacks the HealthKit entitlement: fix the profile and re-sign.
 - **Changing the bundle identifier later means pairing again,** because the receiver sees the new install as a new source.
 
@@ -188,7 +188,7 @@ hermes plugins install mwdearing/hermes-healthrelay --no-enable
 hermes plugins enable healthrelay
 ```
 
-Set up the receiver and the iPhone app above first, then follow the plugin's `healthrelay-setup` skill to point it at your receiver database. Health data is sensitive: use a local model, or one you trust with it. `hermes-healthrelay` and `hermes-health-insights` are listed in the Hermes plugin catalog. The catalog still pins hermes-healthrelay 0.2.2 (nine tools, no intake evidence) until its update is merged, so install by repository name as shown to get the intake evidence tool (0.3.0 or later).
+Set up the receiver and the iPhone app above first, then follow the plugin's `healthrelay-setup` skill to point it at your receiver database. Health data is sensitive: use a local model, or one you trust with it. `hermes-healthrelay` and `hermes-health-insights` are listed in the Hermes plugin catalog. The catalog pins hermes-healthrelay 0.4.3 (ten tools, including intake evidence): `hermes plugins install healthrelay --no-enable` installs that reviewed pin, while the repository form shown above follows the repository's latest commit, which the catalog has not reviewed.
 
 ## What the agent can see
 
