@@ -119,7 +119,10 @@ This fork's invariants, which an imported change must not weaken:
 
 So before porting a behaviour change, read the diff for: what new data is read, what new data is
 written, what leaves the device, and whether a protocol or schema version moved. If any of those
-changed and you did not intend it, that is a decision for Michael, not a merge.
+changed and you did not intend it, that is a **privacy review**, not a merge — the same review
+`AGENTS.md` requires for hosted relay or remote MCP work, and the approver is whoever
+`.github/CODEOWNERS` names for this repository. If no owner is recorded there, stop and ask rather
+than proceeding.
 
 A fix that *preserves* all four — say, a corrected error message or a null check — is fine to take
 directly. The distinction is whether behaviour moved, not how large the diff is.
