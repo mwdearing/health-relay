@@ -75,6 +75,7 @@ PINNED_TAG_PREFIX = "healthrelay-receiver-"
 # digit group and a dotted digit are all continuations; a closing backtick, a
 # quote, a slash into a docs path and `.md` in a filename are not, and matching
 # those would report every correctly-written reference in the repository.
+PINNED_TAG_BODY = r"\d{4}\.\d{2}\.\d{2}"
 PINNED_TAG_RE = re.compile(
     r"healthrelay-receiver-\d{4}\.\d{2}\.\d{2}(?![0-9]|-[A-Za-z0-9]|\.[0-9])"
 )
@@ -249,7 +250,13 @@ _SCAN_EXCLUDED_DIRS = frozenset({".git", ".venv", "build", "dist", "__pycache__"
 # Unicode-aware complement also truncated a *correct* ref: `…2026.10.04²` was read
 # as `…2026.10` and reported as malformed.
 # `test_a_non_ascii_character_ends_a_ref_without_joining_it` pins both.
-REF_CHAR = r"[0-9A-Za-z_-]"
+#
+# `+` is here because git permits it in a ref name —
+# `git check-ref-format refs/tags/healthrelay-receiver-2026.10.04+typo` succeeds — so
+# an install target ending `…2026.10.04+typo` names a real, distinct ref that is not
+# a tag of this scheme. Without it the run stopped at the date, the valid prefix was
+# captured, and both checks passed over the broken revision.
+REF_CHAR = r"[0-9A-Za-z_+-]"
 
 # A whole ref run after the prefix: at least one digit, then characters from the
 # ref alphabet, plus any `.` groups that are themselves part of the ref. The `(?!md\b)`
@@ -269,12 +276,23 @@ REF_CONTINUATION = rf"{REF_CHAR}|\.(?!md\b){REF_CHAR}"
 # `/blob/…-2026.10.04.md-typo/…`
 # both stopped the run at `.md`, leaving the valid `…10.04` prefix for both checks
 # to pass. `test_md_is_exempt_only_in_a_release_note_filename` pins the difference.
-NOTE_FILENAME_RUN = rf"notes-{PINNED_TAG_PREFIX}{REF_RUN}\.md"
+#
+# The embedded tag must be a *complete* one. An earlier version reused `REF_RUN`,
+# which validates only a generic character run, so `notes-…-2026.10.4.md` and
+# `notes-…-2026.10.04-typo.md` were exempted wholesale — a broken link to a note that
+# does not exist, which `pinned_release_tags()` cannot catch because it reads the
+# notes *directory*, not the links pointing into it.
+# `test_a_note_filename_exemption_still_requires_a_complete_tag` pins that.
+NOTE_FILENAME_RUN = rf"notes-{PINNED_TAG_PREFIX}{PINNED_TAG_BODY}\.md"
 
 # `healthrelay-receiver-<YYYY.MM.DD>` is the documented placeholder for the tag
 # form, and it appears as prose in five tracked files (FORK.md, .github/release/
 # README.md, a published note, the error message below, and the version policy). It
 # names no release, so it is exempt by name rather than by accident of shape.
+#
+# The exemption is the whole token: matched without a boundary it also covered
+# `…<YYYY.MM.DD>-typo`, so following the published template would create a ref
+# outside the date-only scheme and neither check noticed.
 PLACEHOLDER_REF = f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>"
 
 # A run of the pinned prefix that is not a bare, complete tag at all — including
@@ -317,9 +335,22 @@ PLACEHOLDER_REF = f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>"
 # afterwards whether it is a complete tag in full.
 ANY_REF_RUN = rf"{REF_CHAR}+(?:\.{REF_CHAR}+)*"
 
-ANY_PINNED_REF_RUN = re.compile(
-    rf"(?:{NOTE_FILENAME_RUN}|{PLACEHOLDER_REF}|{PINNED_TAG_PREFIX}{ANY_REF_RUN}(?!{REF_CONTINUATION}))"
+# The placeholder alternative, which must also cover a *malformed* template: an
+# earlier version matched the bare placeholder and relied on a following-character
+# guard, and `…<YYYY.MM.DD>-typo` therefore matched neither alternative at all —
+# invisible, so both checks passed over a template that would create a ref outside
+# the date-only scheme. The extension is optional and is captured whole, so the
+# decision is made afterwards by string equality against `PLACEHOLDER_REF`.
+PLACEHOLDER_EXTENSION = r"(?:[0-9A-Za-z_+.-]*[0-9A-Za-z_+-][0-9A-Za-z_+.-]*)?"
+
+ANY_PINNED_REF_ALTERNATIVES = "|".join(
+    (
+        rf"{NOTE_FILENAME_RUN}(?!{REF_CHAR})",
+        rf"{PINNED_TAG_PREFIX}<YYYY\.MM\.DD>{PLACEHOLDER_EXTENSION}",
+        rf"{PINNED_TAG_PREFIX}{ANY_REF_RUN}(?!{REF_CONTINUATION})",
+    )
 )
+ANY_PINNED_REF_RUN = re.compile(rf"(?:{ANY_PINNED_REF_ALTERNATIVES})")
 
 # Marks a ref can legitimately be followed by in prose, in Markdown, or in a URL.
 # The regex above does not consult this list — it recognises "a character that
@@ -333,6 +364,35 @@ ANY_PINNED_REF_RUN = re.compile(
 # one class of terminator that used to be invisible to the guard.
 # Refs whose suffix contains no digit at all. Each matched nothing before the
 # catch-all body stopped requiring a leading digit.
+# Git permits `+` in a ref name, so an install target ending `…2026.10.04+typo`
+# names a real distinct ref rather than being a prose delimiter. Checked against
+# `git check-ref-format` before being treated as part of the ref alphabet.
+PLUS_SUFFIX_REFS: tuple[str, ...] = (
+    f"{PINNED_TAG_PREFIX}2026.10.04+typo",
+    f"{PINNED_TAG_PREFIX}2026.10.04+",
+)
+
+# A template that extends the documented placeholder: following it would create a
+# ref outside the date-only scheme. Must be reported, while the bare placeholder in
+# prose must not be.
+PLACEHOLDER_EXTENSIONS: tuple[str, ...] = (
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>-typo",
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>-2026.10.04",
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>typo",
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>+typo",
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>_typo",
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>5",
+)
+
+# A link to a note filename whose tag is not complete. The file does not exist, so
+# `pinned_release_tags()` cannot catch it: it reads the notes directory, not the
+# links pointing into it.
+BROKEN_NOTE_FILENAMES: tuple[str, ...] = (
+    f"notes-{PINNED_TAG_PREFIX}2026.10.4.md",
+    f"notes-{PINNED_TAG_PREFIX}2026.10.04-typo.md",
+    f"notes-{PINNED_TAG_PREFIX}latest.md",
+)
+
 NONNUMERIC_REFS: tuple[str, ...] = (
     f"{PINNED_TAG_PREFIX}latest",
     f"{PINNED_TAG_PREFIX}rc1",
@@ -410,6 +470,12 @@ def _is_a_correct_reference(ref: str) -> bool:
       release and appears as prose in several tracked files.
     """
     if PINNED_TAG_RE.fullmatch(ref):
+        return True
+    if ref.startswith(f"{PLACEHOLDER_REF}."):
+        # The placeholder as a *filename*: `notes-healthrelay-receiver-<YYYY.MM.DD>.md`
+        # is the shape the release-notes README documents, and it appears in
+        # `.github/release/README.md` and `docs/versioning.md`. It names no release,
+        # so it is exempt on the same grounds as the bare placeholder.
         return True
     if ref == PLACEHOLDER_REF:
         return True
@@ -1215,6 +1281,69 @@ def test_a_malformed_pinned_ref_in_the_docs_is_reported() -> None:
     assert not malformed, (
         "these mentions of a pinned receiver tag are not a well-formed tag and"
         f" would install nothing:\n{detail}"
+    )
+
+
+def test_git_valid_ref_characters_are_part_of_a_ref() -> None:
+    """`+` is legal in a git ref name, so it cannot be a prose delimiter.
+
+    `git check-ref-format refs/tags/healthrelay-receiver-2026.10.04+typo` succeeds,
+    so an install target ending `…2026.10.04+typo` names a real, distinct ref that
+    is not a tag of this scheme. The run used to stop at the date, the valid prefix
+    was captured, and both checks passed over the broken revision.
+    """
+    assert PLUS_SUFFIX_REFS, "the plus-suffix fixture is empty, so this asserts nothing"
+    for ref in PLUS_SUFFIX_REFS:
+        runs: list[str] = ANY_PINNED_REF_RUN.findall(f"uv tool install git+x.git@{ref}")
+        assert runs, f"{ref!r} is not recognised at all"
+        assert not _is_a_correct_reference(runs[0]), (
+            f"{ref!r} captured {runs[0]!r} and was accepted, but git permits `+` in "
+            "a ref name, so this is a distinct broken ref rather than prose"
+        )
+
+
+def test_a_note_filename_exemption_still_requires_a_complete_tag() -> None:
+    """The `.md` exemption must not become a hole in its own right.
+
+    The filename alternative once reused the permissive `REF_RUN`, which validates
+    only a generic character run, so every `notes-<anything>.md` was exempt — a link
+    to `notes-…-2026.10.4.md` or `notes-…-2026.10.04-typo.md` passed both checks.
+    `pinned_release_tags()` cannot catch it: it reads the notes directory, not the
+    links pointing into it, so the broken link is the only evidence.
+    """
+    assert BROKEN_NOTE_FILENAMES, "the fixture is empty, so this asserts nothing"
+    for filename in BROKEN_NOTE_FILENAMES:
+        runs: list[str] = ANY_PINNED_REF_RUN.findall(f"see [{filename}](../x.md)")
+        assert runs, f"{filename!r} is not recognised at all"
+        assert not _is_a_correct_reference(runs[0]), (
+            f"{filename!r} was accepted, but its tag is not complete, so the link is "
+            "broken and the filename exemption must not cover it"
+        )
+    good = f"notes-{PINNED_TAG_PREFIX}2026.10.04.md"
+    assert _is_a_correct_reference(good), f"{good!r} is a correct reference"
+
+
+def test_the_placeholder_exemption_covers_only_the_whole_token() -> None:
+    """Exempting the placeholder must not exempt a malformed template.
+
+    The placeholder alternative matched the bare token and nothing more, so
+    `…<YYYY.MM.DD>-typo` matched neither alternative at all: invisible to the
+    malformed-ref check and contributing no tag to discovery. Following the
+    published template would create a ref outside the date-only scheme.
+    """
+    assert PLACEHOLDER_EXTENSIONS, "the fixture is empty, so this asserts nothing"
+    for ref in PLACEHOLDER_EXTENSIONS:
+        runs: list[str] = ANY_PINNED_REF_RUN.findall(f"see {ref} for the form")
+        assert runs, f"{ref!r} is not recognised at all, so neither check can see it"
+        assert not _is_a_correct_reference(runs[0]), (
+            f"{ref!r} captured {runs[0]!r} and was accepted; it extends the "
+            "placeholder, so it is not the documented form"
+        )
+    assert _is_a_correct_reference(PLACEHOLDER_REF), (
+        "the bare placeholder names no release and must stay exempt"
+    )
+    assert ANY_PINNED_REF_RUN.findall(f"see {PLACEHOLDER_REF} for the form"), (
+        "the bare placeholder must still be recognised"
     )
 
 
