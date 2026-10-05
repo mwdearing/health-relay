@@ -196,7 +196,9 @@ def read_workflow_text(path: Path) -> str:
         raise UnreadableWorkflowError(f"{path}: not decodable as UTF-8 text") from exc
 
 
-def scan_workflow_file(path: Path, allowances: tuple[tuple[str, str], ...] = ()) -> list[str]:
+def scan_workflow_file(
+    path: Path, allowances: tuple[tuple[str, str], ...] = ()
+) -> list[str]:
     """Problems in one workflow file; never silently skips an unreadable file."""
     try:
         text = read_workflow_text(path)
@@ -307,9 +309,7 @@ def test_pinned_release_tag_discovery_is_not_vacuous() -> None:
 def test_every_pinned_tag_named_in_docs_has_its_own_release_notes() -> None:
     named = pinned_tags_named_in_docs()
     assert named, "no pinned receiver tag is named in the docs at all"
-    missing = sorted(
-        tag for tag in named if not release_notes_path(tag).is_file()
-    )
+    missing = sorted(tag for tag in named if not release_notes_path(tag).is_file())
     assert not missing, f"pinned tags without release notes: {missing}"
 
 
@@ -323,14 +323,17 @@ def test_release_notes_name_the_tag_install_command_and_intake_tool() -> None:
         )
         assert tag in notes, f"{notes_path.name} does not name {tag}"
         install = (
-            "uv tool install \"git+https://github.com/mwdearing/health-relay.git"
-            f'@{tag}"'
+            f'uv tool install "git+https://github.com/mwdearing/health-relay.git@{tag}"'
         )
-        assert install in notes, f"{notes_path.name} must teach the pinned install command"
+        assert install in notes, (
+            f"{notes_path.name} must teach the pinned install command"
+        )
         assert "get_intake_evidence_v1" in notes
         assert "--enable-intake-context" in notes
         assert "health_bridge.batch.v1" in notes
-        assert re.search(r"\b[0-9a-f]{7,40}\b", notes) is not None, "notes name the commit"
+        assert re.search(r"\b[0-9a-f]{7,40}\b", notes) is not None, (
+            "notes name the commit"
+        )
 
 
 def test_versioning_documents_the_scheme_without_a_version_bump() -> None:
@@ -442,7 +445,9 @@ READABLE_WORKFLOWS = {
 def test_workflow_guard_flags_every_release_triggering_shape() -> None:
     for name, body in RELEASE_TRIGGERING_WORKFLOWS.items():
         problems = workflow_problems(body)
-        assert problems, f"the guard cleared a release-triggering workflow: {name}\n{body}"
+        assert problems, (
+            f"the guard cleared a release-triggering workflow: {name}\n{body}"
+        )
 
 
 def test_workflow_guard_clears_the_readable_shapes() -> None:
@@ -455,7 +460,9 @@ def test_workflow_guard_is_not_vacuous() -> None:
     assert RELEASE_TRIGGERING_WORKFLOWS
     assert READABLE_WORKFLOWS
     assert not workflow_problems("on:\n  push:\n    tags: ['ios-v*']\n")
-    assert workflow_problems("on:\n  push:\n    tags: ['ios-v*']\nhealthrelay-receiver-x\n")
+    assert workflow_problems(
+        "on:\n  push:\n    tags: ['ios-v*']\nhealthrelay-receiver-x\n"
+    )
     assert workflow_problems("on: push\n")
 
 
@@ -472,7 +479,9 @@ def test_workflow_guard_fails_closed_on_an_unreadable_workflow() -> None:
             raise AssertionError("an undecodable workflow was read as text")
 
         problems = scan_workflow_file(binary)
-        assert problems, "an unreadable workflow was ignored; the guard must fail closed"
+        assert problems, (
+            "an unreadable workflow was ignored; the guard must fail closed"
+        )
         assert "fails closed" in problems[0]
 
 
@@ -522,9 +531,7 @@ def test_real_workflows_all_declare_a_readable_ref_filter() -> None:
 
 def test_github_filter_matching_follows_github_semantics() -> None:
     tag = pinned_release_tags()[0]
-    assert github_filter_matches(
-        "healthrelay-receiver-[0-9]+.[0-9]+.[0-9]+", tag
-    )
+    assert github_filter_matches("healthrelay-receiver-[0-9]+.[0-9]+.[0-9]+", tag)
     assert github_filter_matches("healthrelay-*", tag)
     assert github_filter_matches("**", tag)
     assert not github_filter_matches("receiver-v*", tag)
