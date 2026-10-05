@@ -2,8 +2,9 @@
 
 A pinned receiver release is identified by a `healthrelay-receiver-<date>` tag on
 an immutable commit, never by a package version bump, and that tag must not
-trigger any upstream release workflow. These tests are stdlib only and read
-files under the repository root.
+trigger any upstream release workflow. Every pinned tag that has release notes
+is checked, not just the first one. These tests are stdlib only and read files
+under the repository root.
 """
 
 from __future__ import annotations
@@ -15,28 +16,133 @@ from typing import cast
 
 ROOT = Path(__file__).resolve().parents[2]
 TAG = "healthrelay-receiver-2026.10.04"
-NOTES = ROOT / ".github/release/notes-healthrelay-receiver-2026.10.04.md"
+RELEASE_NOTES = ROOT / ".github/release"
+NOTES = RELEASE_NOTES / f"notes-{TAG}.md"
 VERSIONING = ROOT / "docs/versioning.md"
 WORKFLOWS = ROOT / ".github/workflows"
 PACKAGE_VERSION = "1.1.1"
+PINNED_TAG_PATTERN = re.compile(r"healthrelay-receiver-\d{4}\.\d{2}\.\d{2}")
+PINNED_NOTES_GLOB = "notes-healthrelay-receiver-*.md"
+TAGS_KEY = re.compile(r"^(?P<indent>[ \t]*)tags:[ \t]*(?P<rest>.*)$")
+
+
+def strip_yaml_comment(text: str) -> str:
+    """Drop a trailing YAML comment from `text`.
+
+    A `#` only starts a comment outside quotes and when it follows whitespace
+    or begins the scalar, so `'receiver#v*'` keeps its hash.
+    """
+    quote = ""
+    for index, char in enumerate(text):
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+        elif char == "#" and (index == 0 or text[index - 1] in " \t"):
+            return text[:index]
+    return text
+
+
+def unquote_scalar(text: str) -> str:
+    """Strip surrounding YAML quotes from an already comment-free scalar."""
+    scalar = text.strip()
+    if len(scalar) >= 2 and scalar[0] == scalar[-1] and scalar[0] in "\"'":
+        return scalar[1:-1]
+    return scalar
+
+
+def split_flow_sequence(text: str) -> list[str]:
+    """Split the body of an inline `[...]` sequence on top-level commas."""
+    items: list[str] = []
+    current: list[str] = []
+    quote = ""
+    for char in text:
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = ""
+            continue
+        if char in "\"'":
+            quote = char
+        elif char == ",":
+            items.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    items.append("".join(current))
+    return [
+        scalar
+        for scalar in (unquote_scalar(strip_yaml_comment(i)) for i in items)
+        if scalar
+    ]
+
+
+def tag_filter_groups(text: str) -> list[list[str]]:
+    """Return every tag filter as an ordered group of patterns.
+
+    Each `tags:` key contributes one group, inline (`tags: [a, b]`) or as a
+    block list, because GitHub evaluates a single filter as an ordered list in
+    which a leading `!` negates and the last matching pattern wins.
+    """
+    groups: list[list[str]] = []
+    lines = text.splitlines()
+    for start, line in enumerate(lines):
+        key = TAGS_KEY.match(line)
+        if key is None:
+            continue
+        indent = len(key.group("indent"))
+        rest = strip_yaml_comment(key.group("rest")).strip()
+        if rest:
+            body = rest
+            index = start + 1
+            while not body.rstrip().endswith("]") and index < len(lines):
+                body += " " + lines[index].strip()
+                index += 1
+            patterns = split_flow_sequence(body.strip()[1:-1])
+        else:
+            patterns = [
+                unquote_scalar(strip_yaml_comment(item[1:]))
+                for item in block_list_items(lines, start + 1, indent)
+            ]
+        if patterns:
+            groups.append(patterns)
+    return groups
+
+
+def block_list_items(lines: list[str], start: int, indent: int) -> list[str]:
+    """Return the raw `- item` scalars of a block list under a key."""
+    items: list[str] = []
+    for line in lines[start:]:
+        if not line.strip():
+            continue
+        if len(line) - len(line.lstrip()) <= indent:
+            break
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if not stripped.startswith("-"):
+            break
+        items.append(stripped[1:])
+    return items
 
 
 def tag_globs(text: str) -> list[str]:
     """Return every tag filter a workflow declares, inline or as a list."""
-    globs: list[str] = []
-    for inline_match in re.finditer(r"tags:\s*\[([^\]]*)\]", text):
-        inline = inline_match.group(1)
-        globs += [
-            item.strip().strip("\"'") for item in inline.split(",") if item.strip()
-        ]
-    for block_match in re.finditer(r"tags:\s*\n((?:[ \t]*-[ \t]*\S.*\n)+)", text):
-        block = block_match.group(1)
-        globs += [
-            line.split("-", 1)[1].strip().strip("\"'")
-            for line in block.splitlines()
-            if line.strip()
-        ]
-    return globs
+    return [pattern for group in tag_filter_groups(text) for pattern in group]
+
+
+def pinned_release_tags(release_dir: Path) -> list[str]:
+    """Return every pinned receiver release tag, derived from its notes files.
+
+    A pinned release ships `.github/release/notes-<tag>.md`, so that file set is
+    the registry of tags that must never trigger an upstream release workflow.
+    """
+    tags = {
+        path.name.removeprefix("notes-").removesuffix(".md")
+        for path in release_dir.glob(PINNED_NOTES_GLOB)
+    }
+    return sorted(tag for tag in tags if PINNED_TAG_PATTERN.fullmatch(tag))
 
 
 def github_filter_matches(pattern: str, ref: str) -> bool:
@@ -73,6 +179,22 @@ def github_filter_matches(pattern: str, ref: str) -> bool:
     return re.fullmatch("".join(out), ref) is not None
 
 
+def github_filters_trigger(patterns: list[str], ref: str) -> bool:
+    """True when an ordered tag filter list triggers for `ref`.
+
+    GitHub walks one filter list in order: a leading `!` excludes the ref and
+    any other pattern includes it, so the last pattern that matches decides.
+    """
+    triggered = False
+    for pattern in patterns:
+        if pattern.startswith("!"):
+            if github_filter_matches(pattern[1:], ref):
+                triggered = False
+        elif github_filter_matches(pattern, ref):
+            triggered = True
+    return triggered
+
+
 def push_reaches_any_tag(text: str) -> bool:
     """True when a `push` trigger fires for tag pushes without a positive `tags` filter.
 
@@ -103,23 +225,29 @@ def push_reaches_any_tag(text: str) -> bool:
     return not ({"tags", "branches", "branches-ignore"} & keys)
 
 
-def test_no_workflow_tag_trigger_matches_the_receiver_release_tag() -> None:
+def test_no_workflow_tag_trigger_matches_a_pinned_receiver_release_tag() -> None:
     workflows = sorted(WORKFLOWS.glob("*.y*ml"))
     assert workflows, "no workflows found; the tag filter parser must stay honest"
 
-    triggers = {
-        path.name: tag_globs(path.read_text(encoding="utf-8")) for path in workflows
+    groups = {
+        path.name: tag_filter_groups(path.read_text(encoding="utf-8"))
+        for path in workflows
     }
-    assert any(triggers.values()), "no workflow declares a tag filter; parser broken"
+    assert any(groups.values()), "no workflow declares a tag filter; parser broken"
+
+    tags = pinned_release_tags(RELEASE_NOTES)
+    assert tags, "no pinned receiver release notes discovered; parser broken"
 
     offenders = sorted(
-        f"{name}: {glob}"
-        for name, globs in triggers.items()
-        for glob in globs
-        if github_filter_matches(glob, TAG)
+        f"{name}: {patterns}"
+        for name, filters in groups.items()
+        for patterns in filters
+        for tag in tags
+        if github_filters_trigger(patterns, tag)
     )
     assert not offenders, (
-        f"{TAG} must not trigger any workflow release; filters: {offenders}"
+        f"pinned receiver release tags {tags} must not trigger any workflow "
+        f"release; filters: {offenders}"
     )
 
 
@@ -188,3 +316,123 @@ def test_github_filter_matching_follows_github_semantics() -> None:
     assert not github_filter_matches("ios-v*", TAG)
     assert not github_filter_matches("!healthrelay-*", TAG)
     assert not github_filter_matches("v[0-9]+", TAG)
+
+
+def test_tag_glob_metacharacters_keep_working() -> None:
+    assert github_filter_matches("healthrelay-receiver-[0-9]+.[0-9]+.[0-9]+", TAG)
+    assert github_filter_matches("healthrelay-**", TAG)
+    assert github_filter_matches("**", f"refs/tags/{TAG}")
+    assert not github_filter_matches("*", f"refs/tags/{TAG}")
+    assert github_filter_matches("healthrelay-?receiver-*", TAG)
+    assert not github_filter_matches("healthrelay-?", TAG)
+    assert github_filter_matches(TAG, TAG)
+    assert not github_filter_matches("healthrelay-receiver-2026.10.0", TAG)
+
+
+def test_tag_glob_parsing_strips_quotes_and_comments_quote_aware() -> None:
+    block = (
+        "on:\n"
+        "  push:\n"
+        "    tags:\n"
+        '      - "healthrelay-*" # receiver releases\n'
+        "      - 'ios-v*'  # iOS tags\n"
+        '      - "receiver#v[0-9]+"  # a hash inside quotes is not a comment\n'
+        "      - receiver-rc-*   # bare patterns too\n"
+        "      - '!healthrelay-receiver-*'  # pinned releases never publish\n"
+    )
+    patterns = [
+        "healthrelay-*",
+        "ios-v*",
+        "receiver#v[0-9]+",
+        "receiver-rc-*",
+        "!healthrelay-receiver-*",
+    ]
+    assert tag_filter_groups(block) == [patterns]
+    inline = (
+        "on:\n"
+        "  push:\n"
+        '    tags: ["healthrelay-*", "ios-v*"]  # receiver and iOS releases\n'
+    )
+    assert tag_filter_groups(inline) == [["healthrelay-*", "ios-v*"]]
+
+    assert github_filter_matches(patterns[0], TAG)
+    assert not github_filter_matches('"healthrelay-*" # receiver releases', TAG), (
+        "an unstripped pattern must not be able to hide a real match"
+    )
+    assert not github_filters_trigger(patterns, TAG)
+
+
+def test_tag_glob_parsing_handles_blank_lines_and_comment_only_lines() -> None:
+    text = (
+        "on:\n"
+        "  push:\n"
+        "    tags:\n"
+        "      # receiver releases only\n"
+        "\n"
+        '      - "healthrelay-*"\n'
+        "      - '!healthrelay-receiver-*'\n"
+        "  workflow_dispatch:\n"
+    )
+    assert tag_filter_groups(text) == [["healthrelay-*", "!healthrelay-receiver-*"]]
+
+
+def test_ordered_tag_negation_is_evaluated_across_the_whole_list() -> None:
+    inline = "on:\n  push:\n    tags: ['healthrelay-*', '!healthrelay-receiver-*']\n"
+    block = (
+        "on:\n"
+        "  push:\n"
+        "    tags:\n"
+        "      - 'healthrelay-*'\n"
+        "      - '!healthrelay-receiver-*'\n"
+    )
+    for text in (inline, block):
+        assert tag_filter_groups(text) == [["healthrelay-*", "!healthrelay-receiver-*"]]
+
+    # Exclusion last: the negation wins over the earlier inclusion.
+    assert not github_filters_trigger(["healthrelay-*", "!healthrelay-receiver-*"], TAG)
+    # Exclusion first: the later inclusion wins and the tag does trigger.
+    assert github_filters_trigger(["!healthrelay-receiver-*", "healthrelay-*"], TAG)
+    assert github_filters_trigger(
+        ["healthrelay-*", "!healthrelay-receiver-*", "healthrelay-receiver-*"], TAG
+    )
+    assert github_filters_trigger(["healthrelay-*", "!ios-v*"], TAG)
+    assert github_filters_trigger(["ios-v*", "healthrelay-*"], TAG)
+    assert github_filters_trigger(["healthrelay-*"], TAG)
+    assert not github_filters_trigger(["ios-v*"], TAG)
+    assert not github_filters_trigger([], TAG)
+    assert not github_filters_trigger(["!healthrelay-receiver-*"], TAG)
+
+
+def test_pinned_release_tags_come_from_every_release_notes_file(
+    tmp_path: Path,
+) -> None:
+    _ = (tmp_path / f"notes-{TAG}.md").write_text("first\n", encoding="utf-8")
+    _ = (tmp_path / "notes-healthrelay-receiver-2026.11.07.md").write_text(
+        "second\n", encoding="utf-8"
+    )
+    _ = (tmp_path / "notes-receiver-v1.1.1.md").write_text(
+        "not a pinned receiver release\n", encoding="utf-8"
+    )
+    _ = (tmp_path / "notes-healthrelay-receiver-template.md").write_text(
+        "not a dated release\n", encoding="utf-8"
+    )
+    assert pinned_release_tags(tmp_path) == [
+        "healthrelay-receiver-2026.10.04",
+        "healthrelay-receiver-2026.11.07",
+    ]
+
+
+def test_pinned_release_tag_discovery_is_not_vacuous() -> None:
+    tags = pinned_release_tags(RELEASE_NOTES)
+    assert tags, "no pinned receiver release tags discovered"
+    assert TAG in tags, f"the published pinned release {TAG} is unguarded"
+    assert tags == sorted(tags)
+    assert all(
+        re.fullmatch(r"healthrelay-receiver-\d{4}\.\d{2}\.\d{2}", tag) for tag in tags
+    )
+
+
+def test_every_pinned_release_tag_has_its_own_release_notes() -> None:
+    notes = sorted(path.name for path in RELEASE_NOTES.glob(PINNED_NOTES_GLOB))
+    assert notes, "the pinned receiver release notes directory must stay populated"
+    assert [f"notes-{tag}.md" for tag in pinned_release_tags(RELEASE_NOTES)] == notes
