@@ -353,7 +353,7 @@ def malformed_pinned_refs() -> list[tuple[str, str]]:
     a complete date with a bad suffix or a date that is short a digit.
     """
     found: list[tuple[str, str]] = []
-    for path in _markdown_sources() + _release_note_sources():
+    for path in _tracked_documentation_sources():
         text = path.read_text(encoding="utf-8")
         for match in ANY_PINNED_REF_RUN.finditer(text):
             ref = match.group(0)
@@ -413,10 +413,44 @@ def _markdown_sources() -> list[Path]:
 
 
 def _release_note_sources() -> list[Path]:
-    """Every release note, which is published documentation and must be scanned."""
+    """Every release note this module is pointed at: published docs, must be scanned.
+
+    A note is public documentation only once it is committed, so an untracked
+    draft under `.github/release/` must not fail the missing-notes or malformed-ref
+    guard before it could ever be published.
+
+    The filter is by resolved path against the directory the module is currently
+    pointed at, NOT by asking git: a test repoints `RELEASE_NOTES` at a copy under
+    `.pytest_cache`, and that copy is deliberately untracked, so a git-based
+    filter would make those probes vacuous. The untracked-draft case is covered by
+    `test_an_untracked_release_note_is_not_published_documentation` instead, which
+    writes a draft into the real notes directory and asserts that neither composed
+    scan reads it.
+    """
     if not RELEASE_NOTES.is_dir():
         return []
     return sorted(p for p in RELEASE_NOTES.rglob("*.md") if p.is_file())
+
+
+def _tracked_documentation_sources() -> list[Path]:
+    """Every published Markdown file: the public documents and the tracked notes.
+
+    The composition the two checks actually read. A note is included only once it
+    is git-tracked, so an untracked draft cannot fail the guard; the tracked set
+    comes from the notes' own tracked paths, which is what lets a test repoint
+    `RELEASE_NOTES` at a copy and still have the checks read it.
+    """
+    documents = _markdown_sources()
+    tracked = _git_tracked_paths()
+    if tracked is None:
+        # Git cannot answer, so nothing can be proven unpublishable. Read every
+        # note: the fallback is noisier, never weaker.
+        return documents + _release_note_sources()
+    tracked_resolved = {path.resolve() for path in tracked}
+    published = [
+        path for path in _release_note_sources() if path.resolve() in tracked_resolved
+    ]
+    return documents + published
 
 
 def _git_tracked_paths() -> list[Path] | None:
@@ -464,7 +498,7 @@ def pinned_tags_named_in_docs() -> set[str]:
     publishable, and the usual build and virtualenv directories.
     """
     named: set[str] = set()
-    for path in _markdown_sources() + _release_note_sources():
+    for path in _tracked_documentation_sources():
         named.update(PINNED_TAG_RE.findall(path.read_text(encoding="utf-8")))
     return named
 
@@ -1224,6 +1258,47 @@ def test_an_untracked_file_is_not_public_documentation() -> None:
         scratch.unlink()
 
 
+def test_an_untracked_release_note_is_not_published_documentation() -> None:
+    """The notes set is tracked-only too, for the same reason as `_markdown_sources`.
+
+    `_markdown_sources` excludes the notes directory and defines public
+    documentation as git-tracked. An earlier version of this set was a bare
+    `rglob`, so a draft under `.github/release/` — not ignored by any rule, simply
+    not committed — was read as published documentation, and a date-shaped ref in it
+    failed the guard before it could ever be published.
+    """
+    scratch = RELEASE_NOTES / "scratch-untracked-note.md"
+    tracked = _git_tracked_paths()
+    if tracked is None:
+        return
+    assert not scratch.exists(), f"{scratch.name} exists; the probe needs a fresh name"
+    _ = scratch.write_text("healthrelay-receiver-2099.09.09\n", encoding="utf-8")
+    try:
+        after = _git_tracked_paths()
+        assert after is not None, "git stopped answering mid-test"
+        assert scratch not in after, (
+            "the probe must be untracked, or it is testing nothing"
+        )
+        # It is absent from the set the checks actually read. It is still *in*
+        # `_release_note_sources()`, which enumerates the directory rather than
+        # asking git — that function is the notes a test repoints at a copy, and
+        # the copy is deliberately untracked.
+        assert scratch not in _tracked_documentation_sources(), (
+            "an untracked note is not published documentation, so a draft pinned "
+            "ref in it must not fail the release guard"
+        )
+        # And the composed scans must not see it either, which is the consequence
+        # that matters: these are the two checks' real inputs.
+        assert not [
+            r for r in malformed_pinned_refs() if r[0].endswith(scratch.name)
+        ], "an untracked release note must not be read by the malformed-ref scan"
+        assert "healthrelay-receiver-2099.09.09" not in pinned_tags_named_in_docs(), (
+            "an untracked release note must not contribute a tag to discovery"
+        )
+    finally:
+        scratch.unlink()
+
+
 @contextmanager
 def release_notes_replaced_by_a_copy() -> Generator[Path]:
     """Yield a writable copy of the release notes, standing in for the real ones.
@@ -1254,13 +1329,37 @@ def release_notes_replaced_by_a_copy() -> Generator[Path]:
     it still resolves against the real notes directory inside the block. That is
     deliberate: whether a notes file exists for a ref is a question about the
     repository, not about the copy.
+
+    The copy is untracked, and `_tracked_documentation_sources()` filters the notes
+    it returns down to git-tracked paths — so this helper patches
+    `_tracked_documentation_sources` as well. Without that, every probe below would
+    silently scan nothing and pass for the wrong reason, which is exactly how the
+    two release-note assertions became vacuous once already.
     """
     cache = ROOT / ".pytest_cache"
     cache.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(dir=cache, prefix="release-notes-copy-"))
+    module = sys.modules[__name__]
+    public_documents = _markdown_sources
+
+    def sources_including_the_copy() -> list[Path]:
+        """The checks' sources, with the copy standing in for the tracked notes.
+
+        Patched in place of a git query because the copy is untracked by
+        construction: the tracked-notes filter is what stops an unpublished draft
+        from failing the guard, and it is the one rule a probe of the published
+        notes has to stand in for.
+        """
+        return public_documents() + sorted(scratch.rglob("*.md"))
+
     try:
         _ = shutil.copytree(RELEASE_NOTES, scratch, dirs_exist_ok=True)
-        with mock.patch.object(sys.modules[__name__], "RELEASE_NOTES", scratch):
+        with (
+            mock.patch.object(module, "RELEASE_NOTES", scratch),
+            mock.patch.object(
+                module, "_tracked_documentation_sources", sources_including_the_copy
+            ),
+        ):
             yield scratch
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
