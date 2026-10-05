@@ -188,7 +188,7 @@ hermes plugins install mwdearing/hermes-healthrelay --no-enable
 hermes plugins enable healthrelay
 ```
 
-Set up the receiver and the iPhone app above first, then follow the plugin's `healthrelay-setup` skill to point it at your receiver database. Health data is sensitive: use a local model, or one you trust with it. `hermes-healthrelay` and `hermes-health-insights` are listed in the Hermes plugin catalog. The catalog still pins hermes-healthrelay 0.2.2 (nine tools, no intake evidence) until its update is merged, so install by repository name as shown to get the intake evidence tool (0.3.0 or later).
+Set up the receiver and the iPhone app above first, then follow the plugin's `healthrelay-setup` skill to point it at your receiver database. Health data is sensitive: use a local model, or one you trust with it. `hermes-healthrelay` and `hermes-health-insights` are listed in the Hermes plugin catalog. The catalog pins hermes-healthrelay 0.4.3 (ten tools, including intake evidence); installing by repository name as shown gets the current version.
 
 ## What the agent can see
 
