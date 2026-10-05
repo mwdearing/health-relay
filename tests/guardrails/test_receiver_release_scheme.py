@@ -4,28 +4,37 @@ A pinned receiver release is identified by a `healthrelay-receiver-<date>` tag o
 an immutable commit, never by a package version bump, and that tag must not
 trigger any upstream release workflow.
 
-The release-trigger guard in this module is deliberately **textual**, not a YAML
-shape parser (issue #85). The shape parser it replaced had one failure mode
-that matters and one that does not: it silently certified a release-triggering
-workflow as safe whenever
-the workflow's YAML used a shape the parser did not model. A false alarm that
-costs a human thirty seconds is acceptable here; a false all-clear ships a
-receiver release into someone else's release pipeline. So the guard never claims
-to understand a workflow. It asserts only what can be read off the raw bytes:
+The release-trigger guard in this module is a **positive whitelist that fails
+closed**. It is not a YAML parser, and it refuses to become one:
 
-1. no file under `.github/workflows` (recursively) contains the literal prefix
+1. no file under `.github/workflows` (recursively) may contain the literal prefix
    `healthrelay-receiver-` at all -- including inside a comment, because "this
-   workflow will never fire for that prefix" written in a comment is exactly
-   the sort of claim that goes stale;
-2. no file under `.github/workflows` fails to decode as UTF-8 text, because a
+   workflow will never fire for that prefix" written in a comment is exactly the
+   sort of claim that goes stale;
+2. no file under `.github/workflows` may fail to decode as UTF-8 text, because a
    file the guard cannot read is a file the guard cannot clear;
-3. no `push` trigger in any workflow is left in a shape a human cannot read its
-   ref filter off at a glance (bare `push:`, flow-style `on: [...]`, or an
-   inline `push: {branches: [...]}` mapping). Those fail closed.
+3. every workflow's trigger block must be *locatable* unambiguously, and inside
+   it every trigger must be positively recognised as unable to fire for a pinned
+   receiver tag. A trigger is cleared only when it is an event named in
+   `CLEARABLE_EVENTS`, or a `push` filtered to `branches`/`branches-ignore` in
+   block-list form with no `tags`/`tags-ignore` key anywhere in the trigger
+   block. Everything else is reported: `push` carrying any tag key, `create`,
+   `release`, `delete`, an event name with no rule, and any construct the guard
+   cannot place with certainty (a quoted `"on"`, an anchor, a flow sequence or
+   flow mapping, an `on:` value with trailing content).
 
-Do not "improve" this back into a parser. If you want the guard to tolerate a
-workflow shape, add a deliberate allowance with a stated reason
-(`ALLOWED_PREFIX_APPEARANCES`) or ask a human to look.
+**The asymmetry is the entire design.** Reporting a safe workflow costs a human
+thirty seconds; clearing an unsafe one ships a receiver release into a foreign
+release pipeline. An earlier round grew the guard the other way -- teach it one
+shape at a time -- and every shape it was taught was a shape it could be wrong
+about; eight of them failed open, silently clearing triggers GitHub would have
+fired for a `healthrelay-receiver-*` ref (issue #87). So the guard never grows by
+impression: it clears a trigger it was explicitly given a rule for, and sends
+everything else to a human.
+
+Do not "improve" this back into a shape parser. To let a real workflow through,
+either name its event in `CLEARABLE_EVENTS`, or record its tag filter in
+`REVIEWED_TAG_ALLOWANCES` with a stated reason, or ask a human to look.
 
 These tests are stdlib only and read files under the repository root.
 """
@@ -35,8 +44,9 @@ from __future__ import annotations
 import re
 import tempfile
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import NamedTuple, cast
 
 ROOT = Path(__file__).resolve().parents[2]
 PINNED_TAG_PREFIX = "healthrelay-receiver-"
@@ -59,6 +69,81 @@ PINNED_TAG_SOURCES = (
 # Empty by default. A deliberate appearance of the pinned prefix in a workflow
 # is a code change that has to state why, not a deleted assertion.
 ALLOWED_PREFIX_APPEARANCES: tuple[tuple[str, str], ...] = ()
+
+# Rule 3 whitelist. This is the whole of the guard's knowledge of GitHub's event
+# catalogue: an event whose name is not listed here is reported, whatever its
+# filter says, because "this event cannot fire for a tag push" is a claim about
+# GitHub that a human has to make.
+CLEARABLE_EVENTS = frozenset(
+    {
+        "issue_comment",
+        "issues",
+        "pull_request",
+        "pull_request_review",
+        "pull_request_target",
+        "schedule",
+        "workflow_call",
+        "workflow_dispatch",
+    }
+)
+
+TAG_REF_KEYS = ("tags", "tags-ignore")
+BRANCH_REF_KEYS = ("branches", "branches-ignore")
+# Keys a `push` filter may carry. `paths` only ever narrows a trigger further, so
+# it is accepted; `tags`/`tags-ignore` are handled separately and never cleared
+# without a reviewed allowance.
+PUSH_FILTER_KEYS = ("branches", "branches-ignore", "paths", "paths-ignore")
+
+
+class ReviewedTagAllowance(NamedTuple):
+    """A tag filter a human has read and confirmed cannot reach the pinned prefix.
+
+    `path` is relative to the repository root, `literals` is the exact set of tag
+    patterns that path is allowed to declare, and `reason` states why none of them
+    can match a tag beginning with the pinned prefix. The guard compares literal
+    for literal: it never evaluates a pattern, so an allowance cannot widen
+    itself, and the pattern must be spelled exactly as recorded here.
+    """
+
+    path: str
+    literals: tuple[str, ...]
+    reason: str
+
+
+_IOS_TAG_REASON = (
+    "The only tag filter in this file is the pattern `ios-v*`. A GitHub ref "
+    "filter is matched against the ref name, where `*` stands for any run of "
+    "characters other than `/`, so the pattern matches only names beginning "
+    "with the literal text `ios-v`, and every pinned receiver tag name begins "
+    "with `healthrelay-`. Recorded rather than guessed at, so that widening "
+    "this filter is a deliberate edit."
+)
+
+_PYTHON_TAG_REASON = (
+    "The only tag filter in this file is the pattern `ios-v*`, which matches "
+    "only names beginning with the literal text `ios-v`, while every pinned "
+    "receiver tag name begins with `healthrelay-`. Recorded so the CI workflow "
+    "is not reported on every run, and so that widening its filter cannot pass "
+    "unnoticed."
+)
+
+_RELEASE_TAG_REASON = (
+    "The only tag filter in this file is the pattern `receiver-v*`, which "
+    "matches only names beginning with the literal text `receiver-v`, while "
+    "every pinned receiver tag name begins with `healthrelay-`. Recorded so "
+    "the receiver release workflow is not reported on every run, and so that "
+    "widening its filter cannot pass unnoticed."
+)
+
+REVIEWED_TAG_ALLOWANCES: tuple[ReviewedTagAllowance, ...] = (
+    ReviewedTagAllowance(".github/workflows/ios.yml", ("ios-v*",), _IOS_TAG_REASON),
+    ReviewedTagAllowance(
+        ".github/workflows/python.yml", ("ios-v*",), _PYTHON_TAG_REASON
+    ),
+    ReviewedTagAllowance(
+        ".github/workflows/release.yml", ("receiver-v*",), _RELEASE_TAG_REASON
+    ),
+)
 
 
 class UnreadableWorkflowError(Exception):
@@ -108,175 +193,334 @@ def pinned_tags_named_in_docs() -> set[str]:
 
 
 # --------------------------------------------------------------------------
-# The conservative textual guard
+# Locating the trigger block
 # --------------------------------------------------------------------------
 
-PUSH_KEY_LINE = re.compile(
-    r"^(?P<indent>[ \t]*)push\s*:[ \t]*(?P<rest>.*)$", re.MULTILINE
-)
-ON_BARE_PUSH = re.compile(r"^on\s*:[ \t]*push[ \t]*$", re.MULTILINE)
-ON_FLOW_STYLE = re.compile(r"^on\s*:[ \t]*[\[{].*\bpush\b", re.MULTILINE)
-LIST_ITEM = re.compile(r"^[ \t]*-[ \t]*\S")
-# Events GitHub fires when a pinned receiver release is made or published. `push`
-# is handled separately, with its ref filters reasoned about; these carry no ref
-# filter at all, so their presence is simply reported.
-RELEASE_LIFECYCLE_EVENTS = ("create", "delete", "release", "published")
-_LIFECYCLE_ALTERNATION = "|".join(RELEASE_LIFECYCLE_EVENTS)
-# `on: release` written as a bare scalar, and the same event as an item of a
-# block sequence. The `on:` key line on its own matches neither, so an ordinary
-# block-style `on:` is not mistaken for an event.
-ON_LIFECYCLE_SCALAR = re.compile(
-    rf"^on\s*:\s*({_LIFECYCLE_ALTERNATION})\s*$", re.MULTILINE
-)
-ON_LIFECYCLE_ITEM = re.compile(
-    rf"^[ \t]+({_LIFECYCLE_ALTERNATION})\s*:[ \t]*$", re.MULTILINE
-)
-ON_FLOW_LIST = re.compile(r"^on\s*:\s*\[([^]]*)\]", re.MULTILINE)
+KEY_LINE = re.compile(r"(?P<name>[A-Za-z_][A-Za-z0-9_-]*):(?P<rest>.*)")
 
 
-def lifecycle_events(text: str) -> list[tuple[int, str]]:
-    """Every `create`/`delete`/`release`/`published` trigger, with its line number.
+@dataclass(frozen=True)
+class _Line:
+    """One non-blank line, with its indentation measured in leading spaces."""
 
-    Covers the three shapes a workflow can use: a bare `on: release`, an item of a
-    block sequence, and an entry inside a flow-style list such as
-    `on: [push, release]`.
-    """
-    found: list[tuple[int, str]] = []
-
-    def line_of(start: int) -> int:
-        return text[:start].count("\n") + 1
-
-    for pattern in (ON_LIFECYCLE_SCALAR, ON_LIFECYCLE_ITEM):
-        found.extend(
-            (line_of(match.start()), match.group(1)) for match in pattern.finditer(text)
-        )
-    for match in ON_FLOW_LIST.finditer(text):
-        found.extend(
-            (line_of(match.start()), event)
-            for event in RELEASE_LIFECYCLE_EVENTS
-            if re.search(rf"\b{event}\b", match.group(1))
-        )
-    return sorted(found)
+    number: int
+    indent: int
+    content: str
 
 
-TAG_REF_KEYS = ("tags", "tags-ignore")
-BRANCH_REF_KEYS = ("branches", "branches-ignore")
+@dataclass(frozen=True)
+class _Node:
+    """One key (or sequence item) of a mapping, with the lines nested under it."""
+
+    line: _Line
+    name: str
+    value: str
+    body: tuple[_Line, ...]
+    children: tuple[_Node, ...]
 
 
-def _block_body(text: str, indent: int) -> list[str]:
-    """Lines indented deeper than `indent`, up to the next line that is not."""
-    body: list[str] = []
-    for line in text.splitlines():
-        if not line.strip():
+@dataclass(frozen=True)
+class _Located:
+    """A trigger block the guard was able to find without guessing."""
+
+    number: int
+    body: tuple[_Line, ...]
+
+
+class _TagScan(NamedTuple):
+    problems: list[str]
+    literals: tuple[str, ...]
+    saw_tag_key: bool
+    cleared: bool
+
+
+def _yaml_lines(text: str) -> tuple[tuple[_Line, ...] | None, str]:
+    """Every non-blank line with its indentation, or a reason it cannot be read."""
+    lines: list[_Line] = []
+    for number, raw in enumerate(text.splitlines(), start=1):
+        if not raw.strip():
             continue
-        if len(line) - len(line.lstrip()) <= indent:
+        margin = raw[: len(raw) - len(raw.lstrip())]
+        if "\t" in margin:
+            return (
+                None,
+                f"line {number} is indented with a tab, which the guard cannot place",
+            )
+        lines.append(_Line(number=number, indent=len(margin), content=raw.strip()))
+    return tuple(lines), ""
+
+
+def _body_after(lines: tuple[_Line, ...], index: int, indent: int) -> tuple[_Line, ...]:
+    """The lines nested under `lines[index]`.
+
+    A line at the same indentation belongs to the enclosing mapping (or is the
+    next sequence item), so only deeper lines are nested content.
+    """
+    body: list[_Line] = []
+    for line in lines[index + 1 :]:
+        if line.indent <= indent:
             break
         body.append(line)
-    return body
+    return tuple(body)
 
 
-def push_trigger_problems(text: str) -> list[str]:
-    """Report `push` triggers whose ref filter is not readable at a glance.
-
-    A push trigger reaches tag pushes unless it is filtered to branches, so the
-    guard wants each one to state its filter in block form: a `tags`/`tags-ignore`
-    key (inline or block -- the key is the point), or a `branches`/
-    `branches-ignore` key written as a block list. Everything else -- a bare
-    `push:`, `on: push`, a flow-style `on: [push]`, an inline `push: {...}`
-    mapping, or a trigger with no ref key at all -- is reported rather than
-    judged, because judging it means modelling YAML again.
-    """
-    problems: list[str] = [
-        _line_problem(text, match, "`on: push`")
-        for match in ON_BARE_PUSH.finditer(text)
-    ]
-    problems += [
-        _line_problem(text, match, "flow-style `on:` trigger")
-        for match in ON_FLOW_STYLE.finditer(text)
-    ]
-    problems += [
-        problem
-        for problem in (
-            _push_key_problem(text, match) for match in PUSH_KEY_LINE.finditer(text)
-        )
-        if problem is not None
-    ]
-    return problems
-
-
-def _line_number(text: str, match: re.Match[str]) -> int:
-    return text[: match.start()].count("\n") + 1
-
-
-def _line_problem(text: str, match: re.Match[str], description: str) -> str:
-    return f"line {_line_number(text, match)}: {description}"
-
-
-def _push_key_problem(text: str, match: re.Match[str]) -> str | None:
-    """The problem with one `push:` key's ref filter, or None if it is readable."""
-    line = _line_number(text, match)
-    rest = match.group("rest").strip()
-    if rest and rest != "{}":
-        return f"line {line}: inline `push:{rest}`"
-    body = _block_body(text[match.end() :], len(match.group("indent")))
-    if not body:
-        return f"line {line}: `push:` with no ref filter"
-    if _ref_filter_is_readable(body):
-        return None
-    return f"line {line}: `push:` ref filter is not a readable block form"
-
-
-def _ref_filter_is_readable(body: list[str]) -> bool:
-    """Whether a `push:` block states its filter in a form a human can read.
-
-    A `tags`/`tags-ignore` key is accepted however it is written, because the
-    key itself is the readable statement. A `branches`/`branches-ignore` key is
-    accepted only as a block list, so that `branches: [main]` still reaches a
-    human. Anything else -- no ref key at all, or a filter that cannot be read
-    off the text -- is not accepted, because accepting it means judging YAML.
-    """
-    child_indent = min(len(line) - len(line.lstrip()) for line in body)
-    children = [line for line in body if len(line) - len(line.lstrip()) == child_indent]
-    names = [child.strip().split(":", 1)[0].strip() for child in children]
-    if any(name in TAG_REF_KEYS for name in names):
-        return True
-    if not any(name in BRANCH_REF_KEYS for name in names):
-        return False
-    return _branch_keys_are_block_lists(body, child_indent)
-
-
-def _branch_keys_are_block_lists(body: list[str], child_indent: int) -> bool:
-    for index, raw in enumerate(body):
-        if len(raw) - len(raw.lstrip()) != child_indent:
+def _children(lines: tuple[_Line, ...]) -> tuple[tuple[_Node, ...], list[str]]:
+    """The keys at `lines`' own indentation, plus anything the guard cannot place."""
+    if not lines:
+        return (), []
+    indent = min(line.indent for line in lines)
+    nodes: list[_Node] = []
+    problems: list[str] = []
+    for index, line in enumerate(lines):
+        if line.indent != indent:
             continue
-        name, _, value = raw.strip().partition(":")
-        if name not in BRANCH_REF_KEYS:
+        is_item = line.content == "-" or line.content.startswith("- ")
+        content = line.content[1:].strip() if is_item else line.content
+        match = KEY_LINE.match(content)
+        if match is None and not is_item:
+            problems.append(
+                f"line {line.number}: the guard cannot place {line.content!r}"
+            )
             continue
-        following = body[index + 1] if index + 1 < len(body) else ""
-        if value.strip() or not LIST_ITEM.match(following):
-            return False
-    return True
-
-
-def test_non_push_events_fired_by_a_pinned_release_are_rejected() -> None:
-    """`on: create` fires when the tag is made; `on: release` when it is published.
-
-    Neither needs a `push:` key or the pinned prefix, so a guard that only reads
-    `push` reports such a workflow as safe while the release would still trigger
-    it.
-    """
-    for event in ("create", "release", "delete"):
-        text = (
-            "name: zz\n"
-            f"on:\n  {event}:\n"
-            "jobs:\n  noop:\n    runs-on: ubuntu-latest\n    steps: [{run: 'true'}]\n"
+        body = _body_after(lines, index, indent)
+        if match is None:
+            # A sequence item that is not a mapping key is a plain scalar. It is
+            # opaque here: only a `tags`/`tags-ignore` key carries a rule.
+            nodes.append(
+                _Node(line=line, name="", value=content, body=body, children=())
+            )
+            continue
+        child_nodes, child_problems = _children(body)
+        nodes.append(
+            _Node(
+                line=line,
+                name=match["name"],
+                value=match["rest"].strip(),
+                body=body,
+                children=child_nodes,
+            )
         )
-        problems = workflow_problems(text)
-        assert problems, f"a workflow on `on: {event}` was accepted"
+        problems += child_problems
+    return tuple(nodes), problems
 
 
-def workflow_problems(text: str) -> list[str]:
-    """Every way `text` (one workflow) fails the conservative guard."""
+def _locate_trigger_block(text: str) -> tuple[_Located | None, str]:
+    """Find the top-level `on:` key, or say why it cannot be placed with certainty.
+
+    Anything other than a top-level `on:` with an empty value is refused: a
+    quoted key, an anchor, a flow sequence, a flow mapping and a bare scalar with
+    trailing content are all real YAML that this guard has no rule for, and a
+    guess about any of them is exactly how the last round failed open.
+    """
+    lines, reason = _yaml_lines(text)
+    if lines is None:
+        return None, reason
+    found = [
+        index
+        for index, line in enumerate(lines)
+        if line.indent == 0
+        and (match := KEY_LINE.match(line.content)) is not None
+        and match["name"] == "on"
+    ]
+    if not found:
+        return None, "no top-level `on:` key was found"
+    if len(found) > 1:
+        return None, "more than one top-level `on:` key was found"
+    line = lines[found[0]]
+    match = KEY_LINE.match(line.content)
+    value = match["rest"].strip() if match is not None else ""
+    if value:
+        return None, (
+            f"line {line.number}: `on: {value}` does not use the block form"
+            " the guard reads, so its trigger cannot be placed with certainty"
+        )
+    return _Located(number=line.number, body=_body_after(lines, found[0], 0)), ""
+
+
+# --------------------------------------------------------------------------
+# Reading the triggers inside a located block
+# --------------------------------------------------------------------------
+
+# A scalar the guard can state exactly. Characters that could mean an anchor, an
+# alias, a nesting, a negation or an escape are refused: the guard reads a literal
+# or it reads nothing, because it never evaluates a pattern.
+_OPAQUE_SCALAR_CHARS = frozenset("[]{}*&!|>'\"#%@`,?:")
+
+
+def _scalar_literal(text: str) -> str | None:
+    """The scalar `text` states exactly, or None if the guard cannot read it that."""
+    if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
+        inner = text[1:-1]
+        if '"' not in inner and "\\" not in inner:
+            return inner
+    if len(text) >= 2 and text[0] == "'" and text[-1] == "'":
+        inner = text[1:-1]
+        if "'" not in inner:
+            return inner
+    if text and not _OPAQUE_SCALAR_CHARS & set(text):
+        return text
+    return None
+
+
+def _flow_scalars(value: str) -> tuple[tuple[str, ...], str | None]:
+    """The scalars of a single-line flow sequence, or a reason they are unreadable."""
+    if not (value.startswith("[") and value.endswith("]")):
+        return (), f"{value!r} is not a single-line flow sequence of plain scalars"
+    inner = value[1:-1].strip()
+    if not inner:
+        return (), "the filter is empty"
+    literals: list[str] = []
+    for element in inner.split(","):
+        literal = _scalar_literal(element.strip())
+        if literal is None:
+            return (), f"{element.strip()!r} is not a plain or quoted scalar"
+        literals.append(literal)
+    return tuple(literals), None
+
+
+def _tag_literals(node: _Node) -> tuple[tuple[str, ...], str | None]:
+    """The tag patterns a `tags`/`tags-ignore` node states, or a reason it cannot."""
+    if node.value:
+        return _flow_scalars(node.value)
+    if not node.children:
+        return (), "declares no tag pattern"
+    literals: list[str] = []
+    for item in node.children:
+        if item.name:
+            return (
+                (),
+                f"line {item.line.number}: holds a mapping key, not a tag pattern",
+            )
+        if item.body:
+            return (), f"line {item.line.number}: holds a nested list"
+        literal = _scalar_literal(item.value)
+        if literal is None:
+            problem = (
+                f"line {item.line.number}: {item.value!r} is not a plain or"
+                " quoted scalar"
+            )
+            return (), problem
+        literals.append(literal)
+    return tuple(literals), None
+
+
+def _scan_tag_keys(
+    nodes: tuple[_Node, ...], allowance: ReviewedTagAllowance | None
+) -> _TagScan:
+    """Find every `tags`/`tags-ignore` key under a trigger block.
+
+    A tag filter is cleared only when the whole trigger block has a reviewed
+    allowance and every pattern it declares is named there literally. No other
+    tag filter is ever cleared: `tags: ["**"]` and `tags-ignore: ["v*"]` both
+    reach a pinned receiver tag, and the guard has no rule that could say
+    otherwise.
+    """
+    problems: list[str] = []
+    literals: list[str] = []
+    saw_tag_key = False
+    cleared = True
+    for node in nodes:
+        if node.name in TAG_REF_KEYS:
+            saw_tag_key = True
+            found, error = _tag_literals(node)
+            if error is not None:
+                problems.append(f"line {node.line.number}: `{node.name}` {error}")
+                cleared = False
+                continue
+            literals += found
+            if allowance is not None and set(found) <= set(allowance.literals):
+                continue
+            unreviewed = (
+                f"line {node.line.number}: `{node.name}` filter {list(found)} has"
+                " no reviewed allowance, and the guard clears no tag filter it was"
+                " not told about"
+            )
+            problems.append(unreviewed)
+            cleared = False
+            continue
+        nested = _scan_tag_keys(node.children, allowance)
+        problems += nested.problems
+        literals += nested.literals
+        saw_tag_key = saw_tag_key or nested.saw_tag_key
+        cleared = cleared and nested.cleared
+    return _TagScan(
+        problems=problems,
+        literals=tuple(literals),
+        saw_tag_key=saw_tag_key,
+        cleared=cleared,
+    )
+
+
+def _branch_list_error(node: _Node) -> str | None:
+    """Why a `branches`/`branches-ignore` node is not a readable block list."""
+    if node.value:
+        return f"line {node.line.number}: `{node.name}` is not a block list"
+    if not node.body:
+        return f"line {node.line.number}: `{node.name}` is empty"
+    for item in node.body:
+        if not item.content.startswith("- "):
+            return f"line {item.number}: `{node.name}` is not a block list"
+        if _scalar_literal(item.content[2:].strip()) is None:
+            return f"line {item.number}: `{node.name}` does not hold plain patterns"
+    return None
+
+
+def _push_problem(node: _Node, saw_tag_key: bool, tag_keys_cleared: bool) -> str | None:
+    """Why a `push` trigger is not positively recognised as unable to reach a tag.
+
+    A `push` reaches tag pushes unless its filter says otherwise, so the only
+    shapes cleared here are a filter to `branches`/`branches-ignore` written as a
+    block list, and a tag filter that a human has separately reviewed.
+    """
+    if saw_tag_key:
+        if tag_keys_cleared:
+            return None
+        return (
+            f"line {node.line.number}: `push:` carries a `tags`/`tags-ignore`"
+            " key whose filter the guard does not recognise as unable to reach a"
+            " pinned receiver tag"
+        )
+    if node.value:
+        return (
+            f"line {node.line.number}: `push: {node.value}` states its filter"
+            " inline, which the guard cannot place with certainty"
+        )
+    if not node.children:
+        return f"line {node.line.number}: `push:` states no filter at all"
+    problems: list[str] = []
+    branch_keys = 0
+    for child in node.children:
+        if child.name not in PUSH_FILTER_KEYS:
+            unknown = (
+                f"line {child.line.number}: `push:` key {child.name!r} has no rule"
+                " in the guard"
+            )
+            problems.append(unknown)
+            continue
+        if child.name not in BRANCH_REF_KEYS:
+            continue
+        branch_keys += 1
+        error = _branch_list_error(child)
+        if error is not None:
+            problems.append(error)
+    if not branch_keys and not problems:
+        unfiltered = (
+            f"line {node.line.number}: `push:` is not filtered to"
+            " `branches`/`branches-ignore`, so it reaches every tag"
+        )
+        problems.append(unfiltered)
+    return problems[0] if problems else None
+
+
+def workflow_problems(
+    text: str, tag_allowance: ReviewedTagAllowance | None = None
+) -> list[str]:
+    """Every way `text` (one workflow) fails the conservative guard.
+
+    `tag_allowance` is the reviewed allowance for the file `text` came from, if
+    any. It is passed in rather than looked up so that a caller can never apply
+    one file's allowance to another.
+    """
     problems: list[str] = []
     if PINNED_TAG_PREFIX in text:
         mention = (
@@ -284,14 +528,49 @@ def workflow_problems(text: str) -> list[str]:
             " must never appear in a workflow, not even in a comment"
         )
         problems.append(mention)
-    for line, event in lifecycle_events(text):
-        detail = (
-            f"line {line}: a workflow listening for `on: {event}` is triggered by "
-            "creating or publishing a pinned receiver release"
-        )
-        problems.append(detail)
-    problems += push_trigger_problems(text)
+    located, reason = _locate_trigger_block(text)
+    if located is None:
+        problems.append(f"the trigger block cannot be located: {reason}")
+        return problems
+    if not located.body:
+        problems.append(f"line {located.number}: `on:` states no triggers at all")
+        return problems
+    nodes, placement_problems = _children(located.body)
+    problems += placement_problems
+    tags = _scan_tag_keys(nodes, tag_allowance)
+    problems += tags.problems
+    for node in nodes:
+        if node.name == "push":
+            problem = _push_problem(node, tags.saw_tag_key, tags.cleared)
+        elif node.name in CLEARABLE_EVENTS:
+            problem = None
+        elif not node.name:
+            problem = (
+                f"line {node.line.number}: trigger {node.value!r} is not a mapping"
+                " key the guard can place"
+            )
+        else:
+            problem = (
+                f"line {node.line.number}: trigger `{node.name}` is not on the"
+                " guard's clearable event list"
+            )
+        if problem is not None:
+            problems.append(problem)
     return problems
+
+
+def declared_tag_literals(text: str) -> tuple[str, ...]:
+    """The tag patterns a workflow's trigger block states, for allowance checks."""
+    located, _reason = _locate_trigger_block(text)
+    if located is None:
+        return ()
+    nodes, _problems = _children(located.body)
+    return _scan_tag_keys(nodes, None).literals
+
+
+# --------------------------------------------------------------------------
+# Reading the workflow tree
+# --------------------------------------------------------------------------
 
 
 def read_workflow_text(path: Path) -> str:
@@ -302,8 +581,25 @@ def read_workflow_text(path: Path) -> str:
         raise UnreadableWorkflowError(path) from exc
 
 
+def _relative_to_root(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _reviewed_allowance(relative: str) -> ReviewedTagAllowance | None:
+    """The reviewed tag allowance for one workflow, or None."""
+    for allowance in REVIEWED_TAG_ALLOWANCES:
+        if allowance.path == relative:
+            return allowance
+    return None
+
+
 def scan_workflow_file(
-    path: Path, allowances: tuple[tuple[str, str], ...] = ()
+    path: Path,
+    allowances: tuple[tuple[str, str], ...] = (),
+    tag_allowance: ReviewedTagAllowance | None = None,
 ) -> list[str]:
     """Problems in one workflow file; never silently skips an unreadable file."""
     try:
@@ -314,14 +610,12 @@ def scan_workflow_file(
             " it cannot read"
         )
         return [fail_closed]
-    try:
-        relative = str(path.relative_to(ROOT))
-    except ValueError:
-        relative = str(path)
+    relative = _relative_to_root(path)
     allowed = dict(allowances)
     if relative in allowed and PINNED_TAG_PREFIX in text:
         return []
-    return [f"{relative}: {problem}" for problem in workflow_problems(text)]
+    problems = workflow_problems(text, tag_allowance)
+    return [f"{relative}: {problem}" for problem in problems]
 
 
 def scan_workflows(
@@ -331,48 +625,10 @@ def scan_workflows(
     assert files, f"no workflows found under {workflows}; the guard must stay honest"
     problems: list[str] = []
     for path in files:
-        problems += scan_workflow_file(path, allowances)
+        problems += scan_workflow_file(
+            path, allowances, _reviewed_allowance(_relative_to_root(path))
+        )
     return problems
-
-
-# --------------------------------------------------------------------------
-# GitHub filter semantics (kept as a documented reference, used by the
-# demonstration below -- the guard itself never matches filters)
-# --------------------------------------------------------------------------
-
-
-def github_filter_matches(pattern: str, ref: str) -> bool:
-    """Match a ref against a GitHub Actions filter pattern.
-
-    `*` matches any run without `/`, `**` any run, `?` zero or one and `+` one
-    or more of the preceding character, `[...]` a character class. A leading
-    `!` negates and never counts as a positive match here.
-    """
-    if pattern.startswith("!"):
-        return False
-    out: list[str] = []
-    i = 0
-    while i < len(pattern):
-        char = pattern[i]
-        if pattern.startswith("**", i):
-            out.append(".*")
-            i += 2
-            continue
-        if char == "*":
-            out.append("[^/]*")
-        elif char in "?+":
-            out.append(char)
-        elif char == "[":
-            end = pattern.find("]", i + 1)
-            if end == -1:
-                out.append(re.escape(char))
-            else:
-                out.append(pattern[i : end + 1])
-                i = end
-        else:
-            out.append(re.escape(char))
-        i += 1
-    return re.fullmatch("".join(out), ref) is not None
 
 
 # --------------------------------------------------------------------------
@@ -393,6 +649,45 @@ def test_allowlist_entries_must_state_a_reason() -> None:
         assert path, entry
         assert not path.startswith("/"), path
         assert reason.strip(), f"{path} is allowlisted without a stated reason"
+
+
+def test_reviewed_tag_allowances_are_narrow_and_stated() -> None:
+    assert REVIEWED_TAG_ALLOWANCES, "the reviewed tag allowances were dropped"
+    for entry in REVIEWED_TAG_ALLOWANCES:
+        assert not entry.path.startswith("/"), entry.path
+        assert entry.path.endswith((".yml", ".yaml")), entry.path
+        assert entry.literals, entry.path
+        assert entry.reason.strip(), f"{entry.path} is reviewed without a stated reason"
+        assert (ROOT / entry.path).is_file(), entry.path
+        for literal in entry.literals:
+            # A reviewed pattern is only ever matched literally, but it still has
+            # to be one whose leading text cannot be the pinned prefix. Spelling
+            # that out here means a widening has to change this assertion too.
+            assert literal.startswith(("ios-v", "receiver-v")), literal
+            assert not literal.startswith(PINNED_TAG_PREFIX), literal
+
+
+def test_reviewed_tag_allowances_cover_exactly_the_filters_present() -> None:
+    """An allowance states the patterns its file has, so it cannot widen itself."""
+    allowed = {entry.path for entry in REVIEWED_TAG_ALLOWANCES}
+    for path in sorted(p for p in WORKFLOWS.rglob("*") if p.is_file()):
+        relative = _relative_to_root(path)
+        text = read_workflow_text(path)
+        literals = set(declared_tag_literals(text))
+        if not literals:
+            assert relative not in allowed, (
+                f"{relative} is reviewed for a tag filter it no longer declares"
+            )
+            continue
+        entry = _reviewed_allowance(relative)
+        assert entry is not None, (
+            f"{relative} declares tag filters {sorted(literals)} with no reviewed"
+            " allowance"
+        )
+        assert literals <= set(entry.literals), (
+            f"{relative} declares {sorted(literals)} but is reviewed for"
+            f" {list(entry.literals)}"
+        )
 
 
 def test_pinned_release_tag_discovery_is_not_vacuous() -> None:
@@ -468,91 +763,96 @@ def test_versioning_documents_the_scheme_without_a_version_bump() -> None:
     assert f'__version__: Final = "{PACKAGE_VERSION}"' in init
 
 
-# The shapes the removed parser used to clear silently. Each must be flagged.
-RELEASE_TRIGGERING_WORKFLOWS = {
-    "block_sequence": """on:
-  push:
-    tags:
-      - "healthrelay-receiver-*"
-jobs: {}
-""",
-    "inline_mapping": """on:
-  push: {tags: ["healthrelay-receiver-*"]}
-jobs: {}
-""",
-    "escaped_quote": """on:
-  push:
-    tags: ["ios-\\"suffix", "healthrelay-receiver-*"]
-jobs: {}
-""",
-    "comment_obscured": """on:
-  push:
-    # a comment aligned with the key
-    tags: ["healthrelay-receiver-*"]
-jobs: {}
-""",
-    "anchored_sequence": """x: &rel ["healthrelay-receiver-*"]
-on:
-  push:
-    tags: *rel
-jobs: {}
-""",
-    "prefix_in_a_comment": """# never publish healthrelay-receiver- tags from here
-on:
-  push:
-    branches: [main]
-jobs: {}
-""",
-    "unfiltered_push": """on:
-  push:
-    branches: [main]
-jobs: {}
-""",
-    "bare_on_push": """on: push
-jobs: {}
-""",
-    "flow_trigger_list": """on: [push, pull_request]
-jobs: {}
-""",
-    "inline_push_mapping": """on:
-  push: {branches: [main]}
-jobs: {}
-""",
-    "paths_only_push": """on:
-  push:
-    paths: ['src/**']
-jobs: {}
-""",
+# Every shape below reaches a `healthrelay-receiver-*` ref on GitHub, so each one
+# must be reported. The eight marked `#87` were confirmed to leave the whole
+# suite green on 3c8a4f4: the guard had been handed a list of shapes to recognise
+# instead of a whitelist of shapes to trust.
+RELEASE_TRIGGERING_WORKFLOWS: dict[str, str] = {
+    "tag_block_sequence": (
+        'on:\n  push:\n    tags:\n      - "healthrelay-receiver-*"\njobs: {}\n'
+    ),
+    "tag_inline_mapping": 'on:\n  push: {tags: ["healthrelay-receiver-*"]}\njobs: {}\n',
+    "tag_escaped_quote": (
+        'on:\n  push:\n    tags: ["ios-\\"suffix", "healthrelay-receiver-*"]'
+        "\njobs: {}\n"
+    ),
+    "tag_comment_obscured": (
+        "on:\n  push:\n    # aligned with the key\n"
+        '    tags: ["healthrelay-receiver-*"]\njobs: {}\n'
+    ),
+    "tag_anchored_alias": (
+        'x: &rel ["healthrelay-receiver-*"]\non:\n  push:\n    tags: *rel\njobs: {}\n'
+    ),
+    "prefix_in_a_comment": (
+        "# never publish healthrelay-receiver- tags\non:\n  push:\n"
+        "    branches:\n      - main\njobs: {}\n"
+    ),
+    # --- the eight that failed open on 3c8a4f4 ---
+    "87_tags_ignore_star": 'on:\n  push:\n    tags-ignore: ["v*"]\njobs: {}\n',
+    "87_tags_glob_all": 'on:\n  push:\n    tags: ["**"]\njobs: {}\n',
+    "87_unfiltered_push": "on:\n  push:\n    branches: [main]\njobs: {}\n",
+    "87_bare_push_key": "on:\n  push:\njobs: {}\n",
+    "87_quoted_keys": '"on":\n  "push":\n    branches: [main]\njobs: {}\n',
+    "87_flow_sequence_across_lines": "on: [\n  push,\n  pull_request\n]\njobs: {}\n",
+    "87_flow_sequence_inline": "on: [push, pull_request]\njobs: {}\n",
+    "87_trailing_content_after_push": "on: push # run on every push\njobs: {}\n",
+    "87_anchored_bare_push": "on: &trigger push\njobs: {}\n",
+    "87_create_event": "on:\n  create:\njobs: {}\n",
+    "87_release_event": "on:\n  release:\n    types: [published]\njobs: {}\n",
+    "87_delete_event": "on:\n  delete:\njobs: {}\n",
+    "87_event_with_no_rule": (
+        "on:\n  push:\n    branches:\n      - main\n  merge_group:\njobs: {}\n"
+    ),
+    # --- further shapes with no rule, reported for the same reason ---
+    "tag_key_beside_a_branch_filter": (
+        "on:\n  push:\n    branches:\n      - main\n    tags:\n      - 'ios-v*'\n"
+    ),
+    "paths_only_push": "on:\n  push:\n    paths: ['src/**']\njobs: {}\n",
+    "branch_ignore_written_inline": (
+        "on:\n  push:\n    branches-ignore: ['main']\njobs: {}\n"
+    ),
+    "unknown_push_key": "on:\n  push:\n    refs:\n      - main\njobs: {}\n",
+    "tab_indented_trigger": "on:\n\tpush:\njobs: {}\n",
+    "no_trigger_key": "jobs: {}\n",
+    "empty_trigger": "on:\njobs: {}\n",
 }
 
-READABLE_WORKFLOWS = {
-    "tag_filtered_push": """on:
-  push:
-    tags: ["receiver-v*"]
-""",
-    "tag_block_list": """on:
-  push:
-    tags:
-      - "ios-v*"
-""",
-    "tags_ignore": """on:
-  push:
-    tags-ignore: ['v*']
-""",
-    "branch_block_list": """on:
-  push:
-    branches:
-      - main
-""",
-    "no_push_trigger": """on:
-  pull_request:
-    branches:
-      - main
-""",
+# Every shape below provably cannot fire for a ref matching the pinned prefix, so
+# each one must be cleared. A guard that reported all of these would be as useless
+# as one that cleared all of the shapes above.
+SAFE_WORKFLOWS: dict[str, str] = {
+    "push_filtered_to_branches": (
+        "on:\n  push:\n    branches:\n      - main\njobs: {}\n"
+    ),
+    "push_branch_ignore_block": (
+        "on:\n  push:\n    branches-ignore:\n      - 'tmp/**'\njobs: {}\n"
+    ),
+    "pull_request_only": (
+        "on:\n  pull_request:\n    branches:\n      - main\njobs: {}\n"
+    ),
+    "workflow_dispatch_only": "on:\n  workflow_dispatch:\njobs: {}\n",
+    "schedule_only": "on:\n  schedule:\n    - cron: '0 8 * * *'\njobs: {}\n",
+    "push_branches_plus_dispatch": (
+        "on:\n  push:\n    branches:\n      - main\n  workflow_dispatch:\njobs: {}\n"
+    ),
+    # Shapes in real use in this repository's own workflows.
+    "pull_request_with_block_list": (
+        "on:\n  pull_request:\n    branches:\n      - main\n  schedule:\n"
+        '    - cron: "0 8 * * *"\n  workflow_dispatch:\n'
+    ),
+    "pull_request_target_with_inline_types": (
+        "on:\n  pull_request_target:\n    types: [opened, edited, synchronize]\n"
+        "    branches:\n      - main\n"
+    ),
+    "workflow_dispatch_with_inputs": (
+        "on:\n  workflow_dispatch:\n    inputs:\n      tag:\n"
+        "        description: Exact tag\n"
+        "        required: true\n        type: string\n"
+    ),
 }
 
 
-def test_workflow_guard_flags_every_release_triggering_shape() -> None:
+def test_workflow_guard_reports_every_release_triggering_shape() -> None:
     for name, body in RELEASE_TRIGGERING_WORKFLOWS.items():
         problems = workflow_problems(body)
         assert problems, (
@@ -560,20 +860,33 @@ def test_workflow_guard_flags_every_release_triggering_shape() -> None:
         )
 
 
-def test_workflow_guard_clears_the_readable_shapes() -> None:
-    for name, body in READABLE_WORKFLOWS.items():
+def test_workflow_guard_clears_every_positively_recognised_safe_shape() -> None:
+    for name, body in SAFE_WORKFLOWS.items():
         assert not workflow_problems(body), f"false alarm on {name}:\n{body}"
 
 
 def test_workflow_guard_is_not_vacuous() -> None:
-    # A guard that flags everything (or nothing) would pass the tests above.
+    # A guard that reported everything, or nothing, would pass the two tests
+    # above. Pin both ends, and pin the one reviewed tag filter per file.
     assert RELEASE_TRIGGERING_WORKFLOWS
-    assert READABLE_WORKFLOWS
-    assert not workflow_problems("on:\n  push:\n    tags: ['ios-v*']\n")
+    assert SAFE_WORKFLOWS
+    assert workflow_problems("on:\n  push:\n    branches:\n      - main\n") == []
+    assert workflow_problems("on:\n  push:\n    tags:\n      - 'ios-v*'\n")
+    assert workflow_problems("on:\n  push:\n    tags-ignore: ['v*']\n")
+    assert workflow_problems("on:\n  push:\n    tags: ['**']\n")
+    assert workflow_problems('on:\n  push:\n    tags: ["healthrelay-*"]\n')
+    assert workflow_problems("on:\n  push:\nhealthrelay-receiver-x\n")
+
+    # A reviewed tag filter clears only where the allowance says so, and only for
+    # the patterns the allowance names.
+    allowance = REVIEWED_TAG_ALLOWANCES[0]
+    reviewed = 'on:\n  push:\n    tags:\n      - "ios-v*"\njobs: {}\n'
+    assert not workflow_problems(reviewed, allowance)
+    assert workflow_problems(reviewed)
     assert workflow_problems(
-        "on:\n  push:\n    tags: ['ios-v*']\nhealthrelay-receiver-x\n"
+        'on:\n  push:\n    tags:\n      - "ios-v*"\n      - "**"\n', allowance
     )
-    assert workflow_problems("on: push\n")
+    assert workflow_problems(reviewed, allowance._replace(literals=("app-v*",)))
 
 
 def test_workflow_guard_fails_closed_on_an_unreadable_workflow() -> None:
@@ -623,48 +936,10 @@ def test_reviewed_allowlist_suppresses_only_the_named_file() -> None:
     assert all("other.yml" in problem for problem in flagged)
 
 
-def test_real_workflows_all_declare_a_readable_ref_filter() -> None:
-    files = sorted(p for p in WORKFLOWS.rglob("*") if p.is_file())
-    assert files
-    offenders: dict[str, list[str]] = {}
-    for path in files:
-        try:
-            text = read_workflow_text(path)
-        except UnreadableWorkflowError as exc:
-            offenders[path.name] = [str(exc)]
-            continue
-        problems = push_trigger_problems(text)
-        if problems:
-            offenders[path.name] = problems
-    assert not offenders, f"unreadable push triggers: {offenders}"
-
-
-def test_github_filter_matching_follows_github_semantics() -> None:
-    tag = pinned_release_tags()[0]
-    assert github_filter_matches("healthrelay-receiver-[0-9]+.[0-9]+.[0-9]+", tag)
-    assert github_filter_matches("healthrelay-*", tag)
-    assert github_filter_matches("**", tag)
-    assert not github_filter_matches("receiver-v*", tag)
-    assert not github_filter_matches("ios-v*", tag)
-    assert not github_filter_matches("!healthrelay-*", tag)
-    assert not github_filter_matches("v[0-9]+", tag)
-
-
-def test_filter_semantics_explain_why_the_guard_is_textual() -> None:
-    # A guard that listed every matching filter would have to be right about
-    # all of these; the textual guard only has to refuse the prefix outright.
-    tag = pinned_release_tags()[0]
-    matching = [
-        "healthrelay-*",
-        "healthrelay-receiver-*",
-        "healthrelay-re*",
-        "healthrelay-receiver?*",
-        "healthrelay-*-receiver-*",
-        "**[healthrelay]",
-        "healthrelay-receiver-[0-9]+.[0-9]+.[0-9]+",
-        "*",
-        "**",
-    ]
-    hits = [pattern for pattern in matching if github_filter_matches(pattern, tag)]
-    assert hits, "the matcher must still demonstrate matches, or this test is vacuous"
-    assert "healthrelay-*" in hits
+def test_declared_tag_literals_reports_what_a_workflow_asks_for() -> None:
+    ios = (ROOT / ".github/workflows/ios.yml").read_text(encoding="utf-8")
+    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    codeql = (ROOT / ".github/workflows/codeql.yml").read_text(encoding="utf-8")
+    assert declared_tag_literals(ios) == ("ios-v*",)
+    assert declared_tag_literals(release) == ("receiver-v*",)
+    assert declared_tag_literals(codeql) == ()
