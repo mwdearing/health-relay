@@ -62,7 +62,15 @@ ALLOWED_PREFIX_APPEARANCES: tuple[tuple[str, str], ...] = ()
 
 
 class UnreadableWorkflowError(Exception):
-    """A workflow file could not be decoded as UTF-8 text."""
+    """A workflow file could not be decoded as UTF-8 text.
+
+    Carries the offending path rather than a formatted message, so the wording
+    lives with the class instead of at each raise site.
+    """
+
+    def __init__(self, path: object) -> None:
+        self.path = path
+        super().__init__(f"{path}: not decodable as UTF-8 text")
 
 
 # --------------------------------------------------------------------------
@@ -136,44 +144,76 @@ def push_trigger_problems(text: str) -> list[str]:
     mapping, or a trigger with no ref key at all -- is reported rather than
     judged, because judging it means modelling YAML again.
     """
-    problems: list[str] = []
-    for match in ON_BARE_PUSH.finditer(text):
-        problems.append(f"line {text[: match.start()].count(chr(10)) + 1}: `on: push`")
-    for match in ON_FLOW_STYLE.finditer(text):
-        problems.append(
-            f"line {text[: match.start()].count(chr(10)) + 1}: flow-style `on:` trigger"
+    problems: list[str] = [
+        _line_problem(text, match, "`on: push`")
+        for match in ON_BARE_PUSH.finditer(text)
+    ]
+    problems += [
+        _line_problem(text, match, "flow-style `on:` trigger")
+        for match in ON_FLOW_STYLE.finditer(text)
+    ]
+    problems += [
+        problem
+        for problem in (
+            _push_key_problem(text, match) for match in PUSH_KEY_LINE.finditer(text)
         )
-    for match in PUSH_KEY_LINE.finditer(text):
-        line = text[: match.start()].count("\n") + 1
-        rest = match.group("rest").strip()
-        if rest and rest != "{}":
-            problems.append(f"line {line}: inline `push:{rest}`")
-            continue
-        body = _block_body(text[match.end() :], len(match.group("indent")))
-        if not body:
-            problems.append(f"line {line}: `push:` with no ref filter")
-            continue
-        child_indent = min(len(b) - len(b.lstrip()) for b in body)
-        children = [b for b in body if len(b) - len(b.lstrip()) == child_indent]
-        names = [b.strip().split(":", 1)[0].strip() for b in children]
-        if any(name in TAG_REF_KEYS for name in names):
-            continue
-        if any(name in BRANCH_REF_KEYS for name in names):
-            blocking = False
-            for index, raw in enumerate(body):
-                if len(raw) - len(raw.lstrip()) != child_indent:
-                    continue
-                name, _, value = raw.strip().partition(":")
-                if name not in BRANCH_REF_KEYS:
-                    continue
-                following = body[index + 1] if index + 1 < len(body) else ""
-                if value.strip() or not LIST_ITEM.match(following):
-                    blocking = True
-                    break
-            if not blocking:
-                continue
-        problems.append(f"line {line}: `push:` ref filter is not a readable block form")
+        if problem is not None
+    ]
     return problems
+
+
+def _line_number(text: str, match: re.Match[str]) -> int:
+    return text[: match.start()].count("\n") + 1
+
+
+def _line_problem(text: str, match: re.Match[str], description: str) -> str:
+    return f"line {_line_number(text, match)}: {description}"
+
+
+def _push_key_problem(text: str, match: re.Match[str]) -> str | None:
+    """The problem with one `push:` key's ref filter, or None if it is readable."""
+    line = _line_number(text, match)
+    rest = match.group("rest").strip()
+    if rest and rest != "{}":
+        return f"line {line}: inline `push:{rest}`"
+    body = _block_body(text[match.end() :], len(match.group("indent")))
+    if not body:
+        return f"line {line}: `push:` with no ref filter"
+    if _ref_filter_is_readable(body):
+        return None
+    return f"line {line}: `push:` ref filter is not a readable block form"
+
+
+def _ref_filter_is_readable(body: list[str]) -> bool:
+    """Whether a `push:` block states its filter in a form a human can read.
+
+    A `tags`/`tags-ignore` key is accepted however it is written, because the
+    key itself is the readable statement. A `branches`/`branches-ignore` key is
+    accepted only as a block list, so that `branches: [main]` still reaches a
+    human. Anything else -- no ref key at all, or a filter that cannot be read
+    off the text -- is not accepted, because accepting it means judging YAML.
+    """
+    child_indent = min(len(line) - len(line.lstrip()) for line in body)
+    children = [line for line in body if len(line) - len(line.lstrip()) == child_indent]
+    names = [child.strip().split(":", 1)[0].strip() for child in children]
+    if any(name in TAG_REF_KEYS for name in names):
+        return True
+    if not any(name in BRANCH_REF_KEYS for name in names):
+        return False
+    return _branch_keys_are_block_lists(body, child_indent)
+
+
+def _branch_keys_are_block_lists(body: list[str], child_indent: int) -> bool:
+    for index, raw in enumerate(body):
+        if len(raw) - len(raw.lstrip()) != child_indent:
+            continue
+        name, _, value = raw.strip().partition(":")
+        if name not in BRANCH_REF_KEYS:
+            continue
+        following = body[index + 1] if index + 1 < len(body) else ""
+        if value.strip() or not LIST_ITEM.match(following):
+            return False
+    return True
 
 
 def workflow_problems(text: str) -> list[str]:
@@ -193,7 +233,7 @@ def read_workflow_text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
-        raise UnreadableWorkflowError(f"{path}: not decodable as UTF-8 text") from exc
+        raise UnreadableWorkflowError(path) from exc
 
 
 def scan_workflow_file(
@@ -280,9 +320,11 @@ def test_no_workflow_can_trigger_on_a_pinned_receiver_tag() -> None:
 
 def test_allowlist_entries_must_state_a_reason() -> None:
     for entry in ALLOWED_PREFIX_APPEARANCES:
-        assert isinstance(entry, tuple) and len(entry) == 2, entry
+        assert isinstance(entry, tuple), entry
+        assert len(entry) == 2, entry
         path, reason = entry
-        assert path and not path.startswith("/"), path
+        assert path, entry
+        assert not path.startswith("/"), path
         assert reason.strip(), f"{path} is allowlisted without a stated reason"
 
 
@@ -318,7 +360,8 @@ def test_release_notes_name_the_tag_install_command_and_intake_tool() -> None:
         notes_path = release_notes_path(tag)
         notes = notes_path.read_text(encoding="utf-8")
         heading = notes.splitlines()[0]
-        assert heading.startswith("# ") and heading.rstrip().endswith(tag), (
+        assert heading.startswith("# "), notes_path.name
+        assert heading.rstrip().endswith(tag), (
             f"{notes_path.name} must open with a heading naming {tag}"
         )
         assert tag in notes, f"{notes_path.name} does not name {tag}"
@@ -471,12 +514,12 @@ def test_workflow_guard_fails_closed_on_an_unreadable_workflow() -> None:
         binary = Path(raw) / "binary.yml"
         binary.write_bytes(b"\x00\xff\xfe not utf8 \x00")
 
+        unreadable = False
         try:
             read_workflow_text(binary)
         except UnreadableWorkflowError:
-            pass
-        else:
-            raise AssertionError("an undecodable workflow was read as text")
+            unreadable = True
+        assert unreadable, "an undecodable workflow was read as text"
 
         problems = scan_workflow_file(binary)
         assert problems, (
