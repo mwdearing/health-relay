@@ -262,6 +262,21 @@ REF_RUN = rf"[0-9]{REF_CHAR}*(?:\.(?!md\b){REF_CHAR}+)*"
 # boundary. See the comment on `ANY_PINNED_REF_RUN` for why this is not `\w`.
 REF_CONTINUATION = rf"{REF_CHAR}|\.(?!md\b){REF_CHAR}"
 
+# The `.md` exemption above is a *filename* convention, so it is honoured only for
+# the one filename shape that carries a ref: a release note is literally
+# `notes-<tag>.md`. A global `(?!md\b)` also swallowed the broken part of a
+# checkout URL — an `…@…-2026.10.04.md` install target and
+# `/blob/…-2026.10.04.md-typo/…`
+# both stopped the run at `.md`, leaving the valid `…10.04` prefix for both checks
+# to pass. `test_md_is_exempt_only_in_a_release_note_filename` pins the difference.
+NOTE_FILENAME_RUN = rf"notes-{PINNED_TAG_PREFIX}{REF_RUN}\.md"
+
+# `healthrelay-receiver-<YYYY.MM.DD>` is the documented placeholder for the tag
+# form, and it appears as prose in five tracked files (FORK.md, .github/release/
+# README.md, a published note, the error message below, and the version policy). It
+# names no release, so it is exempt by name rather than by accident of shape.
+PLACEHOLDER_REF = f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>"
+
 # A run of the pinned prefix that is not a bare, complete tag at all — including
 # one that never reaches a full date (`2026.10.4`, the same lost-zero shape this
 # module rejects in a release-notes filename). This is the catch-all, and whether
@@ -290,7 +305,21 @@ REF_CONTINUATION = rf"{REF_CHAR}|\.(?!md\b){REF_CHAR}"
 # same reason the rest of this guard states its rules rather than relying on what a
 # regex happens to do: a later edit that loosened the body cannot silently reopen
 # the fail-open this comment describes.
-ANY_PINNED_REF_RUN = re.compile(rf"{PINNED_TAG_PREFIX}{REF_RUN}(?!{REF_CONTINUATION})")
+# The catch-all body for a ref that is *not* a well-formed tag: it must start at
+# the prefix and run as far as a ref character can, whatever that character is. The
+# earlier body began `[0-9]`, so a wholly nonnumeric suffix (`…-latest`, `…-rc1`,
+# `…-v2026.10.04`) matched nothing at all and both checks passed on a public ref
+# that violates the `YYYY.MM.DD` scheme and may install nothing.
+#
+# `ANY_REF_RUN` therefore allows any ref character to start the body. It is only
+# used in the third alternative, where the alternative order means a complete tag
+# or a note filename never reaches it, and where a captured run is always asked
+# afterwards whether it is a complete tag in full.
+ANY_REF_RUN = rf"{REF_CHAR}+(?:\.{REF_CHAR}+)*"
+
+ANY_PINNED_REF_RUN = re.compile(
+    rf"(?:{NOTE_FILENAME_RUN}|{PLACEHOLDER_REF}|{PINNED_TAG_PREFIX}{ANY_REF_RUN}(?!{REF_CONTINUATION}))"
+)
 
 # Marks a ref can legitimately be followed by in prose, in Markdown, or in a URL.
 # The regex above does not consult this list — it recognises "a character that
@@ -302,6 +331,30 @@ ANY_PINNED_REF_RUN = re.compile(rf"{PINNED_TAG_PREFIX}{REF_RUN}(?!{REF_CONTINUAT
 # These are ASCII marks only. A non-ASCII character is covered separately, by
 # `test_a_non_ascii_character_ends_a_ref_without_joining_it`, because it is the
 # one class of terminator that used to be invisible to the guard.
+# Refs whose suffix contains no digit at all. Each matched nothing before the
+# catch-all body stopped requiring a leading digit.
+NONNUMERIC_REFS: tuple[str, ...] = (
+    f"{PINNED_TAG_PREFIX}latest",
+    f"{PINNED_TAG_PREFIX}rc1",
+    f"{PINNED_TAG_PREFIX}v2026.10.04",
+    f"{PINNED_TAG_PREFIX}next",
+)
+
+# A ref immediately followed by `.md`, which is a filename extension in one shape
+# only. `(ref, want_reported)`.
+MD_AFTER_A_REF: tuple[tuple[str, bool], ...] = (
+    (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md", False),
+    # A checkout URL written with the https form rather than an account-linked
+    # remote, because `scripts/public-release-audit.py --strict` rejects a tracked
+    # `git@host/path` as an unreviewed account-linked email.
+    (
+        f"uv tool install git+https://example.invalid/x.git@{PINNED_TAG_PREFIX}2026.10.04.md",
+        True,
+    ),
+    (f"/blob/{PINNED_TAG_PREFIX}2026.10.04.md-typo/docs/pairing.md", True),
+    (f"install {PINNED_TAG_PREFIX}2026.10.04.md now", True),
+)
+
 PUNCTUATION_AFTER_A_REF: tuple[str, ...] = (
     "!",
     "?",
@@ -344,6 +397,25 @@ WELL_FORMED_REFS: tuple[str, ...] = (
 )
 
 
+def _is_a_correct_reference(ref: str) -> bool:
+    """Whether a captured run is a reference written correctly, so not reported.
+
+    Three shapes are correct, and each is correct for a stated reason rather than
+    because it happens not to match:
+
+    - the bare tag itself, `healthrelay-receiver-2026.10.04`;
+    - a release-note filename, `notes-healthrelay-receiver-2026.10.04.md`, where the
+      ref is part of a filename rather than prose after the prefix;
+    - the documented placeholder `healthrelay-receiver-<YYYY.MM.DD>`, which names no
+      release and appears as prose in several tracked files.
+    """
+    if PINNED_TAG_RE.fullmatch(ref):
+        return True
+    if ref == PLACEHOLDER_REF:
+        return True
+    return bool(re.fullmatch(NOTE_FILENAME_RUN, ref))
+
+
 def malformed_pinned_refs() -> list[tuple[str, str]]:
     """Every mention of the pinned prefix in the docs that is not a bare tag.
 
@@ -357,7 +429,7 @@ def malformed_pinned_refs() -> list[tuple[str, str]]:
         text = path.read_text(encoding="utf-8")
         for match in ANY_PINNED_REF_RUN.finditer(text):
             ref = match.group(0)
-            if PINNED_TAG_RE.fullmatch(ref):
+            if _is_a_correct_reference(ref):
                 continue
             found.append((str(path.relative_to(ROOT)), ref))
     return found
@@ -1146,6 +1218,56 @@ def test_a_malformed_pinned_ref_in_the_docs_is_reported() -> None:
     )
 
 
+def test_a_ref_with_no_digits_at_all_is_still_reported() -> None:
+    """A wholly nonnumeric suffix names no release and must not pass unnoticed.
+
+    The catch-all body began `[0-9]`, so `healthrelay-receiver-latest`,
+    `-rc1` and `-v2026.10.04` matched nothing at all: invisible to the
+    malformed-ref check, and contributing no tag to discovery, so a public ref
+    violating the `YYYY.MM.DD` scheme passed both. Only the documented
+    `<YYYY.MM.DD>` placeholder is exempt, and it is exempt by name.
+    """
+    assert NONNUMERIC_REFS, (
+        "the nonnumeric-ref fixture is empty, so this asserts nothing"
+    )
+    for ref in NONNUMERIC_REFS:
+        runs: list[str] = ANY_PINNED_REF_RUN.findall(f"install {ref} now")
+        assert runs, (
+            f"{ref!r} is not recognised as a pinned ref run at all, so neither the "
+            "malformed-ref check nor tag discovery can see it"
+        )
+        assert not _is_a_correct_reference(runs[0]), (
+            f"{ref!r} is reported as a correct reference"
+        )
+    # And the placeholder, which is prose about the tag form in several tracked
+    # files, must still be accepted rather than reported by this same rule.
+    assert _is_a_correct_reference(PLACEHOLDER_REF), (
+        "the documented placeholder names no release and must not be reported"
+    )
+    assert ANY_PINNED_REF_RUN.findall(f"checkout {PLACEHOLDER_REF}"), (
+        "the placeholder must still be recognised as a pinned ref run"
+    )
+
+
+def test_md_is_exempt_only_in_a_release_note_filename() -> None:
+    """`.md` after a ref is a filename extension only in a release note's name.
+
+    The `(?!md\\b)` exemption was global, so it also stopped the run at `.md` in a
+    checkout URL. An `…@healthrelay-receiver-2026.10.04.md` install target and
+    `/blob/healthrelay-receiver-2026.10.04.md-typo/...` both left the valid
+    `...10.04` prefix for both checks to pass, over a broken ref. The exemption is
+    now keyed on the one filename shape that carries a ref.
+    """
+    assert MD_AFTER_A_REF, "the .md fixture is empty, so this asserts nothing"
+    for ref, want_reported in MD_AFTER_A_REF:
+        runs: list[str] = ANY_PINNED_REF_RUN.findall(ref)
+        assert runs, f"{ref!r} is not recognised at all"
+        assert (not _is_a_correct_reference(runs[0])) == want_reported, (
+            f"{ref!r} captured {runs[0]!r} and reported="
+            f"{not _is_a_correct_reference(runs[0])}, expected reported={want_reported}"
+        )
+
+
 def test_every_malformed_ref_shape_is_recognised() -> None:
     """The recogniser covers the shapes it is claimed to, and not the good ones.
 
@@ -1173,13 +1295,13 @@ def test_every_malformed_ref_shape_is_recognised() -> None:
     for ref in malformed:
         runs: list[str] = ANY_PINNED_REF_RUN.findall(f"install {ref} now")
         assert runs, f"{ref!r} is not recognised as a pinned ref run at all"
-        assert not PINNED_TAG_RE.fullmatch(runs[0]), (
-            f"{ref!r} is reported as a well-formed tag"
+        assert not _is_a_correct_reference(runs[0]), (
+            f"{ref!r} is reported as a correct reference"
         )
     for ref in well_formed:
         found: list[str] = ANY_PINNED_REF_RUN.findall(f"see {ref} for details")
         assert found, f"{ref!r} is not recognised at all"
-        assert PINNED_TAG_RE.fullmatch(found[0]), (
+        assert _is_a_correct_reference(found[0]), (
             f"the correct reference {ref!r} was read as {found[0]!r}, so it would be "
             "reported as malformed"
         )
