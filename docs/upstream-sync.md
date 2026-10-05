@@ -27,8 +27,17 @@ git remote -v | grep upstream     # upstream … (push) DISABLED
 ```
 
 ```bash
-git fetch upstream
+git fetch --no-tags upstream
 git log --oneline <recorded-sha>..upstream/main
+```
+
+`--no-tags` is not optional. A plain `git fetch` follows any tag pointing into the history it
+fetches, so upstream's `receiver-v*` and `ios-v*` arrive in `refs/tags` anyway — and those are the
+tags this fork must never push, because they trigger the release workflows. Set it once so you
+cannot forget it:
+
+```bash
+git config --local remote.upstream.tagOpt --no-tags
 ```
 
 `<recorded-sha>` is the upstream commit in the **newest** `Upstream sync, <date>:` entry in
@@ -229,7 +238,10 @@ Two traps worth knowing before you trust a local result:
 
 For a documentation-only change, `ruff format --check .`, `ruff check .` and
 `scripts/public-release-audit.py --strict` are the ones that bite — the last of those rejects
-machine-specific paths and other public-surface problems, and it is strict by design.
+machine-specific paths and other public-surface problems, and it is strict by design. Add
+`pytest -q tests/guardrails/test_upstream_sync_procedure.py`: a sync entry in the wrong order, or
+one stripped of its checkpoint SHA, is exactly the kind of change that looks like documentation and
+breaks the next sync.
 
 Never run acceptance, tests or builds from the **live receiver tree** — the receiver process runs
 from it, and any restart deploys whatever is checked out there. Create worktrees from a review
