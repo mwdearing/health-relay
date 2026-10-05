@@ -99,10 +99,18 @@ class ReviewedTagAllowance(NamedTuple):
     """A tag filter a human has read and confirmed cannot reach the pinned prefix.
 
     `path` is relative to the repository root, `literals` is the exact set of tag
-    patterns that path is allowed to declare, and `reason` states why none of them
-    can match a tag beginning with the pinned prefix. The guard compares literal
-    for literal: it never evaluates a pattern, so an allowance cannot widen
-    itself, and the pattern must be spelled exactly as recorded here.
+    patterns that path is allowed to declare under a `tags` key, and `reason`
+    states why none of them can match a tag beginning with the pinned prefix. The
+    guard compares literal for literal: it never evaluates a pattern, so an
+    allowance cannot widen itself, and the pattern must be spelled exactly as
+    recorded here.
+
+    An allowance covers `tags` and never `tags-ignore`. The two keys mean opposite
+    things — `tags` selects the refs that run, `tags-ignore` excludes them — so a
+    pattern that cannot match a pinned tag under `tags` (it never selects one) is
+    exactly a pattern that leaves the pinned tag running under `tags-ignore` (it
+    is not excluded). An allowance that did not name its key would hand its safety
+    to the inverted key the moment someone changed one word.
     """
 
     path: str
@@ -410,10 +418,11 @@ def _scan_tag_keys(
     """Find every `tags`/`tags-ignore` key under a trigger block.
 
     A tag filter is cleared only when the whole trigger block has a reviewed
-    allowance and every pattern it declares is named there literally. No other
-    tag filter is ever cleared: `tags: ["**"]` and `tags-ignore: ["v*"]` both
-    reach a pinned receiver tag, and the guard has no rule that could say
-    otherwise.
+    allowance, every pattern it declares is named there literally, and the key is
+    `tags` — an allowance never carries over to `tags-ignore`, whose meaning is
+    inverted. No other tag filter is ever cleared: `tags: ["**"]` and
+    `tags-ignore: ["v*"]` both reach a pinned receiver tag, and the guard has no
+    rule that could say otherwise.
     """
     problems: list[str] = []
     literals: list[str] = []
@@ -428,7 +437,11 @@ def _scan_tag_keys(
                 cleared = False
                 continue
             literals += found
-            if allowance is not None and set(found) <= set(allowance.literals):
+            if (
+                allowance is not None
+                and node.name == "tags"
+                and set(found) <= set(allowance.literals)
+            ):
                 continue
             unreviewed = (
                 f"line {node.line.number}: `{node.name}` filter {list(found)} has"
@@ -688,6 +701,46 @@ def test_reviewed_tag_allowances_cover_exactly_the_filters_present() -> None:
             f"{relative} declares {sorted(literals)} but is reviewed for"
             f" {list(entry.literals)}"
         )
+
+
+def test_no_allowance_is_reached_through_tags_ignore() -> None:
+    """`tags-ignore` inverts the key's meaning, so no allowance may clear one.
+
+    A pattern that cannot match a pinned tag under `tags` — it selects none —
+    is exactly a pattern that leaves the pinned tag running under
+    `tags-ignore`, because there it excludes nothing relevant. An allowance that
+    followed the pattern to the other key would turn a reviewed safety into an
+    unreviewed one, so this asserts the inversion directly rather than trusting
+    every allowance's key to stay spelled correctly.
+    """
+    for name, template in (
+        ("tags", 'on:\n  push:\n    {key}:\n      - "{pattern}"\njobs: {{}}\n'),
+        ("tags-ignore", 'on:\n  push:\n    {key}:\n      - "{pattern}"\njobs: {{}}\n'),
+    ):
+        for pattern in ("ios-v*", "receiver-v*"):
+            with tempfile.TemporaryDirectory() as raw:
+                tree = Path(raw)
+                _ = (tree / "wf.yml").write_text(
+                    template.format(key=name, pattern=pattern), encoding="utf-8"
+                )
+                _ = (tree / ".keep").write_text("", encoding="utf-8")
+                problems = scan_workflow_file(
+                    tree / "wf.yml",
+                    tag_allowance=ReviewedTagAllowance(
+                        "wf.yml", ("ios-v*", "receiver-v*"), "reviewed: probe"
+                    ),
+                )
+            if name == "tags-ignore":
+                assert problems, (
+                    f"`{name}: [{pattern}]` was cleared by an allowance that was "
+                    "reviewed for the same pattern under `tags`, whose meaning is "
+                    "the opposite"
+                )
+            else:
+                assert not problems, (
+                    f"a reviewed `tags` filter was reported ({name}, {pattern}): "
+                    f"{problems}"
+                )
 
 
 def test_pinned_release_tag_discovery_is_not_vacuous() -> None:
