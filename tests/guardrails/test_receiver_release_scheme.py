@@ -42,7 +42,10 @@ notes were never written ships one with no release record; both are reported.
 Nothing here is narrowed to make a check pass, and each boundary is defined by
 what a ref *cannot* contain rather than by an enumeration of delimiters, because
 an enumeration failed open: `healthrelay-receiver-2026.10.04-typo!` matched no
-pattern at all and so satisfied no assertion anywhere.
+pattern at all and so satisfied no assertion anywhere. A ref's alphabet is spelled
+out in ASCII — digits, ASCII letters, `_`, `-` and `.` — so **every non-ASCII
+character ends a ref and none of them joins it**, in a document written in any
+language.
 
 These tests are stdlib only and read files under the repository root.
 """
@@ -52,11 +55,17 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import tomllib
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple, cast
+from typing import TYPE_CHECKING, NamedTuple, cast
+from unittest import mock
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 ROOT = Path(__file__).resolve().parents[2]
 PINNED_TAG_PREFIX = "healthrelay-receiver-"
@@ -229,6 +238,30 @@ def release_notes_path(tag: str, notes_dir: Path = RELEASE_NOTES) -> Path:
 _SCAN_EXCLUDED_DIRS = frozenset({".git", ".venv", "build", "dist", "__pycache__"})
 
 
+# A character a ref is made of. Spelled out in ASCII rather than as `\w`, which is
+# Unicode-aware in Python: `\w` counts every Unicode letter, mark and number as part
+# of a ref, so a boundary written as its complement let a non-ASCII character be
+# *absorbed* into a ref instead of ending it. Both directions of that were wrong.
+# A run followed by `!` was reported correctly, but a run followed by a CJK
+# character, `é` or `т` was not reported at all — the regex backtracked off the
+# whole broken suffix, matched the clean prefix before it, and that prefix is a
+# well-formed tag, so the broken ref satisfied no assertion anywhere. The same
+# Unicode-aware complement also truncated a *correct* ref: `…2026.10.04²` was read
+# as `…2026.10` and reported as malformed.
+# `test_a_non_ascii_character_ends_a_ref_without_joining_it` pins both.
+REF_CHAR = r"[0-9A-Za-z_-]"
+
+# A whole ref run after the prefix: at least one digit, then characters from the
+# ref alphabet, plus any `.` groups that are themselves part of the ref. The `(?!md\b)`
+# keeps `notes-healthrelay-receiver-2026.10.04.md` correct — `.md` is a filename
+# extension that follows the ref, not part of it — and the body cannot end in `.`, so
+# `healthrelay-receiver-2026.10.04.` captures the bare tag and stays green.
+REF_RUN = rf"[0-9]{REF_CHAR}*(?:\.(?!md\b){REF_CHAR}+)*"
+
+# ...and the two things that could still continue it, which is therefore the
+# boundary. See the comment on `ANY_PINNED_REF_RUN` for why this is not `\w`.
+REF_CONTINUATION = rf"{REF_CHAR}|\.(?!md\b){REF_CHAR}"
+
 # A run of the pinned prefix that is not a bare, complete tag at all — including
 # one that never reaches a full date (`2026.10.4`, the same lost-zero shape this
 # module rejects in a release-notes filename). This is the catch-all, and whether
@@ -241,7 +274,7 @@ _SCAN_EXCLUDED_DIRS = frozenset({".git", ".venv", "build", "dist", "__pycache__"
 #   swallowed it, so a correctly written reference ending a sentence was reported
 #   as malformed.
 # - **The boundary is "a character that cannot be part of a ref", not a list of
-#   terminators.** The previous version enumerated `` ` ``, quotes, whitespace,
+#   terminators.** The version before this enumerated `` ` ``, quotes, whitespace,
 #   `,`, `;`, `:`, `)`, `]` — and a run followed by `!`, `?` or `>` matched
 #   *nothing at all*. `healthrelay-receiver-2026.10.04-typo!` therefore satisfied
 #   no assertion anywhere: the broken-ref check passed because the ref was
@@ -249,14 +282,15 @@ _SCAN_EXCLUDED_DIRS = frozenset({".git", ".venv", "build", "dist", "__pycache__"
 #   guard exists to prevent, and an enumeration of delimiters cannot close it —
 #   the next punctuation mark someone writes would reopen it.
 #
-# `(?!md\b)` keeps `notes-healthrelay-receiver-2026.10.04.md` correct: `.md` is a
-# filename extension that follows the ref, not part of it. At least one digit is
-# required after the prefix, so the bare string `healthrelay-receiver-` — which
-# appears in this module's own prose and in documentation describing the scheme —
-# is not a ref at all.
-ANY_PINNED_REF_RUN = re.compile(
-    rf"{PINNED_TAG_PREFIX}[0-9][0-9A-Za-z_-]*(?:\.(?!md\b)[0-9A-Za-z_-]+)*(?=[^\w]|\Z)"
-)
+# The boundary is therefore the complement of `REF_CHAR`, plus the one `.` case the
+# body treats as part of a ref: a `.` followed by a ref character. Writing it out
+# states the rule in one place and keeps the guarantee independent of the
+# enumeration; it does not currently change any result, because the body is greedy
+# and so already ends where a ref character cannot continue. It is kept for the
+# same reason the rest of this guard states its rules rather than relying on what a
+# regex happens to do: a later edit that loosened the body cannot silently reopen
+# the fail-open this comment describes.
+ANY_PINNED_REF_RUN = re.compile(rf"{PINNED_TAG_PREFIX}{REF_RUN}(?!{REF_CONTINUATION})")
 
 # Marks a ref can legitimately be followed by in prose, in Markdown, or in a URL.
 # The regex above does not consult this list — it recognises "a character that
@@ -264,7 +298,11 @@ ANY_PINNED_REF_RUN = re.compile(
 # the guard depends on. It is here so a boundary regression is reported against a
 # set of marks someone actually writes, including the three the previous
 # delimiter-enumerating version could not see (`!`, `?`, `>`).
-PUNCTUATION_AFTER_A_REF = (
+#
+# These are ASCII marks only. A non-ASCII character is covered separately, by
+# `test_a_non_ascii_character_ends_a_ref_without_joining_it`, because it is the
+# one class of terminator that used to be invisible to the guard.
+PUNCTUATION_AFTER_A_REF: tuple[str, ...] = (
     "!",
     "?",
     ">",
@@ -279,6 +317,30 @@ PUNCTUATION_AFTER_A_REF = (
     "'",
     " ",
     "\n",
+)
+
+# Refs `test_every_malformed_ref_shape_is_recognised` asserts on, each of which was a
+# real gap in an earlier version of that check. Module constants rather than locals
+# because a local literal is narrowed to its own length by the type checker, which
+# would then report the non-emptiness guard below as unreachable.
+MALFORMED_REFS: tuple[str, ...] = (
+    "healthrelay-receiver-2026.10.4",
+    "healthrelay-receiver-2026.10.041",
+    "healthrelay-receiver-2026.10.04-typo",
+    "healthrelay-receiver-2026.10.04typo",
+    "healthrelay-receiver-2026.1.04",
+    # A date short a digit anywhere, in either component.
+    "healthrelay-receiver-2026.1.4",
+    "healthrelay-receiver-202.10.04",
+    # The date runs on past the day it names.
+    "healthrelay-receiver-2026.10.04.5",
+)
+WELL_FORMED_REFS: tuple[str, ...] = (
+    "healthrelay-receiver-2026.10.04",
+    "notes-healthrelay-receiver-2026.10.04.md",
+    "/blob/healthrelay-receiver-2026.10.04/docs/pairing.md",
+    "`healthrelay-receiver-2026.10.04`",
+    "healthrelay-receiver-2026.10.04/docs",
 )
 
 
@@ -1055,25 +1117,24 @@ def test_every_malformed_ref_shape_is_recognised() -> None:
 
     Pinned here rather than only in the acceptance script, because each of these
     was a real gap in an earlier version of this check.
+
+    Both fixtures are asserted non-empty before either loop, in the style of
+    `test_workflow_guard_is_not_vacuous`. A loop over an empty fixture never runs,
+    so emptying either one used to leave the whole suite green while this test
+    asserted nothing at all — the same vacuity as an empty
+    `RELEASE_TRIGGERING_WORKFLOWS`, and invisible unless someone tries it. They are
+    module constants rather than locals because a local literal is narrowed to its
+    own length by the type checker, which would report the guard as unreachable.
     """
-    malformed = (
-        "healthrelay-receiver-2026.10.4",
-        "healthrelay-receiver-2026.10.041",
-        "healthrelay-receiver-2026.10.04-typo",
-        "healthrelay-receiver-2026.10.04typo",
-        "healthrelay-receiver-2026.1.04",
-        # A date short a digit anywhere, in either component.
-        "healthrelay-receiver-2026.1.4",
-        "healthrelay-receiver-202.10.04",
-        # The date runs on past the day it names.
-        "healthrelay-receiver-2026.10.04.5",
+    malformed = MALFORMED_REFS
+    well_formed = WELL_FORMED_REFS
+    assert malformed, (
+        "the malformed-ref fixture is empty, so this test asserts nothing about a "
+        "broken ref"
     )
-    well_formed = (
-        "healthrelay-receiver-2026.10.04",
-        "notes-healthrelay-receiver-2026.10.04.md",
-        "/blob/healthrelay-receiver-2026.10.04/docs/pairing.md",
-        "`healthrelay-receiver-2026.10.04`",
-        "healthrelay-receiver-2026.10.04/docs",
+    assert well_formed, (
+        "the well-formed-ref fixture is empty, so this test asserts nothing about a "
+        "correct ref"
     )
     for ref in malformed:
         runs: list[str] = ANY_PINNED_REF_RUN.findall(f"install {ref} now")
@@ -1163,29 +1224,92 @@ def test_an_untracked_file_is_not_public_documentation() -> None:
         scratch.unlink()
 
 
+@contextmanager
+def release_notes_replaced_by_a_copy() -> Generator[Path]:
+    """Yield a writable copy of the release notes, standing in for the real ones.
+
+    Two checks have to read release notes, and proving that they do needs a note
+    naming a ref it should not. That proof used to be written into the tracked
+    `.github/release/` files themselves and put back in a `finally`, which no
+    `finally` can promise: a timeout, a CI cancellation or an OOM kills the process
+    between the write and the restore, and what survives is published release notes
+    containing a fabricated `healthrelay-receiver-2099.01.02` or
+    `healthrelay-receiver-2026.10.04-typo`, one `git commit -a` from being the
+    release record for a release that never happened. Every other `write_text` in
+    this module targets a `TemporaryDirectory` tree or this git-ignored cache
+    directory; these two were the only ones to reach a tracked file.
+
+    The copy lives under `.pytest_cache` for that reason — the same scratch root
+    `test_an_ignored_file_is_not_public_documentation` already uses — so even a copy
+    leaked by an abnormal exit is neither tracked, nor readable as public
+    documentation, nor publishable.
+
+    `RELEASE_NOTES` is repointed for the duration because that is the one path both
+    `_release_note_sources()` and `_markdown_sources()` resolve, and repointing it is
+    the only way to prove the checks *read* the notes rather than merely agreeing
+    that they should. `mock.patch.object` does the repointing because the constant is
+    spelled in upper case and a direct rebinding of it reads as a mistake.
+
+    `release_notes_path`'s default argument is bound when the function is defined, so
+    it still resolves against the real notes directory inside the block. That is
+    deliberate: whether a notes file exists for a ref is a question about the
+    repository, not about the copy.
+    """
+    cache = ROOT / ".pytest_cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    scratch = Path(tempfile.mkdtemp(dir=cache, prefix="release-notes-copy-"))
+    try:
+        _ = shutil.copytree(RELEASE_NOTES, scratch, dirs_exist_ok=True)
+        with mock.patch.object(sys.modules[__name__], "RELEASE_NOTES", scratch):
+            yield scratch
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def test_a_pinned_tag_named_in_a_release_note_is_discovered() -> None:
     """An ordinary public release note naming a ref still requires its own notes.
 
     The notes were excluded from tag discovery on the reasoning that a release
     note is what discovery looks up rather than a source of claims. That is true
     of the *pinned* note being looked up and false of every other note:
-    `notes-v1.1.1.md` naming `healthrelay-receiver-2099.01.02` is a claim that
-    the ref is published, and with the notes excluded
+    `notes-receiver-v1.1.1.md` naming `healthrelay-receiver-2099.01.02` is a claim
+    that the ref is published, and with the notes excluded
     `test_every_pinned_tag_named_in_docs_has_its_own_release_notes` passed while
     the documented ref had no release notes at all.
     """
-    sources = _release_note_sources()
-    assert sources, f"no release notes found under {RELEASE_NOTES}"
-    for path in sources:
-        assert path in _markdown_sources() + sources, path
+    # The two source sets really are disjoint, and that is what makes composing
+    # them necessary: a note is reached only because each check adds
+    # `_release_note_sources()` to `_markdown_sources()`. This replaces an assertion
+    # of the form `assert path in _markdown_sources() + sources`, which held by
+    # construction — `sources` was the right-hand operand, so it was true even if
+    # no check ever read a note — and therefore proved nothing.
+    notes = _release_note_sources()
+    documents = {path.resolve() for path in _markdown_sources()}
+    assert notes, f"no release notes found under {RELEASE_NOTES}"
+    assert documents, f"no public documentation found under {ROOT}"
+    for path in notes:
+        assert path.resolve() not in documents, (
+            f"{path.name} is being read as a public document as well as a release"
+            " note; the two sets answer different questions and have to stay"
+            " separate, or the composition below is not what makes notes visible"
+        )
 
-    note = RELEASE_NOTES / "notes-receiver-v1.1.1.md"
-    original = note.read_text(encoding="utf-8")
-    ref = f"{PINNED_TAG_PREFIX}2099.01.02"
-    try:
+    with release_notes_replaced_by_a_copy() as notes_dir:
+        note = notes_dir / "notes-receiver-v1.1.1.md"
+        assert note.is_file(), (
+            f"{note.name} is missing from the copy, so the probe is testing nothing"
+        )
+        ref = f"{PINNED_TAG_PREFIX}2099.01.02"
         _ = note.write_text(
-            original + f"\ninstall this build at {ref} to pin it\n",
+            note.read_text(encoding="utf-8")
+            + f"\ninstall this build at {ref} to pin it\n",
             encoding="utf-8",
+        )
+        # The copy has to be the source set these checks read, or every assertion
+        # below is vacuous for a second and more subtle reason.
+        assert note in _release_note_sources(), (
+            "the release-notes copy is not the source set the checks read, so "
+            "writing to it cannot prove anything about them"
         )
         assert ref in pinned_tags_named_in_docs(), (
             f"{note.name} names {ref}, so discovery must see it; an ordinary "
@@ -1203,8 +1327,6 @@ def test_a_pinned_tag_named_in_a_release_note_is_discovered() -> None:
             f"fail; it passes only if the notes are excluded from discovery "
             f"(got {missing})"
         )
-    finally:
-        _ = note.write_text(original, encoding="utf-8")
 
 
 def test_release_notes_are_scanned_for_malformed_refs() -> None:
@@ -1213,25 +1335,29 @@ def test_release_notes_are_scanned_for_malformed_refs() -> None:
     The notes share the malformed-ref scan with the rest of the documentation. A
     `/blob/healthrelay-receiver-2026.10.04-typo/...` link in a note that has
     already been published reaches every reader of it, and the per-note checks
-    still pass as long as the heading and install command remain elsewhere in the
-    file — so only this scan can see it.
+    still pass as long as the heading and install command remain elsewhere in
+    the file — so only this scan can see it.
     """
-    note = RELEASE_NOTES / f"notes-{PINNED_TAG_PREFIX}2026.10.04.md"
-    original = note.read_text(encoding="utf-8")
-    try:
+    with release_notes_replaced_by_a_copy() as notes_dir:
+        note = notes_dir / f"notes-{PINNED_TAG_PREFIX}2026.10.04.md"
+        assert note.is_file(), (
+            f"{note.name} is missing from the copy, so the probe is testing nothing"
+        )
+        broken = f"{PINNED_TAG_PREFIX}2026.10.04-typo"
         _ = note.write_text(
-            original + f"\n/blob/{PINNED_TAG_PREFIX}2026.10.04-typo/docs/pairing.md\n",
+            note.read_text(encoding="utf-8") + f"\n/blob/{broken}/docs/pairing.md\n",
             encoding="utf-8",
         )
-        assert (
-            str(note.relative_to(ROOT)),
-            f"{PINNED_TAG_PREFIX}2026.10.04-typo",
-        ) in malformed_pinned_refs(), (
-            "a mistyped /blob link inside a published release note must be "
-            "reported; the per-note checks cannot see it"
+        assert note in _release_note_sources(), (
+            "the release-notes copy is not the source set the malformed-ref scan"
+            " reads, so writing to it cannot prove anything about the scan"
         )
-    finally:
-        _ = note.write_text(original, encoding="utf-8")
+        assert (str(note.relative_to(ROOT)), broken) in malformed_pinned_refs(), (
+            "a mistyped /blob link inside a published release note must be"
+            f" reported as {broken!r} in {note.relative_to(ROOT)}; the per-note"
+            " checks cannot see it. Reported findings were"
+            f" {sorted(malformed_pinned_refs())}"
+        )
 
 
 def test_a_malformed_ref_is_reported_however_it_is_punctuated() -> None:
@@ -1250,6 +1376,13 @@ def test_a_malformed_ref_is_reported_however_it_is_punctuated() -> None:
     that the boundary is "a character that cannot be part of a ref", so it does
     not depend on this list being complete.
     """
+    # Without this the loop below never runs: emptying the fixture left the whole
+    # suite green while this test asserted nothing, which is the vacuity
+    # `test_workflow_guard_is_not_vacuous` already guards against for the workflow
+    # fixtures.
+    assert PUNCTUATION_AFTER_A_REF, (
+        "the punctuation fixture is empty, so this test asserts nothing"
+    )
     broken = f"{PINNED_TAG_PREFIX}2026.10.04-typo"
     correct = f"{PINNED_TAG_PREFIX}2026.10.04"
     for punctuation in PUNCTUATION_AFTER_A_REF:
@@ -1270,6 +1403,73 @@ def test_a_malformed_ref_is_reported_however_it_is_punctuated() -> None:
                 f"{line!r} was read as {runs[0]!r}; want "
                 f"{'a malformed ref' if want_malformed else 'the bare tag'}"
             )
+
+
+# The two refs every boundary test contrasts: one broken by a suffix, one correct.
+BROKEN_SUFFIX = f"{PINNED_TAG_PREFIX}2026.10.04-typo"
+BARE_TAG = f"{PINNED_TAG_PREFIX}2026.10.04"
+
+# (label, lead-in, the non-ASCII character that follows, the ref that must be
+# captured, and whether that ref must be reported).
+#
+# The non-ASCII characters are the ones a document in another language actually puts
+# next to a ref: a CJK word, a Latin-1 accented letter, a Cyrillic letter pasted
+# from a keyboard, and a superscript. The first four rows are broken refs and the
+# last four are correct ones, and the required verdict differs between them — which
+# is the whole point. A terminator that ends a ref must not be able to hide a
+# broken one, and must not be able to invent a finding on a correct one.
+NON_ASCII_AFTER_A_REF: tuple[tuple[str, str, str, str, bool], ...] = (
+    ("broken_cjk", "请安装 ", "版本", BROKEN_SUFFIX, True),
+    ("broken_accented", "pin ", "\u00e9", BROKEN_SUFFIX, True),
+    ("broken_cyrillic", "pin ", "\u0442", BROKEN_SUFFIX, True),
+    ("broken_superscript", "install ", "\u00b2", BROKEN_SUFFIX, True),
+    ("correct_cjk", "请安装 ", "版本", BARE_TAG, False),
+    ("correct_accented", "pin ", "\u00e9", BARE_TAG, False),
+    ("correct_cyrillic", "pin ", "\u0442", BARE_TAG, False),
+    ("correct_superscript", "install ", "\u00b2", BARE_TAG, False),
+)
+
+
+def test_a_non_ascii_character_ends_a_ref_without_joining_it() -> None:
+    """A non-ASCII character terminates a ref and is never absorbed into one.
+
+    The boundary used to be the complement of `\\w`, and Python's `\\w` is
+    Unicode-aware, so every Unicode letter, mark and number counted as part of a
+    ref. Both directions of that were wrong, and each had its own reproduction:
+
+    - **Fail-open.** `请安装 healthrelay-receiver-2026.10.04-typo版本` reported
+      nothing. The regex could not end the run on `版`, so it backtracked off the
+      entire broken suffix `-typo`, matched `healthrelay-receiver-2026.10.04`, and
+      that prefix is a well-formed tag — so a documented ref that installs nothing
+      satisfied no assertion anywhere. `PINNED_TAG_RE.findall` returns `[]` for the
+      same text, so tag discovery cannot see it either.
+    - **False positive.** `install healthrelay-receiver-2026.10.04²` reported
+      `healthrelay-receiver-2026.10` as malformed, because the run had to be cut
+      short before the superscript and shortening it too far was enough to break the
+      tag shape.
+
+    A ref's alphabet is ASCII — digits, ASCII letters, `_`, `-` and `.` — so the
+    expected ref is always the ASCII part of what was written, and the non-ASCII
+    character is always outside it.
+    """
+    assert NON_ASCII_AFTER_A_REF, "the non-ASCII boundary fixture was dropped"
+    for label, lead, trail, want_ref, want_malformed in NON_ASCII_AFTER_A_REF:
+        text = lead + want_ref + trail
+        runs: list[str] = ANY_PINNED_REF_RUN.findall(text)
+        assert runs, (
+            f"{text!r} ({label}) produced no match at all, so the ref is invisible"
+            " to every check; a non-ASCII character is being read as part of a ref"
+            " rather than as the end of one"
+        )
+        assert runs[0] == want_ref, (
+            f"{text!r} ({label}) captured {runs[0]!r} instead of {want_ref!r}; a"
+            " non-ASCII character must end a ref without joining it, so the"
+            " captured ref is exactly the ASCII part of what was written"
+        )
+        assert (PINNED_TAG_RE.fullmatch(runs[0]) is None) == want_malformed, (
+            f"{text!r} ({label}) was read as {runs[0]!r}; want "
+            f"{'a malformed ref' if want_malformed else 'the bare tag'}"
+        )
 
 
 def test_release_notes_name_the_tag_install_command_and_intake_tool() -> None:
