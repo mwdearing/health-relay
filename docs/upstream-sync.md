@@ -43,13 +43,19 @@ gh release list -R roian6/apple-health-ai-bridge --limit 5
 Then, to see whether a release tag is ahead of `main`:
 
 ```bash
-git fetch upstream --tags
-git log --oneline upstream/main..refs/tags/receiver-v1.1.2
+git fetch upstream refs/tags/<release-tag>:refs/upstream-tags/<release-tag>
+git log --oneline upstream/main..refs/upstream-tags/<release-tag>
 ```
 
-Use `refs/tags/…` rather than `upstream/receiver-v1.1.2`. A release tag is a tag, not a branch, and
-a plain `git fetch upstream` does not create a remote-tracking ref for it — the short form fails
-with "unknown revision" and looks like the release is missing.
+Use the tag from the `gh release list` output above rather than a hard-coded one — pinning the
+current release would let a later sync quietly compare against a stale tag and still record itself
+complete.
+
+**Do not use `git fetch upstream --tags`.** It copies every upstream tag into your ordinary local
+tag namespace, including `receiver-v*` and `ios-v*` — and `FORK.md` is explicit that this fork never
+pushes those, because they trigger the upstream release workflows. A later `git push --tags origin`
+would then publish tags this repository forbids. The explicit refspec above fetches the one object
+you need and puts it somewhere `git push --tags` cannot reach.
 
 ## 2. Read the direction of a diff before believing it
 
@@ -74,7 +80,8 @@ git log --oneline main..upstream/main   # commits we do not have
 
 | Change | Action |
 |---|---|
-| `src/`, `ios/` behaviour fix or feature | **Take it.** Write a test first if it is a fix. |
+| `src/`, `ios/` bug fix that preserves this fork's invariants | **Take it.** Write a test first if it is a fix. |
+| `src/`, `ios/` **feature**, or anything touching data flow | **Stop and review it first.** See §3a. |
 | `tests/` regression test for a fix we also took | **Take it.** Prefer theirs to a test we wrote. |
 | Dependency bump in `uv.lock` | Take the dependency delta, **not** the file. See below. |
 | `pyproject.toml` or `__init__.py` **version bump** | **Skip.** See §4. |
@@ -88,6 +95,30 @@ locked sync then fails. Port the dependency delta and regenerate the lock from o
 ```bash
 uv lock
 ```
+
+## 3a. Behaviour changes need review before they are ported
+
+**Do not auto-import upstream `src/` or `ios/` changes, however small they look.** The rule in §3
+is deliberately narrow: a bug fix that leaves this fork's guarantees intact. Anything that changes
+what the software *does* is a candidate to evaluate, not a candidate to take.
+
+This fork's invariants, which an imported change must not weaken:
+
+- **HealthKit access is read-only.** A write, or a new health type read, is a privacy decision.
+- **No telemetry, no advertising, no data broker, no hosted sync, no third-party AI upload path.**
+  Upstream's own release notes state they hold these; an upstream change that adds one would be a
+  deliberate upstream decision, and adopting it here is ours to make, not a merge resolution.
+- **Your data stays on your infrastructure.** The receiver and database run locally; the CLI and
+  MCP surfaces are read-only.
+- **Batch and pairing protocols are unchanged** unless a release says otherwise, and changing them
+  is a breaking change for every deployed client.
+
+So before porting a behaviour change, read the diff for: what new data is read, what new data is
+written, what leaves the device, and whether a protocol or schema version moved. If any of those
+changed and you did not intend it, that is a decision for Michael, not a merge.
+
+A fix that *preserves* all four — say, a corrected error message or a null check — is fine to take
+directly. The distinction is whether behaviour moved, not how large the diff is.
 
 ## 4. What must never be taken wholesale
 
@@ -150,6 +181,7 @@ The Python workflow runs, in order:
 
 ```bash
 cd <worktree>
+uv sync --all-extras --dev --locked
 uv run python scripts/public-release-audit.py --strict
 uv run ruff format --check .
 uv run ruff check .
@@ -166,6 +198,12 @@ The last three are one gate, not three independent checks. The smoke test valida
 **artifacts** `uv build` just produced, so it needs `rm -rf dist` first: in a fresh worktree it
 rejects an empty `dist`, and in a reused one it can quietly pass against stale artifacts from a
 previous build. `rm -rf dist` is what makes the result mean anything.
+
+The leading `uv sync --locked` matters most when the sync changed dependency metadata. `--locked`
+asserts that `uv.lock` does not change; without it, a bare `uv run` may resolve and **rewrite** a
+stale lock before testing, so your local run passes against a different dependency graph than CI
+saw. If `uv sync --locked` reports the lock is out of date, that is a finding — regenerate the lock
+deliberately and say so in `FORK.md`.
 
 Run everything through `uv run`, as above. A bare `python -m pytest` uses whatever interpreter the
 shell finds, so on a machine set up with `uv sync` it fails with `No module named pytest` — and
