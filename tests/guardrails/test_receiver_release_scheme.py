@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 import tomllib
 from pathlib import Path
-from typing import cast
+from typing import NamedTuple, cast
 
 ROOT = Path(__file__).resolve().parents[2]
 TAG = "healthrelay-receiver-2026.10.04"
@@ -23,7 +23,16 @@ WORKFLOWS = ROOT / ".github/workflows"
 PACKAGE_VERSION = "1.1.1"
 PINNED_TAG_PATTERN = re.compile(r"healthrelay-receiver-\d{4}\.\d{2}\.\d{2}")
 PINNED_NOTES_GLOB = "notes-healthrelay-receiver-*.md"
-TAGS_KEY = re.compile(r"^(?P<indent>[ \t]*)tags:[ \t]*(?P<rest>.*)$")
+TAG_FILTER_KEYS = ("tags", "tags-ignore")
+TAG_FILTER_KEY = re.compile(
+    r"^(?P<indent>[ \t]*)(?P<key>"
+    + "|".join(TAG_FILTER_KEYS)
+    + r"):[ \t]*(?P<rest>.*)$"
+)
+ALIAS = re.compile(r"^\*(?P<name>[^\s\[\]{},]+)$")
+ANCHOR = re.compile(
+    r"(?:\A|[:\-,\[\{])[ \t]*&(?P<name>[^\s\[\]{},]+)[ \t]*(?P<value>.*)$"
+)
 
 
 def strip_yaml_comment(text: str) -> str:
@@ -52,6 +61,19 @@ def unquote_scalar(text: str) -> str:
     return scalar
 
 
+class TagFilter(NamedTuple):
+    """One `tags:`/`tags-ignore:` declaration and the patterns read from it.
+
+    `patterns` is empty when the parser could not read the body. That is never
+    treated as "no filter declared" and never as safe: `unreadable_tag_filters`
+    turns it into a test failure.
+    """
+
+    key: str
+    line: int
+    patterns: list[str]
+
+
 def split_flow_sequence(text: str) -> list[str]:
     """Split the body of an inline `[...]` sequence on top-level commas."""
     items: list[str] = []
@@ -78,53 +100,139 @@ def split_flow_sequence(text: str) -> list[str]:
     ]
 
 
+def yaml_anchors(lines: list[str]) -> dict[str, list[str]]:
+    """Collect the anchors a workflow defines, so `tags: *name` can be resolved.
+
+    GitHub Actions resolves aliases against anchors anywhere in the same
+    document, so the whole file is scanned before any `tags:` key is read.
+    """
+    anchors: dict[str, list[str]] = {}
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        anchor = ANCHOR.search(strip_yaml_comment(line).strip())
+        if anchor is None:
+            continue
+        value = anchor.group("value").strip()
+        indent = len(line) - len(line.lstrip())
+        if not value:
+            patterns = block_list_items(lines, index + 1, indent)
+        elif value.startswith("["):
+            patterns = split_flow_sequence(value[1:-1])
+        else:
+            patterns = [unquote_scalar(value)]
+        if patterns:
+            anchors[anchor.group("name")] = patterns
+    return anchors
+
+
+def read_filter_value(
+    lines: list[str],
+    index: int,
+    rest: str,
+    indent: int,
+    anchors: dict[str, list[str]],
+) -> list[str]:
+    """Return the patterns in the value written on `lines[index]` as `rest`.
+
+    Handles the three shapes GitHub Actions accepts for a filter: an inline
+    flow sequence (possibly spanning lines, possibly anchored), an alias of an
+    anchor, and a block sequence below the key. Anything else yields no
+    patterns so the meta-guard can report it.
+    """
+    value = strip_yaml_comment(rest).strip()
+    alias = ALIAS.match(value)
+    if alias is not None:
+        return list(anchors.get(alias.group("name"), []))
+    anchor = ANCHOR.match(value)
+    if anchor is not None:
+        # `tags: &name [...]` declares and uses an anchor in one step.
+        value = anchor.group("value").strip()
+    if value.startswith("["):
+        parts = [value]
+        cursor = index + 1
+        while not parts[-1].rstrip().endswith("]") and cursor < len(lines):
+            # Each line is comment-stripped on its own. Joining first would let
+            # an end-of-line comment swallow the patterns on the lines below.
+            parts.append(strip_yaml_comment(lines[cursor]).strip())
+            cursor += 1
+        return split_flow_sequence(" ".join(parts).strip()[1:-1])
+    if value:
+        return [unquote_scalar(value)]
+    return block_list_items(lines, index + 1, indent)
+
+
+def tag_filter_declarations(text: str) -> list[TagFilter]:
+    """Return every `tags:`/`tags-ignore:` declaration with its read patterns."""
+    lines = text.splitlines()
+    anchors = yaml_anchors(lines)
+    found: list[TagFilter] = []
+    for index, line in enumerate(lines):
+        key = TAG_FILTER_KEY.match(line)
+        if key is None:
+            continue
+        found.append(
+            TagFilter(
+                key.group("key"),
+                index + 1,
+                read_filter_value(
+                    lines, index, key.group("rest"), len(key.group("indent")), anchors
+                ),
+            )
+        )
+    return found
+
+
 def tag_filter_groups(text: str) -> list[list[str]]:
-    """Return every tag filter as an ordered group of patterns.
+    """Return every readable tag filter as an ordered group of patterns.
 
     Each `tags:` key contributes one group, inline (`tags: [a, b]`) or as a
     block list, because GitHub evaluates a single filter as an ordered list in
     which a leading `!` negates and the last matching pattern wins.
     """
-    groups: list[list[str]] = []
-    lines = text.splitlines()
-    for start, line in enumerate(lines):
-        key = TAGS_KEY.match(line)
-        if key is None:
-            continue
-        indent = len(key.group("indent"))
-        rest = strip_yaml_comment(key.group("rest")).strip()
-        if rest:
-            body = rest
-            index = start + 1
-            while not body.rstrip().endswith("]") and index < len(lines):
-                body += " " + lines[index].strip()
-                index += 1
-            patterns = split_flow_sequence(body.strip()[1:-1])
-        else:
-            patterns = [
-                unquote_scalar(strip_yaml_comment(item[1:]))
-                for item in block_list_items(lines, start + 1, indent)
-            ]
-        if patterns:
-            groups.append(patterns)
-    return groups
+    return [
+        filters.patterns
+        for filters in tag_filter_declarations(text)
+        if filters.patterns
+    ]
+
+
+def unreadable_tag_filters(workflows: dict[str, str]) -> list[str]:
+    """Fail closed: name every declared tag filter key the parser could not read.
+
+    `push_reaches_any_tag` treats the mere presence of a `tags` key as proof the
+    workflow is filtered, so a filter the parser silently skipped would report
+    the workflow as safe. Every key in `TAG_FILTER_KEYS` must yield at least one
+    pattern; anything else is reported instead of assumed harmless.
+    """
+    return [
+        f"{name}:{filters.line} declares `{filters.key}:` but no filter was read"
+        for name, text in sorted(workflows.items())
+        for filters in tag_filter_declarations(text)
+        if not filters.patterns
+    ]
 
 
 def block_list_items(lines: list[str], start: int, indent: int) -> list[str]:
     """Return the raw `- item` scalars of a block list under a key."""
     items: list[str] = []
     for line in lines[start:]:
-        if not line.strip():
-            continue
-        if len(line) - len(line.lstrip()) <= indent:
-            break
         stripped = line.strip()
+        if not stripped:
+            continue
         if stripped.startswith("#"):
+            # A comment-only line carries no indentation meaning in YAML, so it
+            # never ends the block even when it lines up with the key.
             continue
         if not stripped.startswith("-"):
             break
-        items.append(stripped[1:])
-    return items
+        # A sequence may sit at the key's own indentation or deeper; a
+        # shallower item belongs to an outer list and ends this one.
+        if len(line) - len(line.lstrip()) < indent:
+            break
+        items.append(unquote_scalar(strip_yaml_comment(stripped[1:])))
+    return [item for item in items if item]
 
 
 def tag_globs(text: str) -> list[str]:
@@ -226,14 +334,19 @@ def push_reaches_any_tag(text: str) -> bool:
 
 
 def test_no_workflow_tag_trigger_matches_a_pinned_receiver_release_tag() -> None:
-    workflows = sorted(WORKFLOWS.glob("*.y*ml"))
+    workflows = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted(WORKFLOWS.glob("*.y*ml"))
+    }
     assert workflows, "no workflows found; the tag filter parser must stay honest"
 
-    groups = {
-        path.name: tag_filter_groups(path.read_text(encoding="utf-8"))
-        for path in workflows
-    }
+    groups = {name: tag_filter_groups(text) for name, text in workflows.items()}
     assert any(groups.values()), "no workflow declares a tag filter; parser broken"
+
+    # Fail closed before reasoning about the filters at all: a declared tag key
+    # the parser could not read would otherwise be reported as a filtered
+    # workflow and let the pinned tag through unnoticed.
+    assert not unreadable_tag_filters(workflows)
 
     tags = pinned_release_tags(RELEASE_NOTES)
     assert tags, "no pinned receiver release notes discovered; parser broken"
@@ -374,6 +487,156 @@ def test_tag_glob_parsing_handles_blank_lines_and_comment_only_lines() -> None:
         "  workflow_dispatch:\n"
     )
     assert tag_filter_groups(text) == [["healthrelay-*", "!healthrelay-receiver-*"]]
+
+
+def test_multiline_flow_sequence_survives_end_of_line_comments() -> None:
+    """A comment inside a multiline `[...]` must not swallow the next pattern.
+
+    Joining the lines before stripping the comment turns everything after `#`
+    into comment text, which silently hides `healthrelay-*`.
+    """
+    text = (
+        'on:\n  push:\n    tags: ["ios-v*", # app tags\n           "healthrelay-*"]\n'
+    )
+    assert tag_filter_groups(text) == [["ios-v*", "healthrelay-*"]]
+    assert github_filters_trigger(tag_filter_groups(text)[0], TAG), (
+        "the hidden pattern is exactly the one that would publish the tag"
+    )
+
+    # The same defect when the comment sits on a continuation line rather than on
+    # the `tags:` line itself.
+    continuation = (
+        "on:\n"
+        "  push:\n"
+        "    tags: [\n"
+        '      "ios-v*", # app tags\n'
+        '      "healthrelay-*"]\n'
+    )
+    assert tag_filter_groups(continuation) == [["ios-v*", "healthrelay-*"]]
+    assert github_filters_trigger(tag_filter_groups(continuation)[0], TAG)
+
+    # A full-width comment on its own line inside the flow sequence is legal too.
+    whole_line = (
+        "on:\n"
+        "  push:\n"
+        "    tags: [\n"
+        "      # receiver and app tags\n"
+        '      "healthrelay-*",\n'
+        '      "ios-v*"\n'
+        "    ]\n"
+    )
+    assert tag_filter_groups(whole_line) == [["healthrelay-*", "ios-v*"]]
+
+
+def test_comment_line_aligned_with_the_key_does_not_end_the_block() -> None:
+    """A comment at the key's own indentation is valid YAML, not the block end."""
+    text = (
+        "on:\n"
+        "  push:\n"
+        "    tags:\n"
+        "    # receiver releases are published elsewhere\n"
+        '      - "healthrelay-*"\n'
+        "    workflow_dispatch:\n"
+    )
+    assert tag_filter_groups(text) == [["healthrelay-*"]]
+    assert github_filters_trigger(tag_filter_groups(text)[0], TAG)
+
+
+def test_anchored_and_aliased_tag_filters_are_read() -> None:
+    """GitHub Actions supports anchors and aliases in a `tags:` filter."""
+    anchored = 'on:\n  push:\n    tags: &release_tags ["healthrelay-*"]\n'
+    assert tag_filter_groups(anchored) == [["healthrelay-*"]]
+    assert github_filters_trigger(tag_filter_groups(anchored)[0], TAG)
+
+    aliased = (
+        "on:\n"
+        "  push:\n"
+        "    tags: *release_tags\n"
+        "  workflow_call:\n"
+        "x-tags: &release_tags\n"
+        '  - "healthrelay-*"\n'
+    )
+    assert tag_filter_groups(aliased) == [["healthrelay-*"]]
+    assert github_filters_trigger(tag_filter_groups(aliased)[0], TAG)
+
+    quoted = (
+        "on:\n"
+        "  push:\n"
+        "    tags: &release_tags ['healthrelay-*'] # anchored\n"
+        "  workflow_call:\n"
+        "    tags: *release_tags\n"
+    )
+    assert tag_filter_groups(quoted) == [["healthrelay-*"], ["healthrelay-*"]]
+
+
+def test_indentationless_block_sequence_under_a_tag_key_is_read() -> None:
+    """`tags:` followed by a `-` at the key's own indentation is valid YAML."""
+    text = 'on:\n  push:\n    tags:\n    - "healthrelay-*"\n    branches: [main]\n'
+    assert tag_filter_groups(text) == [["healthrelay-*"]]
+    assert github_filters_trigger(tag_filter_groups(text)[0], TAG)
+
+    # Indentationless items followed by a sibling key still ends the list.
+    sibling = "on:\n  push:\n    tags:\n    - 'ios-v*'\n    branches: [main]\n"
+    assert tag_filter_groups(sibling) == [["ios-v*"]]
+
+
+def test_meta_guard_fails_when_a_tag_key_declares_no_readable_filter() -> None:
+    """The fail-closed guard: a declared key with no extracted filter is a bug.
+
+    `push_reaches_any_tag` sees the key and calls the workflow filtered, so an
+    unreadable body has to be reported rather than assumed safe.
+    """
+    nested_mapping = "on:\n  push:\n    tags:\n      pattern: healthrelay-*\n"
+    dangling_alias = "on:\n  push:\n    tags: *never_defined\n"
+    for text in (nested_mapping, dangling_alias):
+        declarations = tag_filter_declarations(text)
+        assert [d.key for d in declarations] == ["tags"], (
+            f"the key itself must still be seen: {text!r}"
+        )
+        assert tag_filter_groups(text) == [], (
+            f"no filter may be invented from an unreadable body: {text!r}"
+        )
+        reported = unreadable_tag_filters({"wf.yml": text})
+        assert len(reported) == 1, (
+            f"the meta-guard must name the workflow and the key: {text!r}"
+        )
+        assert len(reported) == 1, reported
+        assert "wf.yml:3" in reported[0], reported
+        assert "`tags:`" in reported[0], reported
+        assert not push_reaches_any_tag(text), (
+            "an unfiltered push must not be reported as safe"
+        )
+
+
+def test_meta_guard_accepts_every_tag_filter_key_the_repository_declares() -> None:
+    unreadable = unreadable_tag_filters(
+        {
+            path.name: path.read_text(encoding="utf-8")
+            for path in WORKFLOWS.glob("*.y*ml")
+        }
+    )
+    assert not unreadable, f"tag filters the parser could not read: {unreadable}"
+
+    # The guard must actually fire on the repository, not just on synthetic text.
+    unreadable_workflow = WORKFLOWS / "release.yml"
+    body = unreadable_workflow.read_text(encoding="utf-8")
+    broken = body.replace('tags: ["receiver-v*"]', "tags: *never_defined")
+    assert broken != body
+    reported = unreadable_tag_filters({unreadable_workflow.name: broken})
+    assert len(reported) == 1, reported
+    assert "release.yml:5" in reported[0], reported
+
+
+def test_meta_guard_only_guards_keys_the_guardrail_reasons_about() -> None:
+    """Guarding must be non-vacuous: a workflow with no tag key reports nothing."""
+    branches_only = "on:\n  push:\n    branches: [main]\n"
+    assert tag_filter_declarations(branches_only) == []
+    assert not unreadable_tag_filters({"none.yml": branches_only})
+    text = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+    real = tag_filter_declarations(text)
+    assert [(d.key, d.patterns) for d in real] == [("tags", ["receiver-v*"])], (
+        "release.yml still yields exactly one readable tag filter"
+    )
 
 
 def test_ordered_tag_negation_is_evaluated_across_the_whole_list() -> None:
