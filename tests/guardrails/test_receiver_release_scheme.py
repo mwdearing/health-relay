@@ -69,7 +69,7 @@ class UnreadableWorkflowError(Exception):
     """
 
     def __init__(self, path: object) -> None:
-        self.path = path
+        self.path: object = path
         super().__init__(f"{path}: not decodable as UTF-8 text")
 
 
@@ -84,7 +84,7 @@ def pinned_release_tags(notes_dir: Path = RELEASE_NOTES) -> tuple[str, ...]:
     Discovered from the notes filenames, never hard-coded to one literal, so a
     second pinned release is picked up without editing this module.
     """
-    tags = []
+    tags: list[str] = []
     for path in sorted(notes_dir.glob(f"notes-{PINNED_TAG_PREFIX}*.md")):
         candidate = path.name[len("notes-") : -len(".md")]
         if PINNED_TAG_RE.fullmatch(candidate):
@@ -218,12 +218,13 @@ def _branch_keys_are_block_lists(body: list[str], child_indent: int) -> bool:
 
 def workflow_problems(text: str) -> list[str]:
     """Every way `text` (one workflow) fails the conservative guard."""
-    problems = []
+    problems: list[str] = []
     if PINNED_TAG_PREFIX in text:
-        problems.append(
-            f"the file mentions {PINNED_TAG_PREFIX!r}; a pinned receiver release "
-            "must never appear in a workflow, not even in a comment"
+        mention = (
+            f"the file mentions {PINNED_TAG_PREFIX!r}; a pinned receiver release"
+            " must never appear in a workflow, not even in a comment"
         )
+        problems.append(mention)
     problems += push_trigger_problems(text)
     return problems
 
@@ -243,10 +244,11 @@ def scan_workflow_file(
     try:
         text = read_workflow_text(path)
     except UnreadableWorkflowError as exc:
-        return [
-            f"{exc}; the guard fails closed rather than certifying a workflow "
-            "it cannot read"
-        ]
+        fail_closed = (
+            f"{exc}; the guard fails closed rather than certifying a workflow"
+            " it cannot read"
+        )
+        return [fail_closed]
     try:
         relative = str(path.relative_to(ROOT))
     except ValueError:
