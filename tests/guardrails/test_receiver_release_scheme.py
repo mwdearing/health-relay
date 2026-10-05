@@ -117,6 +117,48 @@ PUSH_KEY_LINE = re.compile(
 ON_BARE_PUSH = re.compile(r"^on\s*:[ \t]*push[ \t]*$", re.MULTILINE)
 ON_FLOW_STYLE = re.compile(r"^on\s*:[ \t]*[\[{].*\bpush\b", re.MULTILINE)
 LIST_ITEM = re.compile(r"^[ \t]*-[ \t]*\S")
+# Events GitHub fires when a pinned receiver release is made or published. `push`
+# is handled separately, with its ref filters reasoned about; these carry no ref
+# filter at all, so their presence is simply reported.
+RELEASE_LIFECYCLE_EVENTS = ("create", "delete", "release", "published")
+_LIFECYCLE_ALTERNATION = "|".join(RELEASE_LIFECYCLE_EVENTS)
+# `on: release` written as a bare scalar, and the same event as an item of a
+# block sequence. The `on:` key line on its own matches neither, so an ordinary
+# block-style `on:` is not mistaken for an event.
+ON_LIFECYCLE_SCALAR = re.compile(
+    rf"^on\s*:\s*({_LIFECYCLE_ALTERNATION})\s*$", re.MULTILINE
+)
+ON_LIFECYCLE_ITEM = re.compile(
+    rf"^[ \t]+({_LIFECYCLE_ALTERNATION})\s*:[ \t]*$", re.MULTILINE
+)
+ON_FLOW_LIST = re.compile(r"^on\s*:\s*\[([^]]*)\]", re.MULTILINE)
+
+
+def lifecycle_events(text: str) -> list[tuple[int, str]]:
+    """Every `create`/`delete`/`release`/`published` trigger, with its line number.
+
+    Covers the three shapes a workflow can use: a bare `on: release`, an item of a
+    block sequence, and an entry inside a flow-style list such as
+    `on: [push, release]`.
+    """
+    found: list[tuple[int, str]] = []
+
+    def line_of(start: int) -> int:
+        return text[:start].count("\n") + 1
+
+    for pattern in (ON_LIFECYCLE_SCALAR, ON_LIFECYCLE_ITEM):
+        found.extend(
+            (line_of(match.start()), match.group(1)) for match in pattern.finditer(text)
+        )
+    for match in ON_FLOW_LIST.finditer(text):
+        found.extend(
+            (line_of(match.start()), event)
+            for event in RELEASE_LIFECYCLE_EVENTS
+            if re.search(rf"\b{event}\b", match.group(1))
+        )
+    return sorted(found)
+
+
 TAG_REF_KEYS = ("tags", "tags-ignore")
 BRANCH_REF_KEYS = ("branches", "branches-ignore")
 
@@ -216,6 +258,23 @@ def _branch_keys_are_block_lists(body: list[str], child_indent: int) -> bool:
     return True
 
 
+def test_non_push_events_fired_by_a_pinned_release_are_rejected() -> None:
+    """`on: create` fires when the tag is made; `on: release` when it is published.
+
+    Neither needs a `push:` key or the pinned prefix, so a guard that only reads
+    `push` reports such a workflow as safe while the release would still trigger
+    it.
+    """
+    for event in ("create", "release", "delete"):
+        text = (
+            "name: zz\n"
+            f"on:\n  {event}:\n"
+            "jobs:\n  noop:\n    runs-on: ubuntu-latest\n    steps: [{run: 'true'}]\n"
+        )
+        problems = workflow_problems(text)
+        assert problems, f"a workflow on `on: {event}` was accepted"
+
+
 def workflow_problems(text: str) -> list[str]:
     """Every way `text` (one workflow) fails the conservative guard."""
     problems: list[str] = []
@@ -225,6 +284,12 @@ def workflow_problems(text: str) -> list[str]:
             " must never appear in a workflow, not even in a comment"
         )
         problems.append(mention)
+    for line, event in lifecycle_events(text):
+        detail = (
+            f"line {line}: a workflow listening for `on: {event}` is triggered by "
+            "creating or publishing a pinned receiver release"
+        )
+        problems.append(detail)
     problems += push_trigger_problems(text)
     return problems
 
