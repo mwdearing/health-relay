@@ -600,7 +600,6 @@ def test_meta_guard_fails_when_a_tag_key_declares_no_readable_filter() -> None:
         assert len(reported) == 1, (
             f"the meta-guard must name the workflow and the key: {text!r}"
         )
-        assert len(reported) == 1, reported
         assert "wf.yml:3" in reported[0], reported
         assert "`tags:`" in reported[0], reported
         assert not push_reaches_any_tag(text), (
@@ -625,6 +624,24 @@ def test_meta_guard_accepts_every_tag_filter_key_the_repository_declares() -> No
     reported = unreadable_tag_filters({unreadable_workflow.name: broken})
     assert len(reported) == 1, reported
     assert "release.yml:5" in reported[0], reported
+
+
+def test_tags_ignore_is_read_as_a_filter_too() -> None:
+    """`tags-ignore` is guarded like `tags`, not skipped by the key matcher."""
+    text = "on:\n  push:\n    tags-ignore: ['healthrelay-receiver-*']\n"
+    assert tag_filter_declarations(text) == [
+        TagFilter("tags-ignore", 3, ["healthrelay-receiver-*"])
+    ]
+    assert tag_filter_groups(text) == [["healthrelay-receiver-*"]]
+    assert not unreadable_tag_filters({"wf.yml": text})
+    assert push_reaches_any_tag(text), (
+        "a tags-ignore filter never includes the pinned tag, it excludes it"
+    )
+
+    unreadable = "on:\n  push:\n    tags-ignore:\n      pattern: x\n"
+    reported = unreadable_tag_filters({"wf.yml": unreadable})
+    assert len(reported) == 1, reported
+    assert "`tags-ignore:`" in reported[0], reported
 
 
 def test_meta_guard_only_guards_keys_the_guardrail_reasons_about() -> None:
