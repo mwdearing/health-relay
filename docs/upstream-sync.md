@@ -22,8 +22,18 @@ Also worth checking, because a release may have shipped without the commits bein
 
 ```bash
 gh release list -R roian6/apple-health-ai-bridge --limit 5
-git log --oneline upstream/main..upstream/receiver-v1.1.2   # releases ahead of main, if any
 ```
+
+Then, to see whether a release tag is ahead of `main`:
+
+```bash
+git fetch upstream --tags
+git log --oneline upstream/main..refs/tags/receiver-v1.1.2
+```
+
+Use `refs/tags/…` rather than `upstream/receiver-v1.1.2`. A release tag is a tag, not a branch, and
+a plain `git fetch upstream` does not create a remote-tracking ref for it — the short form fails
+with "unknown revision" and looks like the release is missing.
 
 ## 2. Read the direction of a diff before believing it
 
@@ -50,10 +60,18 @@ git log --oneline main..upstream/main   # commits we do not have
 |---|---|
 | `src/`, `ios/` behaviour fix or feature | **Take it.** Write a test first if it is a fix. |
 | `tests/` regression test for a fix we also took | **Take it.** Prefer theirs to a test we wrote. |
-| Dependency bump in `uv.lock` | Take it, and re-run the suite; note it in `FORK.md`. |
+| Dependency bump in `uv.lock` | Take the dependency delta, **not** the file. See below. |
 | `pyproject.toml` or `__init__.py` **version bump** | **Skip.** See §4. |
 | Release docs, release guardrails, `component-versions.json` receiver values | **Skip.** See §4. |
 | README / brand / public-language guardrails | **Skip by default.** See §4. |
+
+Never take an upstream `uv.lock` wholesale. It records the editable root package's own version, so
+once upstream is at `1.1.2` its lock says `1.1.2` while our `pyproject.toml` stays at `1.1.1` — the
+locked sync then fails. Port the dependency delta and regenerate the lock from our own metadata:
+
+```bash
+uv lock
+```
 
 ## 4. What must never be taken wholesale
 
@@ -79,12 +97,18 @@ Our fork asserts the opposite: `test_product_and_project_names_have_an_explicit_
 requires `HealthRelay is a fork of Apple Health AI Bridge` in `README.md`, `docs/brand.md` and
 `assets/brand/README.md`. **Taking upstream's version deletes our rule.**
 
-That rule is not cosmetic. `NOTICE` records that the names `Apple Health AI Bridge`,
-`Health Bridge for AI` and `Health Bridge`, and the brand assets, are **not** covered by the
-Apache-2.0 grant. Apache-2.0 §4(d) requires retaining attribution to the original authors, and a
-user who installs HealthRelay needs to be able to tell which project they are running and where to
-report a problem. Upstream's rule is correct for upstream and wrong for a fork that is a distinct
-product with a distinct issue tracker.
+That rule is not cosmetic, but it is worth being precise about why, because overstating it would
+give a future maintainer a false constraint.
+
+`NOTICE` already carries the attribution Apache-2.0 §4(d) requires, and that requirement — as
+reproduced in `LICENSE:107-121` — is about distributing a readable copy of the applicable NOTICE
+attribution. It does **not** require this particular relationship sentence in three further
+documents. So the guardrail is a **product-identification policy we choose**, not a licence
+condition: a user who installs HealthRelay should be able to tell which project they are running,
+that it is a fork, and where to report a problem — and that is worth keeping on its own merits.
+
+Keep the test, and keep the reasoning honest about which kind of constraint it is. Upstream's rule
+is correct for upstream, where there is no second product to distinguish from, and wrong here.
 
 So: record upstream's commit as a **deliberate skip with its reason**. Skipping is a decision, not
 an oversight, and it belongs in `FORK.md`.
@@ -102,19 +126,41 @@ is what §1 reads next time, so it is worth thirty seconds.
 
 ## 6. Verify
 
-The repository's own checks, the same way CI runs them:
+**If you took a behaviour change from `src/` or `ios/`, the guardrail tests are not enough.** They
+check the release scheme, not the code. The complete gates are what CI runs, and for an imported
+change remote CI is the first place the real suite would notice a problem — so run it first.
+
+The Python workflow runs, in order:
 
 ```bash
 cd <worktree>
-PYTHONPATH=src python -m pytest -q -p no:cacheprovider tests/guardrails
+uv run python scripts/public-release-audit.py --strict
+uv run ruff format --check .
+uv run ruff check .
+uv run basedpyright
+uv run bandit -r src -q
+uv run pip-audit --local --skip-editable
+PYTHONPATH=src python -m pytest -q
+uv run python scripts/package-smoke.py --dist-dir dist
 ```
 
-Without `PYTHONPATH=src` the interpreter may import the package from a different checkout and report
-phantom failures.
+The iOS workflow runs `swift test` and unsigned app builds, and only when the change is
+app-affecting. `swift test` builds for macOS, so an iOS-only Swift modifier needs `#if os(iOS)`.
+
+Two traps worth knowing before you trust a local result:
+
+- **`PYTHONPATH=src` is required** for the test suite. Without it the interpreter may import the
+  package from a different checkout and report phantom failures.
+- **The type checker fails on warnings**, not just errors. Bind discarded results to `_`, which is
+  how the rest of the test suite already writes them.
+
+For a documentation-only change, `ruff format --check .`, `ruff check .` and
+`scripts/public-release-audit.py --strict` are the ones that bite — the last of those rejects
+machine-specific paths and other public-surface problems, and it is strict by design.
 
 Never run acceptance, tests or builds from the **live receiver tree** — the receiver process runs
-from it, and any restart deploys whatever is checked out there. Create worktrees from the review
-clone only; if you do not have it, clone this repository somewhere safe and work there.
+from it, and any restart deploys whatever is checked out there. Create worktrees from a review
+clone; if you do not have one, clone this repository somewhere safe and work there.
 
 ## Why there is no automation
 
