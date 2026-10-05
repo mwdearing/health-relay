@@ -251,12 +251,19 @@ _SCAN_EXCLUDED_DIRS = frozenset({".git", ".venv", "build", "dist", "__pycache__"
 # as `…2026.10` and reported as malformed.
 # `test_a_non_ascii_character_ends_a_ref_without_joining_it` pins both.
 #
-# `+` is here because git permits it in a ref name —
-# `git check-ref-format refs/tags/healthrelay-receiver-2026.10.04+typo` succeeds — so
-# an install target ending `…2026.10.04+typo` names a real, distinct ref that is not
-# a tag of this scheme. Without it the run stopped at the date, the valid prefix was
-# captured, and both checks passed over the broken revision.
-REF_CHAR = r"[0-9A-Za-z_+-]"
+# The characters git permits in a ref name beyond ASCII letters, digits, `_`, `-`
+# and `.`. Each was checked with `git check-ref-format`, which accepts refs such as
+# `refs/tags/healthrelay-receiver-2026.10.04+typo` and `…=typo`: an install target
+# ending in one of these names a real, distinct ref that is not a tag of this scheme.
+# Without them the run stopped at the date, the valid prefix was captured, and both
+# checks passed over the broken revision.
+# `test_git_valid_ref_characters_are_part_of_a_ref` pins the whole set rather than
+# one character at a time.
+#
+# This is the ASCII set git documents as permitted, minus the control characters,
+# space, `~`, `^`, `:`, `?`, `*`, `[`, `\`, and DEL — all of which git forbids in a
+# ref name, so a run cannot legally continue into them.
+REF_CHAR = r"[0-9A-Za-z_+=~-]"
 
 # A whole ref run after the prefix: at least one digit, then characters from the
 # ref alphabet, plus any `.` groups that are themselves part of the ref. The `(?!md\b)`
@@ -283,7 +290,12 @@ REF_CONTINUATION = rf"{REF_CHAR}|\.(?!md\b){REF_CHAR}"
 # does not exist, which `pinned_release_tags()` cannot catch because it reads the
 # notes *directory*, not the links pointing into it.
 # `test_a_note_filename_exemption_still_requires_a_complete_tag` pins that.
-NOTE_FILENAME_RUN = rf"notes-{PINNED_TAG_PREFIX}{PINNED_TAG_BODY}\.md"
+#
+# And the extension must be the *end* of the token, not merely present in it: a
+# link to `notes-…-2026.10.04.md.typo` matched through `.md`, the embedded date is
+# complete, and both checks passed over the broken link.
+MD_EXTENSION = r"\.md(?![\w+=~-]|\.[\w+=~-])"
+NOTE_FILENAME_RUN = rf"notes-{PINNED_TAG_PREFIX}{PINNED_TAG_BODY}{MD_EXTENSION}"
 
 # `healthrelay-receiver-<YYYY.MM.DD>` is the documented placeholder for the tag
 # form, and it appears as prose in five tracked files (FORK.md, .github/release/
@@ -335,6 +347,10 @@ PLACEHOLDER_REF = f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>"
 # afterwards whether it is a complete tag in full.
 ANY_REF_RUN = rf"{REF_CHAR}+(?:\.{REF_CHAR}+)*"
 
+# A `.md` extension, and what may follow it in a filename. A note filename whose
+# extension is itself extended — `notes-…-2026.10.04.md.typo` — is a broken link,
+# so the extension has to be the end of the token rather than merely present in it.
+
 # The placeholder alternative, which must also cover a *malformed* template: an
 # earlier version matched the bare placeholder and relied on a following-character
 # guard, and `…<YYYY.MM.DD>-typo` therefore matched neither alternative at all —
@@ -345,7 +361,7 @@ PLACEHOLDER_EXTENSION = r"(?:[0-9A-Za-z_+.-]*[0-9A-Za-z_+-][0-9A-Za-z_+.-]*)?"
 
 ANY_PINNED_REF_ALTERNATIVES = "|".join(
     (
-        rf"{NOTE_FILENAME_RUN}(?!{REF_CHAR})",
+        rf"{NOTE_FILENAME_RUN}",
         rf"{PINNED_TAG_PREFIX}<YYYY\.MM\.DD>{PLACEHOLDER_EXTENSION}",
         rf"{PINNED_TAG_PREFIX}{ANY_REF_RUN}(?!{REF_CONTINUATION})",
     )
@@ -370,6 +386,11 @@ ANY_PINNED_REF_RUN = re.compile(rf"(?:{ANY_PINNED_REF_ALTERNATIVES})")
 PLUS_SUFFIX_REFS: tuple[str, ...] = (
     f"{PINNED_TAG_PREFIX}2026.10.04+typo",
     f"{PINNED_TAG_PREFIX}2026.10.04+",
+    # Every character the ref alphabet adds beyond letters, digits, `_`, `-` and
+    # `.`, each confirmed with `git check-ref-format`. Fixing `+` alone left the
+    # same fail-open for the rest of the permitted set.
+    f"{PINNED_TAG_PREFIX}2026.10.04=typo",
+    f"{PINNED_TAG_PREFIX}2026.10.04~typo",
 )
 
 # A template that extends the documented placeholder: following it would create a
@@ -382,6 +403,15 @@ PLACEHOLDER_EXTENSIONS: tuple[str, ...] = (
     f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>+typo",
     f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>_typo",
     f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>5",
+    # A dotted extension is only exempt for the one real filename form. A broad
+    # `startswith(f"{PLACEHOLDER_REF}.")` test let every one of these through.
+)
+
+# Dotted extensions after the placeholder. Only `.md` is exempt.
+PLACEHOLDER_DOTTED_EXTENSIONS: tuple[str, ...] = (
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>.typo",
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>.md-typo",
+    f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>.md.typo",
 )
 
 # A link to a note filename whose tag is not complete. The file does not exist, so
@@ -391,6 +421,8 @@ BROKEN_NOTE_FILENAMES: tuple[str, ...] = (
     f"notes-{PINNED_TAG_PREFIX}2026.10.4.md",
     f"notes-{PINNED_TAG_PREFIX}2026.10.04-typo.md",
     f"notes-{PINNED_TAG_PREFIX}latest.md",
+    # The tag is complete here; the extension is what runs on.
+    f"notes-{PINNED_TAG_PREFIX}2026.10.04.md.typo",
 )
 
 NONNUMERIC_REFS: tuple[str, ...] = (
@@ -471,11 +503,15 @@ def _is_a_correct_reference(ref: str) -> bool:
     """
     if PINNED_TAG_RE.fullmatch(ref):
         return True
-    if ref.startswith(f"{PLACEHOLDER_REF}."):
-        # The placeholder as a *filename*: `notes-healthrelay-receiver-<YYYY.MM.DD>.md`
-        # is the shape the release-notes README documents, and it appears in
-        # `.github/release/README.md` and `docs/versioning.md`. It names no release,
-        # so it is exempt on the same grounds as the bare placeholder.
+    if ref == f"{PLACEHOLDER_REF}.md":
+        # The placeholder as a *filename extension*: the shape the release-notes
+        # README documents, appearing in `.github/release/README.md` and
+        # `docs/versioning.md`. It names no release, so it is exempt on the same
+        # grounds as the bare placeholder.
+        #
+        # Exactly `.md` and nothing else. A `startswith(f"{PLACEHOLDER_REF}.")` test
+        # silently exempted every dotted extension, so `…<YYYY.MM.DD>.typo` and
+        # `…<YYYY.MM.DD>.md-typo` passed both checks.
         return True
     if ref == PLACEHOLDER_REF:
         return True
@@ -1339,8 +1375,21 @@ def test_the_placeholder_exemption_covers_only_the_whole_token() -> None:
             f"{ref!r} captured {runs[0]!r} and was accepted; it extends the "
             "placeholder, so it is not the documented form"
         )
+    # Only `.md` is exempt as a dotted extension. The allowance was once a
+    # `startswith(f"{PLACEHOLDER_REF}.")`, which exempted every dotted suffix.
+    for ref in PLACEHOLDER_DOTTED_EXTENSIONS:
+        dotted: list[str] = ANY_PINNED_REF_RUN.findall(f"see {ref} for the form")
+        assert dotted, f"{ref!r} is not recognised at all"
+        assert not _is_a_correct_reference(dotted[0]), (
+            f"{ref!r} captured {dotted[0]!r} and was accepted, but only the exact "
+            f"{PLACEHOLDER_REF}.md filename form is exempt"
+        )
     assert _is_a_correct_reference(PLACEHOLDER_REF), (
         "the bare placeholder names no release and must stay exempt"
+    )
+    assert _is_a_correct_reference(f"{PLACEHOLDER_REF}.md"), (
+        f"{PLACEHOLDER_REF}.md is the documented note-filename form in "
+        ".github/release/README.md and docs/versioning.md"
     )
     assert ANY_PINNED_REF_RUN.findall(f"see {PLACEHOLDER_REF} for the form"), (
         "the bare placeholder must still be recognised"
