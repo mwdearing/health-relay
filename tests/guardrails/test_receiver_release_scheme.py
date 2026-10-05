@@ -341,10 +341,10 @@ def test_pinned_release_tag_discovery_is_not_vacuous() -> None:
     # release is discovered without touching this module.
     with tempfile.TemporaryDirectory() as raw:
         tmp_path = Path(raw)
-        (tmp_path / f"notes-{PINNED_TAG_PREFIX}2099.01.02.md").write_text(
+        _ = (tmp_path / f"notes-{PINNED_TAG_PREFIX}2099.01.02.md").write_text(
             "x", encoding="utf-8"
         )
-        (tmp_path / "notes-receiver-v9.9.9.md").write_text("x", encoding="utf-8")
+        _ = (tmp_path / "notes-receiver-v9.9.9.md").write_text("x", encoding="utf-8")
         discovered = pinned_release_tags(tmp_path)
     assert discovered == ("healthrelay-receiver-2099.01.02",)
     assert not set(discovered) & set(tags)
@@ -514,11 +514,11 @@ def test_workflow_guard_is_not_vacuous() -> None:
 def test_workflow_guard_fails_closed_on_an_unreadable_workflow() -> None:
     with tempfile.TemporaryDirectory() as raw:
         binary = Path(raw) / "binary.yml"
-        binary.write_bytes(b"\x00\xff\xfe not utf8 \x00")
+        _ = binary.write_bytes(b"\x00\xff\xfe not utf8 \x00")
 
         unreadable = False
         try:
-            read_workflow_text(binary)
+            _ = read_workflow_text(binary)
         except UnreadableWorkflowError:
             unreadable = True
         assert unreadable, "an undecodable workflow was read as text"
@@ -533,10 +533,10 @@ def test_workflow_guard_fails_closed_on_an_unreadable_workflow() -> None:
 def test_scan_workflows_fails_closed_on_an_unreadable_workflow() -> None:
     with tempfile.TemporaryDirectory() as raw:
         tmp_path = Path(raw)
-        (tmp_path / "ok.yml").write_text(
+        _ = (tmp_path / "ok.yml").write_text(
             "on:\n  push:\n    branches:\n      - main\n", encoding="utf-8"
         )
-        (tmp_path / "bad.yml").write_bytes(b"\x00\xff\xfe not utf8 \x00")
+        _ = (tmp_path / "bad.yml").write_bytes(b"\x00\xff\xfe not utf8 \x00")
         problems = scan_workflows(tmp_path)
     assert any("bad.yml" in problem for problem in problems), problems
     assert not any("ok.yml" in problem for problem in problems), problems
@@ -546,8 +546,8 @@ def test_reviewed_allowlist_suppresses_only_the_named_file() -> None:
     body = 'on:\n  push:\n    tags: ["healthrelay-receiver-*"]\n'
     with tempfile.TemporaryDirectory() as raw:
         tmp_path = Path(raw)
-        (tmp_path / "allowed.yml").write_text(body, encoding="utf-8")
-        (tmp_path / "other.yml").write_text(body, encoding="utf-8")
+        _ = (tmp_path / "allowed.yml").write_text(body, encoding="utf-8")
+        _ = (tmp_path / "other.yml").write_text(body, encoding="utf-8")
         allowances = ((str(tmp_path / "allowed.yml"), "reviewed: example"),)
         flagged = [
             problem
