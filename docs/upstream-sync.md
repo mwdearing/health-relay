@@ -31,8 +31,12 @@ git fetch upstream
 git log --oneline <recorded-sha>..upstream/main
 ```
 
-`<recorded-sha>` is the upstream commit named in the last `FORK.md` sync line. If that line is
-missing, the answer is "we have not synced since the fork point", which is `4818cdc`.
+`<recorded-sha>` is the upstream commit in the **newest** `Upstream sync, <date>:` entry in
+`FORK.md`. That section is newest-first, so "newest" means the one nearest the heading — not the one
+physically last in the file, and not the first one you happen to see. `test_sync_entries_are_newest_first`
+enforces the ordering, so a wrongly-placed entry is caught rather than silently becoming the
+checkpoint for the next sync. If no entry exists at all, the answer is "we have not synced since
+the fork point", which is `4818cdc`.
 
 Also worth checking, because a release may have shipped without the commits being interesting:
 
