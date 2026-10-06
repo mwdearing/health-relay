@@ -32,6 +32,13 @@ repository, so this tag matches no workflow tag trigger.
   partition as a row, so before this a legacy token could delete export-keyed ECG or medication rows
   left by an earlier receiver. `lab_result` tombstones keep the exemption.
 
+- **The read-only intake-evidence tool is unchanged.** `get_intake_evidence_v1` still answers one
+  question per intake component: is the HealthKit sample the producer claims stored here, and is it
+  the right kind of sample from the right writer. It reports `verified`, `pending`, `unlinked` or
+  `mismatch` per component link, with identifiers, link status and metadata plus the component
+  amount and unit the producer supplied — and never a HealthKit sample value. This release does not
+  change it.
+
 Nothing here changes the wire contract, and none of it changes what a correctly behaving client sees:
 no shipping client emits an export-keyed ECG or medication row. A batch that does is now refused with
 `403 source_principal_mismatch`, which the delivery worker parks for a person rather than retrying.
