@@ -185,7 +185,7 @@ def _reject_export_key_on_live_families(batch: HealthBridgeBatchV1) -> None:
 
 
 def _reject_export_key_on_non_lab_families(batch: HealthBridgeBatchV1) -> None:
-    """Refuse an export source key on every family except lab results."""
+    """Refuse an export key on every family but lab results, and on cursors."""
     if (
         any(sample.source_key == EXPORT_SOURCE_KEY for sample in batch.samples)
         or any(workout.source_key == EXPORT_SOURCE_KEY for workout in batch.workouts)
@@ -197,6 +197,9 @@ def _reject_export_key_on_non_lab_families(batch: HealthBridgeBatchV1) -> None:
             and deleted.record_family != "lab_result"
             for deleted in batch.deleted_records
         )
+        # A lab-result export import carries no sync cursor, so an unbound token has
+        # none to set under the shared export source either.
+        or any(cursor.source_key == EXPORT_SOURCE_KEY for cursor in batch.sync.cursors)
     ):
         raise SourcePrincipalMismatchError(EXPORT_SOURCE_KEY)
 

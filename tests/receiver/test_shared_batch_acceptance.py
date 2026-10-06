@@ -408,6 +408,7 @@ def test_an_export_keyed_lab_result_tombstone_is_still_accepted(*, bound: bool) 
             "workouts": (),
             "sleep_sessions": (),
             "deleted_records": (tombstone,),
+            "sync": batch.sync.model_copy(update={"cursors": ()}),
         }
     )
     principal = ReceiverTokenPrincipal(
@@ -510,3 +511,45 @@ def test_an_unbound_token_cannot_delete_export_keyed_non_lab_rows(
         _ = bind_batch_to_principal(
             batch, ReceiverTokenPrincipal(installation_id_hash=None)
         )
+
+
+def test_an_unbound_token_cannot_set_an_export_sync_cursor() -> None:
+    """A lab-result export import carries no cursor, so an unbound token has no cursor to set.
+
+    Cursor state under the shared export source would let a token bound to no device
+    insert or overwrite sync state in a partition no installation owns.
+    """
+    # Given
+    batch = _export_only_batch_with_cursor()
+
+    # When / Then
+    with pytest.raises(SourcePrincipalMismatchError) as raised:
+        _ = bind_batch_to_principal(
+            batch, ReceiverTokenPrincipal(installation_id_hash=None)
+        )
+    assert str(raised.value) == EXPORT_SOURCE_KEY
+
+
+def _export_only_batch_with_cursor() -> HealthBridgeBatchV1:
+    donor = HealthBridgeBatchV1.model_validate_json(
+        Path("fixtures/health_bridge_batch_v1.synthetic.json").read_bytes()
+    )
+    assert donor.sync.cursors, "the synthetic fixture carries no cursors"
+    base = family_batch("electrocardiogram", source_key=EXPORT_SOURCE_KEY).model_copy(
+        update={
+            "electrocardiograms": (),
+            "medication_dose_events": (),
+            "samples": (),
+            "workouts": (),
+            "sleep_sessions": (),
+            "deleted_records": (),
+            "lab_results": (),
+        }
+    )
+    cursors = tuple(
+        cursor.model_copy(update={"source_key": EXPORT_SOURCE_KEY})
+        for cursor in donor.sync.cursors
+    )
+    return base.model_copy(
+        update={"sync": base.sync.model_copy(update={"cursors": cursors})}
+    )
