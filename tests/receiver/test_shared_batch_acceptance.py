@@ -404,7 +404,11 @@ def test_an_export_keyed_lab_result_tombstone_is_still_accepted(*, bound: bool) 
         update={
             "electrocardiograms": (),
             "medication_dose_events": (),
+            "samples": (),
+            "workouts": (),
+            "sleep_sessions": (),
             "deleted_records": (tombstone,),
+            "sync": batch.sync.model_copy(update={"cursors": ()}),
         }
     )
     principal = ReceiverTokenPrincipal(
@@ -418,3 +422,134 @@ def test_an_export_keyed_lab_result_tombstone_is_still_accepted(*, bound: bool) 
 
     # Then
     assert [d.record_family for d in bound_batch.deleted_records] == ["lab_result"]
+
+
+@pytest.mark.parametrize("family", ["samples", "workouts", "sleep_sessions"])
+def test_an_unbound_token_cannot_write_export_keyed_non_lab_rows(family: str) -> None:
+    """An unbound token may carry a lab-result export import, and nothing else there.
+
+    The export source is one shared partition no installation owns. A bound token's
+    sample, workout and sleep rows are rewritten to the installation's own key, so an
+    export key on them is harmless. An unbound token has no installation to rewrite
+    them to, so those rows would land in the shared partition and could overwrite or
+    delete whatever an earlier unfixed receiver left there.
+    """
+    # Given
+    donor = HealthBridgeBatchV1.model_validate_json(
+        Path("fixtures/health_bridge_batch_v1.synthetic.json").read_bytes()
+    )
+    base = family_batch("electrocardiogram", source_key=EXPORT_SOURCE_KEY).model_copy(
+        update={
+            "electrocardiograms": (),
+            "medication_dose_events": (),
+            "samples": (),
+            "workouts": (),
+            "sleep_sessions": (),
+        }
+    )
+    if family == "samples":
+        assert donor.samples, "the synthetic fixture carries no samples"
+        batch = base.model_copy(
+            update={
+                "samples": tuple(
+                    row.model_copy(update={"source_key": EXPORT_SOURCE_KEY})
+                    for row in donor.samples
+                )
+            }
+        )
+    elif family == "workouts":
+        assert donor.workouts, "the synthetic fixture carries no workouts"
+        batch = base.model_copy(
+            update={
+                "workouts": tuple(
+                    row.model_copy(update={"source_key": EXPORT_SOURCE_KEY})
+                    for row in donor.workouts
+                )
+            }
+        )
+    else:
+        assert donor.sleep_sessions, "the synthetic fixture carries no sleep sessions"
+        batch = base.model_copy(
+            update={
+                "sleep_sessions": tuple(
+                    row.model_copy(update={"source_key": EXPORT_SOURCE_KEY})
+                    for row in donor.sleep_sessions
+                )
+            }
+        )
+
+    # When / Then
+    with pytest.raises(SourcePrincipalMismatchError) as raised:
+        _ = bind_batch_to_principal(
+            batch, ReceiverTokenPrincipal(installation_id_hash=None)
+        )
+    assert str(raised.value) == EXPORT_SOURCE_KEY
+
+
+@pytest.mark.parametrize("record_family", ["sample", "workout", "sleep_session"])
+def test_an_unbound_token_cannot_delete_export_keyed_non_lab_rows(
+    record_family: str,
+) -> None:
+    # Given
+    batch = family_batch("electrocardiogram", source_key=EXPORT_SOURCE_KEY)
+    tombstone = DeletedRecord(
+        record_family=record_family,  # pyright: ignore[reportArgumentType]
+        source_key=EXPORT_SOURCE_KEY,
+        client_record_id="synthetic-record-1",
+        deleted_at="2026-09-30T12:00:00Z",
+    )
+    batch = batch.model_copy(
+        update={
+            "electrocardiograms": (),
+            "medication_dose_events": (),
+            "deleted_records": (tombstone,),
+        }
+    )
+
+    # When / Then
+    with pytest.raises(SourcePrincipalMismatchError):
+        _ = bind_batch_to_principal(
+            batch, ReceiverTokenPrincipal(installation_id_hash=None)
+        )
+
+
+def test_an_unbound_token_cannot_set_an_export_sync_cursor() -> None:
+    """A lab-result export import carries no cursor, so none is accepted for it.
+
+    Cursor state under the shared export source would let a token bound to no device
+    insert or overwrite sync state in a partition no installation owns.
+    """
+    # Given
+    batch = _export_only_batch_with_cursor()
+
+    # When / Then
+    with pytest.raises(SourcePrincipalMismatchError) as raised:
+        _ = bind_batch_to_principal(
+            batch, ReceiverTokenPrincipal(installation_id_hash=None)
+        )
+    assert str(raised.value) == EXPORT_SOURCE_KEY
+
+
+def _export_only_batch_with_cursor() -> HealthBridgeBatchV1:
+    donor = HealthBridgeBatchV1.model_validate_json(
+        Path("fixtures/health_bridge_batch_v1.synthetic.json").read_bytes()
+    )
+    assert donor.sync.cursors, "the synthetic fixture carries no cursors"
+    base = family_batch("electrocardiogram", source_key=EXPORT_SOURCE_KEY).model_copy(
+        update={
+            "electrocardiograms": (),
+            "medication_dose_events": (),
+            "samples": (),
+            "workouts": (),
+            "sleep_sessions": (),
+            "deleted_records": (),
+            "lab_results": (),
+        }
+    )
+    cursors = tuple(
+        cursor.model_copy(update={"source_key": EXPORT_SOURCE_KEY})
+        for cursor in donor.sync.cursors
+    )
+    return base.model_copy(
+        update={"sync": base.sync.model_copy(update={"cursors": cursors})}
+    )
