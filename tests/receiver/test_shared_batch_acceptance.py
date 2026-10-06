@@ -14,8 +14,11 @@ from health_bridge.receiver.invitations import (
     create_pairing_invitation,
     redeem_pairing_invitation,
 )
-from health_bridge.receiver.source_binding import SourcePrincipalMismatchError
-from health_bridge.receiver.tokens import create_receiver_token
+from health_bridge.receiver.source_binding import (
+    SourcePrincipalMismatchError,
+    bind_batch_to_principal,
+)
+from health_bridge.receiver.tokens import ReceiverTokenPrincipal, create_receiver_token
 from tests.contract.delivery_v1_support import BATCH
 from tests.receiver.delivery_acceptance_support import (
     RequestSpec,
@@ -35,7 +38,6 @@ if TYPE_CHECKING:
         Electrocardiogram,
         MedicationDoseEvent,
     )
-    from health_bridge.receiver.tokens import ReceiverTokenPrincipal
 
 INSTALLATION_A: Final = "00000000-0000-4000-8000-000000000001"
 DEVICE_TOKEN: Final = "hb_" + "e" * 64
@@ -298,4 +300,45 @@ def test_legacy_key_family_batch_ingests_under_the_canonical_source(
     assert source_ids == {stored[canonical]}, (
         f"{family} rows are bound to {sorted(source_ids)}, "
         f"not the canonical {stored[canonical]}"
+    )
+
+
+EXPORT_SOURCE_KEY: Final = "apple_health.export"
+
+
+@pytest.mark.parametrize("family", sorted(FAMILY_FIXTURES))
+@pytest.mark.parametrize("bound", [True, False])
+def test_an_export_keyed_row_of_a_live_family_is_rejected(
+    family: str,
+    *,
+    bound: bool,
+) -> None:
+    """These two families are live-only, so an export key is invalid for them.
+
+    `EXPORT_SOURCE_KEY` is exempt from the ownership check so a manual import is not
+    rejected, and that exemption is only sound for the families a manual import can
+    carry. `LabResult`'s docstring records that "ECG and medications sync live via
+    HealthKit and never need a manual export", and the export importer emits rows for
+    neither — so an export-keyed ECG or medication row is not a manual import. It is a
+    row reaching storage with its key never compared to the caller, i.e. a
+    cross-installation write into the one source every installation shares.
+
+    Both token kinds are covered because the unbound branch returns the batch
+    unchanged: a check on the bound path alone left that door open, which is how the
+    first revision of this change was incomplete.
+    """
+    # Given
+    batch = family_batch(family, source_key=EXPORT_SOURCE_KEY)
+    principal = ReceiverTokenPrincipal(
+        installation_id_hash=(
+            canonical_source_key(INSTALLATION_A).rsplit(".", 1)[1] if bound else None
+        )
+    )
+
+    # When / Then
+    with pytest.raises(SourcePrincipalMismatchError) as raised:
+        _ = bind_batch_to_principal(batch, principal)
+    assert str(raised.value) == EXPORT_SOURCE_KEY, (
+        f"an export-keyed {FAMILY_ROW_FIELDS[family]} row was refused for the wrong "
+        f"key: {raised.value}"
     )
