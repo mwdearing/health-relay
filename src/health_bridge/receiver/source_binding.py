@@ -166,6 +166,17 @@ def _reject_export_key_on_live_families(batch: HealthBridgeBatchV1) -> None:
         event.source_key == EXPORT_SOURCE_KEY for event in batch.medication_dose_events
     ):
         raise SourcePrincipalMismatchError(EXPORT_SOURCE_KEY)
+    # A tombstone names the same shared export partition as a row: the sync-state
+    # upsert deletes the matching active record under the tombstone's own source, so an
+    # export-keyed ECG or medication tombstone would delete rows left in that shared
+    # source. Lab results are the one family the export importer produces, so only
+    # their tombstones keep the exemption.
+    if any(
+        deleted.source_key == EXPORT_SOURCE_KEY
+        and deleted.record_family in {"electrocardiogram", "medication_dose_event"}
+        for deleted in batch.deleted_records
+    ):
+        raise SourcePrincipalMismatchError(EXPORT_SOURCE_KEY)
 
 
 def _claimed_source_keys(batch: HealthBridgeBatchV1) -> set[str]:

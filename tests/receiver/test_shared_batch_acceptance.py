@@ -9,6 +9,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from health_bridge.contract import HealthBridgeBatchV1
+from health_bridge.contract.batch_v1 import DeletedRecord
 from health_bridge.receiver import batch_acceptance
 from health_bridge.receiver.invitations import (
     create_pairing_invitation,
@@ -342,3 +343,78 @@ def test_an_export_keyed_row_of_a_live_family_is_rejected(
         f"an export-keyed {FAMILY_ROW_FIELDS[family]} row was refused for the wrong "
         f"key: {raised.value}"
     )
+
+
+@pytest.mark.parametrize(
+    "record_family", ["electrocardiogram", "medication_dose_event"]
+)
+@pytest.mark.parametrize("bound", [True, False])
+def test_an_export_keyed_tombstone_of_a_live_family_is_rejected(
+    record_family: str,
+    *,
+    bound: bool,
+) -> None:
+    """A tombstone names the same shared export partition as a row would.
+
+    `upsert_sync_state()` deletes the matching active record under the tombstone's
+    source, so an export-keyed ECG or medication tombstone from any token could delete
+    rows another installation (or an earlier, unfixed receiver) left in the shared
+    export source. These families are live-only, so the export key is invalid for
+    their tombstones, exactly as it is for their rows; lab results keep the exemption.
+    """
+    # Given
+    batch = family_batch("electrocardiogram", source_key=EXPORT_SOURCE_KEY)
+    tombstone = DeletedRecord(
+        record_family=record_family,  # pyright: ignore[reportArgumentType]
+        source_key=EXPORT_SOURCE_KEY,
+        client_record_id="synthetic-record-1",
+        deleted_at="2026-09-30T12:00:00Z",
+    )
+    batch = batch.model_copy(
+        update={
+            "electrocardiograms": (),
+            "medication_dose_events": (),
+            "deleted_records": (tombstone,),
+        }
+    )
+    principal = ReceiverTokenPrincipal(
+        installation_id_hash=(
+            canonical_source_key(INSTALLATION_A).rsplit(".", 1)[1] if bound else None
+        )
+    )
+
+    # When / Then
+    with pytest.raises(SourcePrincipalMismatchError) as raised:
+        _ = bind_batch_to_principal(batch, principal)
+    assert str(raised.value) == EXPORT_SOURCE_KEY
+
+
+@pytest.mark.parametrize("bound", [True, False])
+def test_an_export_keyed_lab_result_tombstone_is_still_accepted(*, bound: bool) -> None:
+    """The export importer does produce lab results, so its tombstones stay valid."""
+    # Given
+    batch = family_batch("electrocardiogram", source_key=EXPORT_SOURCE_KEY)
+    tombstone = DeletedRecord(
+        record_family="lab_result",
+        source_key=EXPORT_SOURCE_KEY,
+        client_record_id="synthetic-record-1",
+        deleted_at="2026-09-30T12:00:00Z",
+    )
+    batch = batch.model_copy(
+        update={
+            "electrocardiograms": (),
+            "medication_dose_events": (),
+            "deleted_records": (tombstone,),
+        }
+    )
+    principal = ReceiverTokenPrincipal(
+        installation_id_hash=(
+            canonical_source_key(INSTALLATION_A).rsplit(".", 1)[1] if bound else None
+        )
+    )
+
+    # When
+    bound_batch = bind_batch_to_principal(batch, principal)
+
+    # Then
+    assert [d.record_family for d in bound_batch.deleted_records] == ["lab_result"]
