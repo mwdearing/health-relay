@@ -7,7 +7,7 @@ identifies the code.
 | Field | Value |
 | --- | --- |
 | Tag | `healthrelay-receiver-2026.10.06` |
-| Base commit | `fc21756` |
+| Base commit | `15cc160` |
 | Receiver/CLI package version | `1.1.1` (unchanged) |
 | Batch Protocol | `health_bridge.batch.v1` (`1.0.0`, unchanged) |
 
