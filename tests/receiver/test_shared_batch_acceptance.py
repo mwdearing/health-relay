@@ -514,7 +514,7 @@ def test_an_unbound_token_cannot_delete_export_keyed_non_lab_rows(
 
 
 def test_an_unbound_token_cannot_set_an_export_sync_cursor() -> None:
-    """A lab-result export import carries no cursor, so an unbound token has no cursor to set.
+    """A lab-result export import carries no cursor, so none is accepted for it.
 
     Cursor state under the shared export source would let a token bound to no device
     insert or overwrite sync state in a partition no installation owns.
