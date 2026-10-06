@@ -293,7 +293,7 @@ public final class HealthKitBackgroundDeliveryCoordinator {
         // One observer query per observed type, all of which can be woken at once, so the registry
         // must hold a mark for every one of them before it evicts anything.
         deadlineRegistry.reserveCapacity(forObserverCount: healthTypes.count)
-        guard HKHealthStore.isHealthDataAvailable(), isCurrent() else { return }
+        guard isHealthDataAvailable(), isCurrent() else { return }
 
         let registry = deadlineRegistry
         for healthType in healthTypes {
@@ -433,9 +433,15 @@ public final class HealthKitBackgroundDeliveryCoordinator {
     /// `registrationHandler`.
     public func rearmBackgroundDelivery(
         healthTypes: [HealthBridgeHealthType] = HealthBridgeBackgroundSync.observedHealthTypes,
-        registrationHandler: @escaping @MainActor (_ typeCode: String, _ succeeded: Bool) -> Void = { _, _ in }
+        registrationHandler: @escaping @MainActor (_ typeCode: String, _ succeeded: Bool) -> Void
     ) {
         guard isHealthDataAvailable() else { return }
+        // A re-arm resets delivery for observers that exist. `start()` can return before it
+        // registers a single `HKObserverQuery` — HealthKit unavailable, or `isCurrent()` false —
+        // and enabling delivery in that state makes HealthKit launch the app with nothing to call
+        // the completion handler. Only re-arm while an observer query is registered and the
+        // coordinator is still current.
+        guard isCurrent(), activeObserverCount > 0 else { return }
         let expectedGeneration = callbackGeneration
         let generation = deliveryGeneration
         let box = BackgroundDeliveryClientBox(deliveryClient)

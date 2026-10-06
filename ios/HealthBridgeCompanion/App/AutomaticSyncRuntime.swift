@@ -10,7 +10,14 @@ import UIKit
 final class AutomaticSyncRuntime {
     unowned let viewModel: HealthBridgeCompanionViewModel
 
+    /// True only once the coordinator actually holds at least one observer query. `start()` can
+    /// return before registering anything, and enabling background delivery in that state makes
+    /// HealthKit launch the app with nothing to acknowledge the wake-up (health-relay #78).
     private var isActivated = false
+    /// Set before observers are started and cleared by `stopAdmission()`. The observer start
+    /// predicate reads this rather than `isActivated`, which is only set after `start()` has left
+    /// observer queries behind.
+    private var hasRequestedActivation = false
     private var hasActivatedReadyWork = false
     private var foregroundOpportunityConsumed = false
     private var foregroundCatchUpTask: Task<Void, Never>?
@@ -67,8 +74,7 @@ final class AutomaticSyncRuntime {
         BackgroundURLSessionOutboxUploader.shared
             .setAutomaticContinuationAdmissionOpen(true)
         #endif
-        isActivated = true
-        startObservers(allowBeforeBootstrap: true)
+        activateObservers(allowBeforeBootstrap: true)
         BackgroundRefreshScheduler.scheduleNextRefreshIfNeeded(viewModel: viewModel)
     }
 
@@ -81,8 +87,7 @@ final class AutomaticSyncRuntime {
         guard !hasActivatedReadyWork else { return }
         hasActivatedReadyWork = true
         if !isActivated {
-            isActivated = true
-            startObservers(allowBeforeBootstrap: false)
+            activateObservers(allowBeforeBootstrap: false)
         }
         if scheduleOutbox {
             viewModel.schedulePendingBackgroundOutboxUploadsIfAllowed()
@@ -97,6 +102,7 @@ final class AutomaticSyncRuntime {
             .setAutomaticContinuationAdmissionOpen(false)
         #endif
         isActivated = false
+        hasRequestedActivation = false
         hasActivatedReadyWork = false
         foregroundOpportunityConsumed = false
         foregroundCatchUpTask?.cancel()
@@ -151,6 +157,11 @@ final class AutomaticSyncRuntime {
         guard isActivated else { return }
         #if canImport(HealthKit)
         guard HKHealthStore.isHealthDataAvailable() else { return }
+        // Re-arming a coordinator with no observer query would enable `.immediate` delivery with
+        // nothing to call the completion handler, which is exactly the wake-up health-relay #78
+        // exists to prevent. `isActivated` already implies an observer now, but keep the explicit
+        // check so a re-arm can never outrun the observer registration.
+        guard backgroundDeliveryCoordinator.activeObserverCount > 0 else { return }
         guard viewModel.backgroundSyncEnabled else { return }
         guard BackgroundDeliveryRearmPolicy.admitsRearm(
             lastRearmAt: rearmStore.lastBackgroundDeliveryRearmAt(),
@@ -225,6 +236,23 @@ final class AutomaticSyncRuntime {
         #endif
     }
 
+    /// Starts the observer queries and marks the runtime activated only when the coordinator ended
+    /// up with at least one. `start()` can return before registering anything, and a runtime that
+    /// looked activated in that state would re-arm delivery with no observer behind it.
+    private func activateObservers(allowBeforeBootstrap: Bool) {
+        hasRequestedActivation = true
+        startObservers(allowBeforeBootstrap: allowBeforeBootstrap)
+        isActivated = hasActiveObserverQueries
+    }
+
+    private var hasActiveObserverQueries: Bool {
+        #if canImport(HealthKit)
+        return backgroundDeliveryCoordinator.activeObserverCount > 0
+        #else
+        return false
+        #endif
+    }
+
     private func startObservers(allowBeforeBootstrap: Bool) {
         #if canImport(HealthKit)
         guard HKHealthStore.isHealthDataAvailable() else {
@@ -243,7 +271,7 @@ final class AutomaticSyncRuntime {
             },
             observerEntryHandler: viewModel.automaticSyncObserverEntryHandler(),
             isCurrent: { [weak self, weak viewModel] in
-                guard let self, let viewModel, self.isActivated else { return false }
+                guard let self, let viewModel, self.hasRequestedActivation else { return false }
                 return viewModel.automaticSyncObserverIsCurrent(
                     expectedConnectionGeneration: expectedConnectionGeneration,
                     allowBeforeBootstrap: allowBeforeBootstrap

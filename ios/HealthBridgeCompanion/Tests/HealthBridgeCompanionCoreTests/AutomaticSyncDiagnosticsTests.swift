@@ -1,6 +1,10 @@
 import XCTest
 @testable import HealthBridgeCompanionCore
 
+#if canImport(HealthKit)
+import HealthKit
+#endif
+
 /// Counts observer acknowledgements from whichever thread delivered them: the completion handler
 /// must not need the main actor.
 final class AcknowledgementCounter: @unchecked Sendable {
@@ -1020,6 +1024,37 @@ func testDeadlineOutcomeReachesTheLaterEngineOwnedDraft() {
         XCTAssertTrue(store.history.contains(where: { $0.runID == acceptedRunID }))
     }
 
+    #if canImport(HealthKit)
+    /// `start()` may register no observer query — here because `isCurrent()` is false — and a
+    /// re-arm must then leave background delivery untouched. Enabling `.immediate` delivery in that
+    /// state would make HealthKit launch the app with nothing to acknowledge the wake-up.
+    @MainActor
+    func testRearmIsInertWhenStartRegisteredNoObserverQueries() {
+        let client = RearmCallRecordingDeliveryClient()
+        let coordinator = HealthKitBackgroundDeliveryCoordinator(
+            deliveryClient: client,
+            isHealthDataAvailable: { true }
+        )
+
+        coordinator.start(
+            healthTypes: [.steps],
+            isCurrent: { false },
+            observerAdmissionHandler: { _, _ in .complete(nil) },
+            eventHandler: { _, _ in nil }
+        )
+        XCTAssertEqual(coordinator.activeObserverCount, 0)
+
+        coordinator.rearmBackgroundDelivery(healthTypes: [.steps]) { _, _ in
+            XCTFail("A re-arm with no observer query must not report a registration.")
+        }
+
+        XCTAssertTrue(
+            client.calls.isEmpty,
+            "Re-arming must not disable or enable delivery when start() registered no observer query."
+        )
+    }
+    #endif
+
     private func makeRecord(
         runID: UUID = UUID(),
         triggerLane: AutomaticSyncDiagnosticLane = .sleep,
@@ -1072,3 +1107,38 @@ private final class RegistryTestClock: @unchecked Sendable {
         value = value.addingTimeInterval(seconds)
     }
 }
+
+#if canImport(HealthKit)
+/// Records background delivery registration calls so a re-arm can be checked without a live store.
+private final class RearmCallRecordingDeliveryClient: BackgroundDeliveryRegistrationClient, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [String] = []
+
+    var calls: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recorded
+    }
+
+    func disableBackgroundDelivery(
+        for sampleType: HKSampleType,
+        completion: @escaping @Sendable (Bool, Error?) -> Void
+    ) {
+        lock.lock()
+        recorded.append("disable:\(sampleType.identifier)")
+        lock.unlock()
+        completion(true, nil)
+    }
+
+    func enableBackgroundDelivery(
+        for sampleType: HKSampleType,
+        frequency: HKUpdateFrequency,
+        completion: @escaping @Sendable (Bool, Error?) -> Void
+    ) {
+        lock.lock()
+        recorded.append("enable:\(sampleType.identifier)")
+        lock.unlock()
+        completion(true, nil)
+    }
+}
+#endif

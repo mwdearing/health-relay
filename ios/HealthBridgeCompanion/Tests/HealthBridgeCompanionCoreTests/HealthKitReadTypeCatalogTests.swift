@@ -125,12 +125,28 @@ final class HealthKitBackgroundDeliveryRearmTests: XCTestCase {
     private let sleepAnalysisIdentifier =
         HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!.identifier
 
+    /// Registers observer queries the way the runtime does. A coordinator only re-arms while it
+    /// still holds at least one observer query, so the re-arm tests start observers first.
+    private func startObserving(
+        _ coordinator: HealthKitBackgroundDeliveryCoordinator,
+        healthTypes: [HealthBridgeHealthType]
+    ) {
+        coordinator.start(
+            healthTypes: healthTypes,
+            isCurrent: { true },
+            observerAdmissionHandler: { _, _ in .complete(nil) },
+            eventHandler: { _, _ in nil }
+        )
+        XCTAssertEqual(coordinator.activeObserverCount, healthTypes.count)
+    }
+
     func testRearmDisablesThenEnablesEachObservedTypeInOrder() async {
         let client = RecordingDeliveryClient()
         let coordinator = HealthKitBackgroundDeliveryCoordinator(
             deliveryClient: client,
             isHealthDataAvailable: { true }
         )
+        startObserving(coordinator, healthTypes: [.sleepAnalysis, .steps])
         var results: [(String, Bool)] = []
 
         coordinator.rearmBackgroundDelivery(
@@ -157,6 +173,7 @@ final class HealthKitBackgroundDeliveryRearmTests: XCTestCase {
             deliveryClient: client,
             isHealthDataAvailable: { true }
         )
+        startObserving(coordinator, healthTypes: [.steps])
         var resultCount = 0
 
         coordinator.rearmBackgroundDelivery(healthTypes: [.steps]) { _, _ in resultCount += 1 }
@@ -185,6 +202,7 @@ final class HealthKitBackgroundDeliveryRearmTests: XCTestCase {
             deliveryClient: client,
             isHealthDataAvailable: { true }
         )
+        startObserving(coordinator, healthTypes: [.steps])
         let deliveryIsParked = DispatchSemaphore(value: 0)
         let resumeDelivery = DispatchSemaphore(value: 0)
         var resultCount = 0
@@ -229,6 +247,7 @@ final class HealthKitBackgroundDeliveryRearmTests: XCTestCase {
                 deliveryClient: client,
                 isHealthDataAvailable: { true }
             )
+            startObserving(coordinator, healthTypes: [.steps])
 
             coordinator.rearmBackgroundDelivery(healthTypes: [.steps]) { _, _ in }
             let delivery = Task.detached { client.completeOutstandingDisables() }
@@ -257,6 +276,7 @@ final class HealthKitBackgroundDeliveryRearmTests: XCTestCase {
             deliveryClient: client,
             isHealthDataAvailable: { true }
         )
+        startObserving(coordinator, healthTypes: [.steps])
         var results: [(String, Bool)] = []
 
         coordinator.rearmBackgroundDelivery(healthTypes: [.steps]) { typeCode, succeeded in
@@ -308,6 +328,34 @@ final class HealthKitBackgroundDeliveryRearmTests: XCTestCase {
         coordinator.rearmBackgroundDelivery(healthTypes: [.steps]) { _, _ in resultCount += 1 }
 
         XCTAssertTrue(client.calls.isEmpty)
+        XCTAssertEqual(resultCount, 0)
+    }
+
+    /// `start()` can return before it registers a single observer query, here because `isCurrent()`
+    /// is false. Re-arming then would enable `.immediate` delivery with nothing to call the
+    /// completion handler, so the fake client must see no disable or enable call at all.
+    func testRearmIsInertWhenStartRegisteredNoObserverQueries() {
+        let client = RecordingDeliveryClient()
+        let coordinator = HealthKitBackgroundDeliveryCoordinator(
+            deliveryClient: client,
+            isHealthDataAvailable: { true }
+        )
+        var resultCount = 0
+
+        coordinator.start(
+            healthTypes: [.steps],
+            isCurrent: { false },
+            observerAdmissionHandler: { _, _ in .complete(nil) },
+            eventHandler: { _, _ in nil }
+        )
+        XCTAssertEqual(coordinator.activeObserverCount, 0)
+
+        coordinator.rearmBackgroundDelivery(healthTypes: [.steps]) { _, _ in resultCount += 1 }
+
+        XCTAssertTrue(
+            client.calls.isEmpty,
+            "Re-arming must not touch background delivery when start() registered no observer query."
+        )
         XCTAssertEqual(resultCount, 0)
     }
 }
