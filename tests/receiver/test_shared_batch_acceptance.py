@@ -424,6 +424,120 @@ def test_an_export_keyed_lab_result_tombstone_is_still_accepted(*, bound: bool) 
     assert [d.record_family for d in bound_batch.deleted_records] == ["lab_result"]
 
 
+def _export_only_batch() -> HealthBridgeBatchV1:
+    """A batch that is a lab-result export import and nothing else.
+
+    Every family but `lab_results` is empty and so is `sync.cursors`, which is the
+    only shape the export importer produces. A refusal test that starts from this
+    batch and adds back one family has exactly one clause of
+    `_reject_export_key_on_non_lab_families` it can trip, so the test fails when that
+    clause is removed.
+
+    This matters because `family_batch` repoints *every* `source_key` in whatever
+    fixture it loads. Building the refusal fixtures off a family fixture left
+    export-keyed samples, workouts and cursors sitting in the batch, the check
+    short-circuits left to right, and the first matching clause raised on their
+    behalf -- so the tests passed whether or not the clause under test existed.
+    """
+    batch = family_batch("electrocardiogram", source_key=EXPORT_SOURCE_KEY)
+    return batch.model_copy(
+        update={
+            "electrocardiograms": (),
+            "medication_dose_events": (),
+            "samples": (),
+            "workouts": (),
+            "sleep_sessions": (),
+            "deleted_records": (),
+            "lab_results": (),
+            "sync": batch.sync.model_copy(update={"cursors": ()}),
+        }
+    )
+
+
+def _export_keyed_rows(family: str) -> dict[str, tuple[object, ...]]:
+    """One row family from the synthetic fixture, every key at the export source.
+
+    Only the three row families the export importer cannot produce. `deleted_records`
+    is built directly instead, because a tombstone is synthesised rather than taken
+    from a fixture, and its `record_family` is what the clause keys on.
+    """
+    donor = HealthBridgeBatchV1.model_validate_json(
+        Path("fixtures/health_bridge_batch_v1.synthetic.json").read_bytes()
+    )
+    rows: tuple[object, ...]
+    if family == "samples":
+        rows = donor.samples
+    elif family == "workouts":
+        rows = donor.workouts
+    else:
+        assert family == "sleep_sessions", f"no row family named {family}"
+        rows = donor.sleep_sessions
+    assert rows, f"the synthetic fixture carries no {family}"
+    return {
+        family: tuple(
+            row.model_copy(update={"source_key": EXPORT_SOURCE_KEY}) for row in rows
+        )
+    }
+
+
+@pytest.mark.parametrize(
+    "table", ["samples", "workouts", "sleep_sessions", "deleted_records"]
+)
+def test_an_unbound_token_export_batch_is_refused_over_http(
+    tmp_path: Path,
+    *,
+    table: str,
+) -> None:
+    """The refusal is a 403 at the endpoint, and nothing is written.
+
+    Every other authorization test in this file posts through `running_receiver` and
+    asserts both the status and a zero row count. Calling `bind_batch_to_principal`
+    directly, as the sibling refusal tests do, cannot see the mapping to 403 in
+    `BatchAcceptanceCore.prepare` — so a regression there would leave those tests
+    green while the endpoint answered 500. One HTTP-level case closes that door.
+    """
+    # Given
+    db_path = tmp_path / "receiver.sqlite"
+    # A token with no installation binding: the refusal is scoped to the unbound
+    # branch, because a bound token's rows are rewritten to its own key and an
+    # export key on them is harmless.
+    token = "hb_" + "e" * 64
+    _ = create_receiver_token(db_path, label="unbound", token=token)
+    batch = _export_only_batch()
+    if table == "deleted_records":
+        batch = batch.model_copy(
+            update={
+                "deleted_records": (
+                    DeletedRecord(
+                        record_family="sample",
+                        source_key=EXPORT_SOURCE_KEY,
+                        client_record_id="synthetic-record-1",
+                        deleted_at="2026-09-30T12:00:00Z",
+                    ),
+                )
+            }
+        )
+    else:
+        batch = batch.model_copy(update=_export_keyed_rows(table))
+
+    # When
+    with running_receiver(db_path) as port:
+        observation = post_raw_batch(
+            port, token, batch.model_dump_json(exclude_none=True).encode()
+        )
+
+    # Then
+    assert observation.status == 403, observation.body
+    assert observation.body == MISMATCH_BODY
+    with sqlite3.connect(db_path) as connection:
+        (row_count,) = COUNT_ROW_ADAPTER.validate_python(
+            connection.execute(
+                f"select count(*) from {table}"  # noqa: S608
+            ).fetchone()
+        )
+    assert row_count == 0, f"{table} rows were ingested despite the 403"
+
+
 @pytest.mark.parametrize("family", ["samples", "workouts", "sleep_sessions"])
 def test_an_unbound_token_cannot_write_export_keyed_non_lab_rows(family: str) -> None:
     """An unbound token may carry a lab-result export import, and nothing else there.
@@ -438,15 +552,7 @@ def test_an_unbound_token_cannot_write_export_keyed_non_lab_rows(family: str) ->
     donor = HealthBridgeBatchV1.model_validate_json(
         Path("fixtures/health_bridge_batch_v1.synthetic.json").read_bytes()
     )
-    base = family_batch("electrocardiogram", source_key=EXPORT_SOURCE_KEY).model_copy(
-        update={
-            "electrocardiograms": (),
-            "medication_dose_events": (),
-            "samples": (),
-            "workouts": (),
-            "sleep_sessions": (),
-        }
-    )
+    base = _export_only_batch()
     if family == "samples":
         assert donor.samples, "the synthetic fixture carries no samples"
         batch = base.model_copy(
@@ -490,27 +596,29 @@ def test_an_unbound_token_cannot_write_export_keyed_non_lab_rows(family: str) ->
 def test_an_unbound_token_cannot_delete_export_keyed_non_lab_rows(
     record_family: str,
 ) -> None:
+    """A non-lab tombstone under the export key deletes a row for real.
+
+    This is the path that removes data, so it needs its own pin: the row clauses
+    refuse a batch carrying export-keyed samples or workouts, and the ECG fixture
+    carries both, so before the batch was cleared down to a single tombstone the
+    row clauses raised on its behalf and this clause could be deleted with the suite
+    still green.
+    """
     # Given
-    batch = family_batch("electrocardiogram", source_key=EXPORT_SOURCE_KEY)
     tombstone = DeletedRecord(
         record_family=record_family,  # pyright: ignore[reportArgumentType]
         source_key=EXPORT_SOURCE_KEY,
         client_record_id="synthetic-record-1",
         deleted_at="2026-09-30T12:00:00Z",
     )
-    batch = batch.model_copy(
-        update={
-            "electrocardiograms": (),
-            "medication_dose_events": (),
-            "deleted_records": (tombstone,),
-        }
-    )
+    batch = _export_only_batch().model_copy(update={"deleted_records": (tombstone,)})
 
     # When / Then
-    with pytest.raises(SourcePrincipalMismatchError):
+    with pytest.raises(SourcePrincipalMismatchError) as raised:
         _ = bind_batch_to_principal(
             batch, ReceiverTokenPrincipal(installation_id_hash=None)
         )
+    assert str(raised.value) == EXPORT_SOURCE_KEY
 
 
 def test_an_unbound_token_cannot_set_an_export_sync_cursor() -> None:
@@ -535,17 +643,7 @@ def _export_only_batch_with_cursor() -> HealthBridgeBatchV1:
         Path("fixtures/health_bridge_batch_v1.synthetic.json").read_bytes()
     )
     assert donor.sync.cursors, "the synthetic fixture carries no cursors"
-    base = family_batch("electrocardiogram", source_key=EXPORT_SOURCE_KEY).model_copy(
-        update={
-            "electrocardiograms": (),
-            "medication_dose_events": (),
-            "samples": (),
-            "workouts": (),
-            "sleep_sessions": (),
-            "deleted_records": (),
-            "lab_results": (),
-        }
-    )
+    base = _export_only_batch()
     cursors = tuple(
         cursor.model_copy(update={"source_key": EXPORT_SOURCE_KEY})
         for cursor in donor.sync.cursors
