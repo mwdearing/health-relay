@@ -7,7 +7,7 @@ identifies the code.
 | Field | Value |
 | --- | --- |
 | Tag | `healthrelay-receiver-2026.10.06` |
-| Base commit | `f28c4ca` |
+| Base commit | `fc21756` |
 | Receiver/CLI package version | `1.1.1` (unchanged) |
 | Batch Protocol | `health_bridge.batch.v1` (`1.0.0`, unchanged) |
 
@@ -22,15 +22,18 @@ repository, so this tag matches no workflow tag trigger.
   but not for these two families, and their upsert key is `(source_id, client_record_id)` — so one
   installation could write into, and overwrite, another's rows. Both families are now part of the
   claimed-key check and are rewritten to the caller's canonical source.
-- **An export claim on a live-only family is refused.** `apple_health.export` is one shared, unscoped
-  source, and the ownership check exempts it so that a manual import is not rejected. That exemption is
-  sound only for the families a manual import can carry, and the export importer carries `lab_results`
-  alone: it reads clinical records, while ECG and medications sync live. An export-keyed ECG or
-  medication **row** is now refused, and so is an export-keyed **tombstone** for either family, on every
-  token kind — including a legacy token with no installation binding, whose batches are returned
-  unchanged and would otherwise have carried one through to storage. A tombstone names the same shared
-  partition as a row, so before this a legacy token could delete export-keyed ECG or medication rows
-  left by an earlier receiver. `lab_result` tombstones keep the exemption.
+- **An export claim is refused unless it is a lab-result import.** `apple_health.export` is one shared,
+  unscoped source, and the ownership check exempts it so that a manual import is not rejected. That
+  exemption is sound only for the families a manual import can carry, and the export importer carries
+  `lab_results` alone.
+  - For a **device-bound** token the live families — electrocardiograms and medication dose events —
+    are refused as rows and as tombstones, because a tombstone names the same shared partition as a row
+    and so could delete rows an earlier receiver had left there. `lab_result` tombstones keep the
+    exemption.
+  - For a **legacy token bound to no device** the rule is wider. Such a token has no installation to
+    rewrite rows to, so every export-keyed sample, workout, sleep session, sync cursor and non-lab
+    tombstone it carried would land in the one partition no installation owns. All of those are now
+    refused. It may still carry a lab-result export import, which is the supported path.
 
 - **The read-only intake-evidence tool is unchanged.** `get_intake_evidence_v1` still answers one
   question per intake component: is the HealthKit sample the producer claims stored here, and is it
@@ -53,8 +56,8 @@ batch indefinitely. This release rewrites those rows too, so the same batch is n
 `202` and its records are stored under the canonical source. Callers already sending the canonical
 key are unaffected.
 
-The new refusal is separate, and it applies only to a claim that cannot be legitimate: a batch
-carrying an export-keyed ECG or medication **row** or **tombstone** is now refused with
+The refusals are separate, and they apply only to a claim that cannot be legitimate: a batch that
+tries to file a record under `apple_health.export` outside a lab-result import is refused with
 `403 source_principal_mismatch`. No shipping client emits one — the export importer carries
 `lab_results` alone.
 
