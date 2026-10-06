@@ -45,6 +45,11 @@ def bind_batch_to_principal(
     # than converted.
     _reject_export_key_on_live_families(batch)
     if installation_id_hash is None:
+        # A token bound to no device may carry a lab-result export import and nothing
+        # else under the shared export source. A bound token's sample, workout and
+        # sleep rows are rewritten to its installation's key, but an unbound token has
+        # no installation, so those rows would land in the one partition nobody owns.
+        _reject_export_key_on_non_lab_families(batch)
         for source_key in claimed_source_keys:
             if source_key == EXPORT_SOURCE_KEY:
                 continue
@@ -175,6 +180,23 @@ def _reject_export_key_on_live_families(batch: HealthBridgeBatchV1) -> None:
         deleted.source_key == EXPORT_SOURCE_KEY
         and deleted.record_family in {"electrocardiogram", "medication_dose_event"}
         for deleted in batch.deleted_records
+    ):
+        raise SourcePrincipalMismatchError(EXPORT_SOURCE_KEY)
+
+
+def _reject_export_key_on_non_lab_families(batch: HealthBridgeBatchV1) -> None:
+    """Refuse an export source key on every family except lab results."""
+    if (
+        any(sample.source_key == EXPORT_SOURCE_KEY for sample in batch.samples)
+        or any(workout.source_key == EXPORT_SOURCE_KEY for workout in batch.workouts)
+        or any(
+            session.source_key == EXPORT_SOURCE_KEY for session in batch.sleep_sessions
+        )
+        or any(
+            deleted.source_key == EXPORT_SOURCE_KEY
+            and deleted.record_family != "lab_result"
+            for deleted in batch.deleted_records
+        )
     ):
         raise SourcePrincipalMismatchError(EXPORT_SOURCE_KEY)
 
