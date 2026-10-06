@@ -95,6 +95,21 @@ def bind_batch_to_principal(
                 )
                 for lab_result in batch.lab_results
             ),
+            # ECG and medication dose events are HealthKit live-lane families like
+            # samples/workouts/sleep_sessions above, so they are rewritten to the
+            # canonical key unconditionally -- the export importer only ever produces
+            # lab results, and lab_results is the only family with an EXPORT_SOURCE_KEY
+            # exemption. Leaving these unrewritten made a legacy-key batch wedge:
+            # sources was canonical, these rows were not, so source_id() raised
+            # IntegrityError, /v1/batches 500'd and the outbox retried forever.
+            "electrocardiograms": tuple(
+                ecg.model_copy(update={"source_key": canonical_source_key})
+                for ecg in batch.electrocardiograms
+            ),
+            "medication_dose_events": tuple(
+                event.model_copy(update={"source_key": canonical_source_key})
+                for event in batch.medication_dose_events
+            ),
             "sync": batch.sync.model_copy(
                 update={
                     "cursors": tuple(
@@ -115,6 +130,8 @@ def _claimed_source_keys(batch: HealthBridgeBatchV1) -> set[str]:
         *(session.source_key for session in batch.sleep_sessions),
         *(deleted.source_key for deleted in batch.deleted_records),
         *(lab_result.source_key for lab_result in batch.lab_results),
+        *(ecg.source_key for ecg in batch.electrocardiograms),
+        *(event.source_key for event in batch.medication_dose_events),
         *(cursor.source_key for cursor in batch.sync.cursors),
     }
 
