@@ -296,14 +296,6 @@ REF_CONTINUATION = rf"{REF_CHAR}|\.(?!md\b){REF_CHAR}"
 # token ends it, which keeps `)`, a backtick, a space and a `.md` that really does end
 # the filename recognised, and reports every other continuation whatever it is.
 #
-# What continues a filename after its `.md`: any character a filename may contain.
-# This is the *filename* alphabet, not the git-ref one — `notes-…-2026.10.04.md..bak`
-# is a legal filename, so a continuation rule shaped like a git ref (a `.` must be
-# followed by a ref character) cannot consume it, captured only the valid `.md`
-# prefix, and left the nonexistent link unreported. Matching the filename grammar is
-# what makes the class unrefinable: a rule shaped like the thing it must recognise
-# closes on that thing, where a list of seen typos closes on the last one only.
-#
 # What continues a filename past its `.md`: a ref character, or one dot-group of
 # them. This is the *filename* grammar rather than a git-ref one — `notes-<tag>.md.bak`
 # is a legal filename, and a ref-shaped rule could not consume it.
