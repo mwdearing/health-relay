@@ -39,6 +39,11 @@ repository, so this tag matches no workflow tag trigger.
   amount and unit the producer supplied — and never a HealthKit sample value. This release does not
   change it.
 
+- **Intake-context routes.** Unchanged by this release and still **off by default**: start the
+  receiver with `--enable-intake-context` to serve `/v1/intake-context/capabilities` and
+  `/v1/intake-context/batches`. While off, both paths answer 404 like any unknown path, and each CLI
+  start reports whether they are enabled.
+
 Nothing here changes the wire contract, and none of it changes what a correctly behaving client sees:
 no shipping client emits an export-keyed ECG or medication row. A batch that does is now refused with
 `403 source_principal_mismatch`, which the delivery worker parks for a person rather than retrying.
