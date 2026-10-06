@@ -75,9 +75,9 @@ PINNED_TAG_PREFIX = "healthrelay-receiver-"
 # digit group and a dotted digit are all continuations; a closing backtick, a
 # quote, a slash into a docs path and `.md` in a filename are not, and matching
 # those would report every correctly-written reference in the repository.
-PINNED_TAG_BODY = r"\d{4}\.\d{2}\.\d{2}"
+PINNED_TAG_DATE = r"\d{4}\.\d{2}\.\d{2}"
 PINNED_TAG_RE = re.compile(
-    r"healthrelay-receiver-\d{4}\.\d{2}\.\d{2}(?![0-9]|-[A-Za-z0-9]|\.[0-9])"
+    rf"{PINNED_TAG_PREFIX}{PINNED_TAG_DATE}(?![0-9]|-[A-Za-z0-9]|\.[0-9])"
 )
 WORKFLOWS = ROOT / ".github/workflows"
 RELEASE_NOTES = ROOT / ".github/release"
@@ -265,14 +265,7 @@ _SCAN_EXCLUDED_DIRS = frozenset({".git", ".venv", "build", "dist", "__pycache__"
 # ref name, so a run cannot legally continue into them.
 REF_CHAR = r"[0-9A-Za-z_+=~-]"
 
-# A whole ref run after the prefix: at least one digit, then characters from the
-# ref alphabet, plus any `.` groups that are themselves part of the ref. The `(?!md\b)`
-# keeps `notes-healthrelay-receiver-2026.10.04.md` correct — `.md` is a filename
-# extension that follows the ref, not part of it — and the body cannot end in `.`, so
-# `healthrelay-receiver-2026.10.04.` captures the bare tag and stays green.
-REF_RUN = rf"[0-9]{REF_CHAR}*(?:\.(?!md\b){REF_CHAR}+)*"
-
-# ...and the two things that could still continue it, which is therefore the
+# The two things that could still continue a ref run, which is therefore the
 # boundary. See the comment on `ANY_PINNED_REF_RUN` for why this is not `\w`.
 REF_CONTINUATION = rf"{REF_CHAR}|\.(?!md\b){REF_CHAR}"
 
@@ -284,8 +277,8 @@ REF_CONTINUATION = rf"{REF_CHAR}|\.(?!md\b){REF_CHAR}"
 # both stopped the run at `.md`, leaving the valid `…10.04` prefix for both checks
 # to pass. `test_md_is_exempt_only_in_a_release_note_filename` pins the difference.
 #
-# The embedded tag must be a *complete* one. An earlier version reused `REF_RUN`,
-# which validates only a generic character run, so `notes-…-2026.10.4.md` and
+# The embedded tag must be a *complete* one. An earlier version reused a permissive
+# character run, which validates no date at all, so `notes-…-2026.10.4.md` and
 # `notes-…-2026.10.04-typo.md` were exempted wholesale — a broken link to a note that
 # does not exist, which `pinned_release_tags()` cannot catch because it reads the
 # notes *directory*, not the links pointing into it.
@@ -294,8 +287,60 @@ REF_CONTINUATION = rf"{REF_CHAR}|\.(?!md\b){REF_CHAR}"
 # And the extension must be the *end* of the token, not merely present in it: a
 # link to `notes-…-2026.10.04.md.typo` matched through `.md`, the embedded date is
 # complete, and both checks passed over the broken link.
-MD_EXTENSION = r"\.md(?![\w+=~-]|\.[\w+=~-])"
-NOTE_FILENAME_RUN = rf"notes-{PINNED_TAG_PREFIX}{PINNED_TAG_BODY}{MD_EXTENSION}"
+#
+# What may follow the `.md` of a note filename. A note filename whose extension is
+# itself extended — `notes-…-2026.10.04.md.typo` — is a broken link, and so is one
+# whose extension is continued by a ref character — `notes-…-2026.10.04.md-typo`.
+# Either way `.md` is not the end of the token, so the token is captured whole and
+# decided afterwards by `_is_a_note_filename`. Only a character that cannot extend the
+# token ends it, which keeps `)`, a backtick, a space and a `.md` that really does end
+# the filename recognised, and reports every other continuation whatever it is.
+#
+# What continues a filename after its `.md`: any character a filename may contain.
+# This is the *filename* alphabet, not the git-ref one — `notes-…-2026.10.04.md..bak`
+# is a legal filename, so a continuation rule shaped like a git ref (a `.` must be
+# followed by a ref character) cannot consume it, captured only the valid `.md`
+# prefix, and left the nonexistent link unreported. Matching the filename grammar is
+# what makes the class unrefinable: a rule shaped like the thing it must recognise
+# closes on that thing, where a list of seen typos closes on the last one only.
+#
+# What continues a filename past its `.md`: a ref character, or one dot-group of
+# them. This is the *filename* grammar rather than a git-ref one — `notes-<tag>.md.bak`
+# is a legal filename, and a ref-shaped rule could not consume it.
+#
+# Bounded to ONE dot-group, and that bound is the whole design. Two earlier rules
+# were each too permissive in a different direction, and both cost real
+# documentation:
+#
+# - a lookahead rejecting only `.` stopped the token at `.md`, so `-typo` reached no
+#   assertion at all;
+# - a class excluding only whitespace and a few delimiters consumed the sentence
+#   period in `see notes-<tag>.md.`, the `>` in `<notes-<tag>.md>`, and the `?raw=1`
+#   in a GitHub blob URL, reporting correct documentation as malformed.
+#
+# Requiring at least one character after the dot is what separates `…04.md.` (a
+# sentence period — nothing follows) from `…04.md.typo` (a doubled extension). One
+# group, not many: `…04.md..bak` is a legal filename this does NOT report. That gap
+# is recorded as health-relay #102 rather than traded away here, because the
+# alternative is a rule that fires on every sentence-ending filename mention, which
+# is a far more common shape than a doubled extension.
+#
+# `=`, `+` and `~` are in `REF_CHAR`, which is why `…04.md=typo` is caught. `?`, `>`
+# and `&` are not ref characters and are not dots, so URL delimiters end the token.
+NOTE_FILENAME_CONTINUATION = rf"(?:{REF_CHAR}|\.[{REF_CHAR[1:-1]}]+)"
+
+# A note filename is the bare tag inside the one filename that carries a ref, and the
+# capture has to carry the whole filename token — `.md` included and anything that
+# continues it. A capture that stopped at `.md` handed `_is_a_correct_reference` the
+# correct filename while the typo stayed in the document: the capture compared equal,
+# the scan skipped it, and scanning resumed *after* it, so
+# `notes-…-2026.10.04.md-typo` reached no assertion at all. The continuation is
+# whatever can extend the token — a ref character, or a `.` starting another group,
+# because a filename is `.`-joined groups of ref characters — so it is written as the
+# ref alphabet rather than as a list of the suffixes someone has typed so far.
+NOTE_FILENAME_RUN = (
+    rf"notes-{PINNED_TAG_PREFIX}{PINNED_TAG_DATE}\.md{NOTE_FILENAME_CONTINUATION}*"
+)
 
 # `healthrelay-receiver-<YYYY.MM.DD>` is the documented placeholder for the tag
 # form, and it appears as prose in five tracked files (FORK.md, .github/release/
@@ -347,10 +392,6 @@ PLACEHOLDER_REF = f"{PINNED_TAG_PREFIX}<YYYY.MM.DD>"
 # afterwards whether it is a complete tag in full.
 ANY_REF_RUN = rf"{REF_CHAR}+(?:\.{REF_CHAR}+)*"
 
-# A `.md` extension, and what may follow it in a filename. A note filename whose
-# extension is itself extended — `notes-…-2026.10.04.md.typo` — is a broken link,
-# so the extension has to be the end of the token rather than merely present in it.
-
 # The placeholder alternative, which must also cover a *malformed* template: an
 # earlier version matched the bare placeholder and relied on a following-character
 # guard, and `…<YYYY.MM.DD>-typo` therefore matched neither alternative at all —
@@ -361,6 +402,10 @@ PLACEHOLDER_EXTENSION = r"(?:[0-9A-Za-z_+.-]*[0-9A-Za-z_+-][0-9A-Za-z_+.-]*)?"
 
 ANY_PINNED_REF_ALTERNATIVES = "|".join(
     (
+        # No trailing lookahead: the filename alternative has to capture a continued
+        # filename so `_is_a_note_filename` can reject it. A `(?!…)` here used to stop
+        # the capture at `.md` and leave the continuation in the document, where
+        # nothing looked at it again.
         rf"{NOTE_FILENAME_RUN}",
         rf"{PINNED_TAG_PREFIX}<YYYY\.MM\.DD>{PLACEHOLDER_EXTENSION}",
         rf"{PINNED_TAG_PREFIX}{ANY_REF_RUN}(?!{REF_CONTINUATION})",
@@ -423,6 +468,84 @@ BROKEN_NOTE_FILENAMES: tuple[str, ...] = (
     f"notes-{PINNED_TAG_PREFIX}latest.md",
     # The tag is complete here; the extension is what runs on.
     f"notes-{PINNED_TAG_PREFIX}2026.10.04.md.typo",
+)
+
+# Suffixes that continue a note filename past its `.md`. Each is a filename the
+# module has previously failed to report, so the list spans the three shapes a rule
+# for this could take: a ref character (`.md-typo`), a dotted group (`.md.typo`), and
+# consecutive dots (`.md..bak`), which is a legal filename and the one a
+# git-ref-shaped rule could not consume.
+FILENAME_CONTINUATIONS: tuple[str, ...] = (
+    "-typo",
+    ".typo",
+    "..bak",
+    ".bak",
+    ".md",
+    "5",
+    "_typo",
+    "+typo",
+    "=typo",
+    "~typo",
+)
+
+# Note filenames for tags the tag rule accepts and tags it rejects, each paired with
+# the verdict `PINNED_TAG_RE` gives the tag itself.
+#
+# The note-filename exemption is asserted against this table rather than against one
+# literal date. A release note's filename carries the date of the release it
+# documents, so the next pinned release publishes `notes-<prefix><some other
+# date>.md` — a file this module cannot know the name of when it is written.
+# Comparing the filename to the date of the release that happened to exist made
+# every later release's own note malformed, which fails the guard on correct
+# documentation and blocks the release it was meant to protect.
+NOTE_FILENAME_BY_DATE: tuple[tuple[str, bool], ...] = (
+    ("2026.10.04", True),
+    ("2026.10.05", True),
+    ("2026.11.01", True),
+    ("2026.12.31", True),
+    ("2027.01.15", True),
+    ("2099.01.02", True),
+    # A date the tag rule rejects, so a filename carrying one is a broken link: the
+    # file does not exist. `pinned_release_tags()` cannot see these, because it reads
+    # the notes directory rather than the links pointing into it.
+    ("2026.1.04", False),
+    ("2026.10.4", False),
+    ("202.10.04", False),
+    ("2026.10.041", False),
+    ("2026.10.04-typo", False),
+    ("2026.10.04typo", False),
+    ("latest", False),
+)
+
+# A release-note filename as a link target, and whether it is the correct one. Every
+# row is embedded in a real Markdown link, so the `)` and the surrounding prose are
+# also in play: a `.md` that ends the filename has to survive that, and a `.md` that
+# anything continues has to be reported.
+#
+# Anything that continues the filename token makes it a *different* filename, which
+# no release ever publishes.
+NOTE_FILENAME_LINKS: tuple[tuple[str, bool], ...] = (
+    (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md", True),
+    (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md-typo", False),
+    (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md_typo", False),
+    (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md5", False),
+    (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md.typo", False),
+    (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md.bak", False),
+    # The extension extended the other way was already reported before this boundary
+    # existed, so it is pinned here: a fix that made the token end at `.md` by
+    # ignoring every continuation would reopen it.
+    (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md.md", False),
+    # A doubled extension is NOT reported, and that is a recorded gap rather than an
+    # oversight — see health-relay #102 and the comment on
+    # `NOTE_FILENAME_CONTINUATION`. Pinned here so that if the rule is ever widened
+    # to cover it, this test says so rather than the change arriving silently.
+    (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md..bak", True),
+    # Characters legal in a filename that a URL-shaped rule would want to exclude.
+    # Each of these was reported as malformed by the attempt that excluded `=`, `+`
+    # and `.` to stop a capture running into a link target.
+    (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md=typo", False),
+    (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md+typo", False),
+    (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md~typo", False),
 )
 
 NONNUMERIC_REFS: tuple[str, ...] = (
@@ -489,6 +612,59 @@ WELL_FORMED_REFS: tuple[str, ...] = (
 )
 
 
+def _document_findings(text: str) -> list[tuple[str, str]]:
+    """What `malformed_pinned_refs()` reports for one scratch document holding `text`.
+
+    Runs the real composed scan over a document of the probe's own, rather than
+    re-deriving its verdict from the capture: a capture that reads as correct is
+    skipped, and the scan resumes *after* it, so the only way to see a hole that
+    leaves the scan rather than merely failing a check is to run the scan.
+
+    `ROOT` and `_tracked_documentation_sources` are both repointed, because
+    `malformed_pinned_refs()` names each finding by its path relative to `ROOT` and
+    reads the source set the checks read. Repointing the source set is what stops a
+    probe from passing by reading the repository's own documentation, and
+    repointing `ROOT` is what stops it from failing on an unrelated file.
+    """
+    module = sys.modules[__name__]
+    scratch_root = ROOT / ".pytest_cache"
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=scratch_root) as raw:
+        tree = Path(raw)
+        document = tree / "probe.md"
+        _ = document.write_text(text, encoding="utf-8")
+        with (
+            mock.patch.object(module, "ROOT", tree),
+            mock.patch.object(
+                module, "_tracked_documentation_sources", return_value=[document]
+            ),
+        ):
+            return malformed_pinned_refs()
+
+
+def _is_a_note_filename(ref: str) -> bool:
+    """Whether `ref` is exactly the note filename of a tag the tag rule accepts.
+
+    The embedded tag is decided by `PINNED_TAG_RE` -- the same rule
+    `pinned_release_tags()` applies to a notes filename read off disk, and the same
+    rule the bare-tag shape uses. Comparing the filename against one literal date
+    instead made the exemption depend on *which* release this module was written
+    during: `notes-<prefix>2027.01.15.md` is a correctly named note for the next
+    pinned release and was reported as a malformed reference, so the guard failed
+    the release it exists to protect while the two halves of this module disagreed
+    about the same file.
+
+    The extension must also end the filename. Equality with
+    `notes-` + tag + `.md` is what rejects a longer filename, and it is why the
+    capture has to carry the continuation rather than stop at `.md`.
+    """
+    stem = f"notes-{PINNED_TAG_PREFIX}"
+    if not (ref.startswith(stem) and ref.endswith(".md")):
+        return False
+    tag = f"{PINNED_TAG_PREFIX}{ref[len(stem) : -len('.md')]}"
+    return PINNED_TAG_RE.fullmatch(tag) is not None
+
+
 def _is_a_correct_reference(ref: str) -> bool:
     """Whether a captured run is a reference written correctly, so not reported.
 
@@ -498,24 +674,37 @@ def _is_a_correct_reference(ref: str) -> bool:
     - the bare tag itself, `healthrelay-receiver-2026.10.04`;
     - a release-note filename, `notes-healthrelay-receiver-2026.10.04.md`, where the
       ref is part of a filename rather than prose after the prefix;
-    - the documented placeholder `healthrelay-receiver-<YYYY.MM.DD>`, which names no
-      release and appears as prose in several tracked files.
+    - the documented placeholder `healthrelay-receiver-<YYYY.MM.DD>`, and that
+      placeholder as a `.md` filename, which name no release and appear as prose in
+      several tracked files.
+
+    The wrapped shapes are **composed from the canonical tag**, not spelled out
+    again. Two earlier versions of this function spelled each shape as its own
+    pattern or prefix test, and every time one was looser than `PINNED_TAG_RE` it
+    became a hole: a permissive body exempted `notes-<anything>.md`, a
+    `startswith(f"{PLACEHOLDER_REF}.")` exempted every dotted suffix, and a prefix
+    test accepted `notes-…-2026.10.04.md.typo` with a complete embedded tag. A third
+    version compared a note filename to one literal date, which was not looser but
+    was date-specific: it reported the next release's own correctly named note as
+    malformed.
+
+    So each shape now defers to `PINNED_TAG_RE` rather than restating what a valid
+    tag looks like. The date is *not* compared as a literal: every date the rule
+    accepts has to be acceptable here too, because that is what a later release's
+    notes are called.
     """
     if PINNED_TAG_RE.fullmatch(ref):
         return True
-    if ref == f"{PLACEHOLDER_REF}.md":
-        # The placeholder as a *filename extension*: the shape the release-notes
-        # README documents, appearing in `.github/release/README.md` and
-        # `docs/versioning.md`. It names no release, so it is exempt on the same
-        # grounds as the bare placeholder.
-        #
-        # Exactly `.md` and nothing else. A `startswith(f"{PLACEHOLDER_REF}.")` test
-        # silently exempted every dotted extension, so `…<YYYY.MM.DD>.typo` and
-        # `…<YYYY.MM.DD>.md-typo` passed both checks.
+    # A note filename is the bare tag inside the one filename that carries a ref,
+    # and its embedded tag is decided by the tag rule itself. Not a prefix test and
+    # not a literal date: `…-2026.10.04.md.typo` matched through `.md` before, with a
+    # complete embedded tag, and passed both checks; comparing against one date then
+    # failed every release after that one.
+    if _is_a_note_filename(ref):
         return True
-    if ref == PLACEHOLDER_REF:
-        return True
-    return bool(re.fullmatch(NOTE_FILENAME_RUN, ref))
+    # The placeholder, bare or with the documented `.md` extension. Exact equality:
+    # a `startswith` test on the dotted form exempted `…<YYYY.MM.DD>.typo` too.
+    return ref in (PLACEHOLDER_REF, f"{PLACEHOLDER_REF}.md")
 
 
 def malformed_pinned_refs() -> list[tuple[str, str]]:
@@ -1320,6 +1509,200 @@ def test_a_malformed_pinned_ref_in_the_docs_is_reported() -> None:
     )
 
 
+def test_no_exemption_is_looser_than_the_bare_tag_rule() -> None:
+    """Every correct shape must be derived from the tag rule, not restated.
+
+    Three rounds of fixes each found an exemption that was looser than
+    `PINNED_TAG_RE`: a permissive body exempted `notes-<anything>.md`, a
+    `startswith(f"{PLACEHOLDER_REF}.")` exempted every dotted suffix, and a
+    prefix test accepted `notes-…-2026.10.04.md.typo` with a complete embedded tag.
+    Each time the exemption was spelled out separately from the tag rule and drifted
+    from it.
+
+    This asserts the derivation instead of the individual shapes: the note-filename
+    shape and the tag shape must agree about the date, so changing what counts as a
+    valid tag cannot leave an exemption behind that disagrees.
+    """
+    # The pattern must still contain the date shape the wrapped forms are composed
+    # from — otherwise the two could be edited apart.
+    assert f"{PINNED_TAG_PREFIX}{PINNED_TAG_DATE}" in PINNED_TAG_RE.pattern, (
+        "the tag pattern must be built from PINNED_TAG_DATE, the shape the correct "
+        f"shapes are composed from; the pattern is {PINNED_TAG_RE.pattern!r}"
+    )
+    # The placeholder and its `.md` form are the only non-tag exemptions, and they
+    # are compared for equality, so nothing can extend them.
+    assert _is_a_correct_reference(PLACEHOLDER_REF)
+    assert _is_a_correct_reference(f"{PLACEHOLDER_REF}.md")
+    for extension in (".typo", ".md-typo", ".md.typo", "-typo", "typo"):
+        assert not _is_a_correct_reference(f"{PLACEHOLDER_REF}{extension}"), (
+            f"{PLACEHOLDER_REF}{extension} must not be exempt"
+        )
+    # A note filename defers to the tag rule: every tag the rule accepts has a
+    # correct filename, and every tag it rejects does not. Asserted as that property
+    # rather than as a literal sitting in the check, because the check holds no date
+    # at all any more — comparing it against one literal date is what made the next
+    # release's own note malformed.
+    assert NOTE_FILENAME_BY_DATE, (
+        "the note-filename fixture is empty, so this asserts nothing about the "
+        "filename exemption"
+    )
+    for date, accepted in NOTE_FILENAME_BY_DATE:
+        is_a_tag = PINNED_TAG_RE.fullmatch(f"{PINNED_TAG_PREFIX}{date}") is not None
+        assert is_a_tag == accepted, (
+            f"the fixture says {accepted} for {date!r}, which "
+            f"{PINNED_TAG_RE.pattern!r} disagrees with, so it cannot prove the two "
+            "agree"
+        )
+        assert _is_a_note_filename(f"notes-{PINNED_TAG_PREFIX}{date}.md") == accepted, (
+            f"notes-{PINNED_TAG_PREFIX}{date}.md is not correct exactly when the tag "
+            f"rule says the tag is not valid (want correct={accepted}); the filename "
+            "check must defer to PINNED_TAG_RE instead of comparing against a date"
+        )
+    # And a note filename is correct only when the whole filename matches.
+    good = f"notes-{PINNED_TAG_PREFIX}2026.10.04.md"
+    assert _is_a_correct_reference(good)
+    for extension in (".typo", "-typo", ".md.typo"):
+        assert not _is_a_correct_reference(f"{good}{extension}"), (
+            f"{good}{extension} must not be exempt"
+        )
+
+
+def test_a_note_filename_is_correct_for_any_date_the_tag_rule_accepts() -> None:
+    """A note filename's correctness must not depend on the date it carries.
+
+    The next pinned release publishes its own note, named for its own date. A
+    filename check written against the date of the release that existed when it was
+    written reports that note as a malformed reference — so it fails the guard on
+    correct documentation, on the very release it exists to protect, while
+    `pinned_release_tags()` accepts the identical filename read from the notes
+    directory. The two halves of this module then disagree about the same file.
+
+    Every date below is checked through the capture path the scan uses, not by
+    calling the check with a string, so a capture that quietly stopped at `.md`
+    cannot satisfy this either.
+    """
+    for date, accepted in NOTE_FILENAME_BY_DATE:
+        filename = f"notes-{PINNED_TAG_PREFIX}{date}.md"
+        runs: list[str] = ANY_PINNED_REF_RUN.findall(f"see [{filename}](../x.md)")
+        assert runs, f"{filename!r} is not recognised at all"
+        assert _is_a_correct_reference(runs[0]) == accepted, (
+            f"{filename!r} was captured as {runs[0]!r} and "
+            f"correct={_is_a_correct_reference(runs[0])}, expected "
+            f"correct={accepted}: a note filename is the bare tag inside "
+            "notes-<tag>.md, so it must follow the tag rule for every date, not "
+            "only for one literal one"
+        )
+
+
+def test_a_filename_continuation_after_md_is_reported() -> None:
+    """`.md` has to end the filename token, or the rest of it is never read.
+
+    The note-filename alternative rejected only a following `.`, so
+    `notes-<prefix>2026.10.04.md-typo` was captured *without* the `-typo`. The
+    truncated capture equalled the correct filename, so the scan skipped it, and
+    scanning resumed after it — the `-typo` reached no assertion at all. A
+    correctly written prefix satisfied the check for a filename that does not
+    exist, which is the fail-open this guard exists to prevent.
+
+    Both halves of the fix are pinned. The whole continued filename is captured, so
+    nothing after `.md` escapes the equality check; and a filename whose extension
+    is itself extended, `…2026.10.04.md.typo`, stays reported, because a boundary
+    that simply stopped capturing at `.md` would have swallowed that one too.
+    """
+    assert NOTE_FILENAME_LINKS, (
+        "the filename-link fixture is empty, so this asserts nothing"
+    )
+    for filename, correct in NOTE_FILENAME_LINKS:
+        runs: list[str] = ANY_PINNED_REF_RUN.findall(f"see [{filename}](../x.md)")
+        assert runs, f"{filename!r} is not recognised at all"
+        captured = runs[0]
+        assert _is_a_correct_reference(captured) == correct, (
+            f"{filename!r} was captured as {captured!r} and "
+            f"correct={_is_a_correct_reference(captured)}, expected "
+            f"correct={correct}; `.md` has to end the filename token"
+        )
+        if not correct:
+            assert captured == filename, (
+                f"{filename!r} was captured as {captured!r} only; the scan skips a "
+                "capture that reads as correct and resumes after it, so whatever "
+                "follows the capture is never examined by anything. The whole "
+                "continued filename has to be captured, so the correctness check "
+                "can reject it"
+            )
+        # And the verdict has to reach the scan that reports it, not merely the
+        # check that decides it: a hole that leaves the scan is a hole.
+        findings = _document_findings(f"see [{filename}](../notes.md)\n")
+        if correct:
+            assert not findings, (
+                f"{filename!r} is a correct reference but the malformed-ref scan "
+                f"reported it: {findings}"
+            )
+        else:
+            assert [ref for _, ref in findings] == [captured], (
+                f"{filename!r} is not a correct reference, but the malformed-ref "
+                f"scan reported {findings} instead of exactly the broken filename "
+                f"{captured!r}; a correct prefix captured in its place would leave "
+                "the broken link invisible in a document"
+            )
+
+
+def test_a_note_written_for_the_next_pinned_release_is_not_reported() -> None:
+    """A correctly named note for a later release must pass the whole scan.
+
+    End to end through the composed scan rather than through the correctness check
+    alone, because that is what fails a release: the next pinned release publishes
+    `notes-<prefix>2099.01.02.md`, this module must report nothing about it, and
+    `pinned_release_tags()` must read the same filename as a real release. A check
+    that accepted one of those two and not the other is not protecting anything.
+    """
+    tag = f"{PINNED_TAG_PREFIX}2099.01.02"
+    filename = f"notes-{tag}.md"
+    assert not any(path.name == filename for path in _release_note_sources()), (
+        f"{filename} exists for real, so the probe would prove nothing"
+    )
+    assert PINNED_TAG_RE.fullmatch(tag), (
+        f"{tag!r} is not a tag under {PINNED_TAG_RE.pattern!r}, so a note for it "
+        "would be malformed on purpose and this would prove nothing"
+    )
+    # The note has to *link* to a note filename carrying the new date. The scan reads
+    # note contents, and a bare `healthrelay-receiver-2099.01.02` in prose is the
+    # tag shape, which was never date-specific — so a probe that only named the tag
+    # would pass on a module that still compared filenames to one literal date.
+    link = f"notes-{tag}.md"
+    notes = (
+        f"# {tag}\n\n"
+        "| Base commit | `0000000` |\n\n"
+        'uv tool install "git+https://github.com/mwdearing/health-relay.git@'
+        f'{tag}"\n\n'
+        "get_intake_evidence_v1 --enable-intake-context health_bridge.batch.v1\n\n"
+        f"See [these notes]({link}) for the full record.\n"
+    )
+    with release_notes_replaced_by_a_copy() as notes_dir:
+        note = notes_dir / filename
+        _ = note.write_text(notes, encoding="utf-8")
+        assert note in _release_note_sources(), (
+            f"{filename} is missing from the copy, so the scan is not reading it"
+        )
+        assert tag in pinned_release_tags(notes_dir), (
+            f"{filename} is not discovered as a pinned release by the same tag rule "
+            "the filename check is supposed to defer to"
+        )
+        # Matched on the file *name*: a finding is reported by its path relative to
+        # `ROOT`, and inside the copy that path is prefixed by the scratch directory.
+        # Comparing against the bare filename here would match nothing at all and the
+        # assertion would pass on a module that reports every one of these notes.
+        reported = [
+            pair
+            for pair in malformed_pinned_refs()
+            if pair[0].endswith(filename) and pair[1].endswith(".md")
+        ]
+        assert not reported, (
+            f"{filename} is a correctly named release note for a valid tag and was "
+            f"reported as malformed: {reported}. Every pinned release after this "
+            "one writes this file, so this fails the next release on its own notes"
+        )
+
+
 def test_git_valid_ref_characters_are_part_of_a_ref() -> None:
     """`+` is legal in a git ref name, so it cannot be a prose delimiter.
 
@@ -1338,11 +1721,49 @@ def test_git_valid_ref_characters_are_part_of_a_ref() -> None:
         )
 
 
+def test_a_correct_note_filename_is_correct_wherever_it_appears() -> None:
+    """The continuation must stop where the filename stops, in prose and in URLs.
+
+    A continuation class permissive enough to swallow any following character also
+    swallows what follows a correct filename in the documents it actually appears in.
+    A greedier class consumed the sentence period in `see notes-<tag>.md.`, the `>` in
+    `<notes-<tag>.md>`, and the `?raw=1` in a GitHub blob URL, reporting correct
+    documentation as malformed — worse than the under-capturing it replaced, because
+    those shapes are common and it fires on the repository's own links.
+
+    A doubled extension is the deliberate exception and is reported as a gap in
+    health-relay #102: bounding the rule to one dot-group is what keeps the sentence
+    period from being read as one.
+    """
+    good = f"notes-{PINNED_TAG_PREFIX}2026.10.04.md"
+    for label, text in (
+        ("bare", good),
+        ("in prose", f"see {good} for the release"),
+        ("end of sentence", f"see {good}."),
+        ("two sentences", f"see {good}. Then see {good} again."),
+        ("in angle brackets", f"<{good}>"),
+        ("blob url", f"https://example.invalid/blob/{good}?raw=1"),
+        ("url with several params", f"https://example.invalid/blob/{good}?a=1&b=2"),
+        ("link", f"[release notes]({good})"),
+        ("link with fragment", f"[release notes]({good}#install)"),
+        ("in backticks", f"`{good}`"),
+        ("in quotes", f'"{good}"'),
+        ("in a table cell", f"| {good} | 2026-10-04 |"),
+        ("followed by comma", f"{good}, dated 2026-10-04,"),
+    ):
+        runs: list[str] = ANY_PINNED_REF_RUN.findall(text)
+        assert runs, f"{label!r}: {text!r} was not recognised at all"
+        assert _is_a_correct_reference(runs[0]), (
+            f"{label!r}: the correct filename was captured as {runs[0]!r} out of "
+            f"{text!r} and reported as malformed"
+        )
+
+
 def test_a_note_filename_exemption_still_requires_a_complete_tag() -> None:
     """The `.md` exemption must not become a hole in its own right.
 
-    The filename alternative once reused the permissive `REF_RUN`, which validates
-    only a generic character run, so every `notes-<anything>.md` was exempt — a link
+    The filename alternative once reused a permissive character run, which validates
+    no date at all, so every `notes-<anything>.md` was exempt — a link
     to `notes-…-2026.10.4.md` or `notes-…-2026.10.04-typo.md` passed both checks.
     `pinned_release_tags()` cannot catch it: it reads the notes directory, not the
     links pointing into it, so the broken link is the only evidence.
