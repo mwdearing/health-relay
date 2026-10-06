@@ -44,9 +44,26 @@ repository, so this tag matches no workflow tag trigger.
   `/v1/intake-context/batches`. While off, both paths answer 404 like any unknown path, and each CLI
   start reports whether they are enabled.
 
-Nothing here changes the wire contract, and none of it changes what a correctly behaving client sees:
-no shipping client emits an export-keyed ECG or medication row. A batch that does is now refused with
-`403 source_principal_mismatch`, which the delivery worker parks for a person rather than retrying.
+Nothing here changes the wire contract, but an ordinarily paired shipping app does see one change, and
+it is a repair. `ElectrocardiogramSyncBatchFactory` and `MedicationDoseEventSyncBatchFactory` emit
+their rows under the legacy `apple_health.phone` key. Before this release the receiver rewrote the
+**declared** `sources` entry to the caller's canonical key but not the rows that family carries, so
+storage could not resolve a row source and `/v1/batches` answered 500; the outbox then retried the
+batch indefinitely. This release rewrites those rows too, so the same batch is now accepted with
+`202` and its records are stored under the canonical source. Callers already sending the canonical
+key are unaffected.
+
+The new refusal is separate, and it applies only to a claim that cannot be legitimate: a batch
+carrying an export-keyed ECG or medication **row** or **tombstone** is now refused with
+`403 source_principal_mismatch`. No shipping client emits one — the export importer carries
+`lab_results` alone.
+
+How that refusal is handled depends on how the batch reached the receiver. Over **Mailbox
+delivery** it is a terminal receipt, so the item is parked for a person rather than retried. Over
+**Direct delivery** the app does retry: `DirectUploadFinalizer.finish` returns `.retained` for any
+non-2xx response, 403 included, and the foreground `FileOutbox` path likewise leaves the item
+pending. A Direct batch that trips this refusal therefore keeps retrying until the claim changes;
+`lab_result` tombstones keep the export exemption and are unaffected.
 
 ## Compatibility
 
