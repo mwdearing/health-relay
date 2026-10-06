@@ -296,14 +296,6 @@ REF_CONTINUATION = rf"{REF_CHAR}|\.(?!md\b){REF_CHAR}"
 # token ends it, which keeps `)`, a backtick, a space and a `.md` that really does end
 # the filename recognised, and reports every other continuation whatever it is.
 #
-# What continues a filename after its `.md`: any character a filename may contain.
-# This is the *filename* alphabet, not the git-ref one — `notes-…-2026.10.04.md..bak`
-# is a legal filename, so a continuation rule shaped like a git ref (a `.` must be
-# followed by a ref character) cannot consume it, captured only the valid `.md`
-# prefix, and left the nonexistent link unreported. Matching the filename grammar is
-# what makes the class unrefinable: a rule shaped like the thing it must recognise
-# closes on that thing, where a list of seen typos closes on the last one only.
-#
 # What continues a filename past its `.md`: a ref character, or one dot-group of
 # them. This is the *filename* grammar rather than a git-ref one — `notes-<tag>.md.bak`
 # is a legal filename, and a ref-shaped rule could not consume it.
@@ -319,15 +311,22 @@ REF_CONTINUATION = rf"{REF_CHAR}|\.(?!md\b){REF_CHAR}"
 #   in a GitHub blob URL, reporting correct documentation as malformed.
 #
 # Requiring at least one character after the dot is what separates `…04.md.` (a
-# sentence period — nothing follows) from `…04.md.typo` (a doubled extension). One
-# group, not many: `…04.md..bak` is a legal filename this does NOT report. That gap
-# is recorded as health-relay #102 rather than traded away here, because the
-# alternative is a rule that fires on every sentence-ending filename mention, which
-# is a far more common shape than a doubled extension.
+# sentence period — nothing follows) from `…04.md.typo` (a doubled extension). The
+# same applies to a doubled dot, which is why `…04.md..bak` needed an explicit
+# alternative rather than a wider class: widening the class to "anything that is not
+# a delimiter" is what consumed the sentence period in the first place
+# (health-relay #102).
 #
 # `=`, `+` and `~` are in `REF_CHAR`, which is why `…04.md=typo` is caught. `?`, `>`
 # and `&` are not ref characters and are not dots, so URL delimiters end the token.
-NOTE_FILENAME_CONTINUATION = rf"(?:{REF_CHAR}|\.[{REF_CHAR[1:-1]}]+)"
+#
+# A run of dots counts only when a ref character follows it, and that bound is the
+# whole discriminator. `…04.md..bak` and `…04.md...bak` end in a filename, so they are
+# captured and reported. `…04.md.` and `…04.md...` end in dots and are accepted,
+# because a trailing dot is what a sentence-ending filename mention looks like and the
+# two are not distinguishable from the text alone — the same trade the single-dot case
+# already makes. `NOTE_FILENAME_LINKS` pins both directions.
+NOTE_FILENAME_CONTINUATION = rf"(?:{REF_CHAR}+|\.+{REF_CHAR}+)"
 
 # A note filename is the bare tag inside the one filename that carries a ref, and the
 # capture has to carry the whole filename token — `.md` included and anything that
@@ -535,11 +534,18 @@ NOTE_FILENAME_LINKS: tuple[tuple[str, bool], ...] = (
     # existed, so it is pinned here: a fix that made the token end at `.md` by
     # ignoring every continuation would reopen it.
     (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md.md", False),
-    # A doubled extension is NOT reported, and that is a recorded gap rather than an
-    # oversight — see health-relay #102 and the comment on
-    # `NOTE_FILENAME_CONTINUATION`. Pinned here so that if the rule is ever widened
-    # to cover it, this test says so rather than the change arriving silently.
-    (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md..bak", True),
+    # A doubled extension. `…04.md..bak` is a legal filename, and every earlier rule
+    # missed it because each was shaped like a git ref — where a `.` must be followed
+    # by a ref character — so it could not consume the first suffix dot. Added as an
+    # explicit alternative rather than by widening the class to "anything", which is
+    # what made a sentence-ending period look like a continuation (health-relay #102).
+    (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md..bak", False),
+    (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md...bak", False),
+    # Trailing dots with nothing after them are NOT reported: a sentence-ending
+    # filename mention looks identical, so the run of dots counts only when a ref
+    # character follows. Pinned as accepted so the boundary is stated rather than
+    # assumed, and so widening it later is a deliberate change.
+    (f"notes-{PINNED_TAG_PREFIX}2026.10.04.md...", True),
     # Characters legal in a filename that a URL-shaped rule would want to exclude.
     # Each of these was reported as malformed by the attempt that excluded `=`, `+`
     # and `.` to stop a capture running into a link target.
@@ -757,6 +763,14 @@ def _markdown_sources() -> list[Path]:
     be shown. Falls back to walking the tree with the ignored set removed if git
     cannot answer, which leaves the scan stricter rather than looser: an
     untracked file would then be reported, never silently skipped.
+
+    `_SCAN_EXCLUDED_DIRS` and `PINNED_TAG_SCAN_ROOTS` apply to **the fallback only**.
+    On the primary path git is the authority: a file that is tracked is published
+    documentation whatever directory it sits in, and there is no tracked Markdown
+    under those names today. The exclusion was documented as if it applied always,
+    which it does not — health-relay #101. Kept because the fallback needs a starting
+    point and an ignore filter, and because removing either would leave the fallback
+    walking a virtualenv.
     """
     tracked = _git_tracked_paths()
     paths: list[Path] = []
@@ -817,7 +831,21 @@ def _tracked_documentation_sources() -> list[Path]:
 
 
 def _git_tracked_paths() -> list[Path] | None:
-    """Absolute paths git reports as tracked, or None if git cannot answer."""
+    """Absolute paths git reports as tracked, or None if git cannot answer.
+
+    **A submodule's contents are deliberately not scanned.** `git ls-files` reports
+    a submodule as one gitlink path with no suffix, so `vendor/<name>/README.md` is
+    invisible here — where the previous `ROOT.rglob("*.md")` walk found it. That is
+    the right behaviour: a vendored third-party tree is not this project's
+    documentation and must not be able to fail this project's release guard, and no
+    submodule exists in this repository today.
+
+    Stated here rather than left implicit, because it was a narrowing introduced as a
+    side effect of moving to `git ls-files` (health-relay #101) and was never a
+    decision. If a submodule is ever added that ships this fork's own
+    documentation, this needs revisiting — `git ls-files` would need to descend into
+    it deliberately.
+    """
     result = subprocess.run(
         ["git", "-C", str(ROOT), "ls-files", "-z", "--cached"],
         capture_output=True,
@@ -857,8 +885,13 @@ def pinned_tags_named_in_docs() -> set[str]:
     Scans the public documents *and* the release notes, rather than a hand-listed
     set of sources, so a pinned tag published in a new file — or added to a release
     note, which is published documentation like any other — still requires release
-    notes of its own. Excluded are git-ignored and untracked paths, which are not
-    publishable, and the usual build and virtualenv directories.
+    notes of its own.
+
+    Excluded are git-ignored and untracked paths, which are not publishable. The
+    usual build and virtualenv directories are excluded **only when git cannot
+    answer**: on the primary path git is the authority, and a tracked file is
+    published documentation wherever it sits. Health-relay #101 recorded the
+    mismatch between this sentence and the code.
     """
     named: set[str] = set()
     for path in _tracked_documentation_sources():
