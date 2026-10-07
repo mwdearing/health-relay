@@ -103,7 +103,11 @@ def test_it_checks_the_secret_formats_without_printing_them() -> None:
     assert "BEGIN PRIVATE KEY" in run
     assert "{10}" in run  # Team ID and Key ID are ten characters
     assert "[0-9a-fA-F]{8}-" in run  # the Issuer ID is a UUID
-    assert "echo" not in run.replace('echo "::error::', "")
+    assert "echo" not in run.replace('echo "::error::', "").replace(
+        'echo "::add-mask::', ""
+    )
+    assert 'echo "::add-mask::$BUNDLE_ID"' in run
+    assert 'echo "::add-mask::iCloud.$BUNDLE_ID"' in run
 
 
 def test_the_dispatch_inputs_are_validated_before_they_reach_the_build() -> None:
@@ -129,7 +133,8 @@ def test_it_signs_with_the_api_key_and_uploads_directly() -> None:
         "<string>upload</string>",
         "<key>method</key>",
         "app-store-connect",
-        "CURRENT_PROJECT_VERSION=$GITHUB_RUN_NUMBER",
+        "CURRENT_PROJECT_VERSION=$BUILD_NUMBER",
+        "BUILD_NUMBER=$((GITHUB_RUN_NUMBER + 100))",
     ):
         assert needle in text
     assert "CODE_SIGNING_ALLOWED=NO" not in text

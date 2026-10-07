@@ -13,7 +13,7 @@ on:
         description: Bundle identifier of the registered App ID
         required: true
       marketing_version:
-        description: Marketing version to stamp; empty = 1.2.<workflow run number> (build number = run number)
+        description: Marketing version to stamp; empty = 1.2.<workflow run number> (build number = run number + 100)
         required: false
         default: ""
 
@@ -60,6 +60,10 @@ jobs:
           [[ "$ASC_ISSUER_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || fail "ASC_ISSUER_ID is not a UUID"
           [[ "$ASC_KEY_P8" == *"BEGIN PRIVATE KEY"* ]] || fail "ASC_KEY_P8 is not a PEM private key"
           [[ "$ASC_KEY_P8" == *"END PRIVATE KEY"* ]] || fail "ASC_KEY_P8 is cut short: no END line"
+          # This repository's logs are public. xcodebuild prints its command-line build settings, so the real
+          # bundle id (and the container id derived from it) is masked before anything else can print it.
+          echo "::add-mask::$BUNDLE_ID"
+          echo "::add-mask::iCloud.$BUNDLE_ID"
           umask 077
           mkdir -p "$RUNNER_TEMP/asc"
           printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc/AuthKey.p8"
@@ -74,7 +78,8 @@ jobs:
         run: |
           set -euo pipefail
           MARKETING_VERSION="${MARKETING_VERSION:-1.2.$GITHUB_RUN_NUMBER}"
-          echo "Stamping version $MARKETING_VERSION build $GITHUB_RUN_NUMBER"
+          BUILD_NUMBER=$((GITHUB_RUN_NUMBER + 100))
+          echo "Stamping version $MARKETING_VERSION build $BUILD_NUMBER"
           xcodebuild archive \
             -project HealthBridgeCompanion.xcodeproj \
             -scheme HealthBridgeCompanion \
@@ -89,7 +94,7 @@ jobs:
             CODE_SIGN_STYLE=Automatic \
             "PRODUCT_BUNDLE_IDENTIFIER=$BUNDLE_ID" \
             "MARKETING_VERSION=$MARKETING_VERSION" \
-            CURRENT_PROJECT_VERSION=$GITHUB_RUN_NUMBER \
+            "CURRENT_PROJECT_VERSION=$BUILD_NUMBER" \
             "HEALTH_BRIDGE_SOURCE_COMMIT=$GITHUB_SHA" \
             "HEALTH_BRIDGE_ICLOUD_CONTAINER_IDENTIFIER=iCloud.$BUNDLE_ID"
 
