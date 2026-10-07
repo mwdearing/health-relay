@@ -106,6 +106,16 @@ def test_it_checks_the_secret_formats_without_printing_them() -> None:
     assert "echo" not in run.replace('echo "::error::', "")
 
 
+def test_the_dispatch_inputs_are_validated_before_they_reach_the_build() -> None:
+    check = next(s for s in _steps() if "Check the signing secrets" in str(s["name"]))
+    env = cast("dict[str, str]", check["env"])
+    assert env["BUNDLE_ID"] == "${{ inputs.bundle_id }}"
+    assert env["MARKETING_VERSION"] == "${{ inputs.marketing_version }}"
+    run = str(check["run"])
+    assert r"^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$" in run
+    assert r"^[0-9]+(\.[0-9]+){0,2}$" in run
+
+
 def test_it_signs_with_the_api_key_and_uploads_directly() -> None:
     text = WORKFLOW.read_text()
     for needle in (

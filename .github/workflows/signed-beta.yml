@@ -48,9 +48,13 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          BUNDLE_ID: ${{ inputs.bundle_id }}
+          MARKETING_VERSION: ${{ inputs.marketing_version }}
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
+          [[ "$BUNDLE_ID" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || fail "bundle_id has characters a bundle identifier cannot have"
+          [[ -z "$MARKETING_VERSION" || "$MARKETING_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || fail "marketing_version is not 1, 1.2 or 1.2.3"
           [[ "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || fail "APPLE_TEAM_ID is not 10 letters or digits"
           [[ "$ASC_KEY_ID" =~ ^[A-Z0-9]{10}$ ]] || fail "ASC_KEY_ID is not 10 letters or digits"
           [[ "$ASC_ISSUER_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || fail "ASC_ISSUER_ID is not a UUID"
