@@ -176,10 +176,18 @@ def test_xcodebuild_output_stays_out_of_the_public_log() -> None:
     text = WORKFLOW.read_text()
     assert 'quiet Archive "$RUNNER_TEMP/archive.log" xcodebuild archive' in text
     assert 'quiet Export "$RUNNER_TEMP/export.log" xcodebuild -exportArchive' in text
-    assert "<identity>" in text
-    assert "<uuid>" in text
-    assert "<hash>" in text
-    assert "<detail>" in text
+    # The build log file is searched and never printed.
+    assert "$log" in text
+    for line in text.splitlines():
+        stripped = line.strip()
+        if "$log" in stripped and not stripped.startswith(("local ", "if ", "grep -q")):
+            assert (
+                stripped.startswith(("quiet ", '"$RUNNER_TEMP'))
+                or '> "$log"' in stripped
+            )
+    assert "tail " not in text
+    assert "sed -E" not in text
+    assert "category:" in text
     cleanup = _steps()[-1]
     assert "archive.log" in str(cleanup["run"])
     assert "export.log" in str(cleanup["run"])

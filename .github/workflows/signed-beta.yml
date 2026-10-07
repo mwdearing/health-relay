@@ -80,10 +80,16 @@ jobs:
           quiet() {
             local name="$1" log="$2"; shift 2
             if ! "$@" > "$log" 2>&1; then
-              echo "::error::$name failed; filtered excerpt follows (the full log is not published)"
-              grep -E 'error:|FAILED|fatal|Error Domain|No (signing|profile|account)' "$log" \
-                | sed -E 's/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/<uuid>/g; s/(Apple|iPhone|iOS) (Development|Distribution)[^"]*/<identity>/g; s/[0-9A-Fa-f]{40}/<hash>/g; s/(Team|Signing|Certificate|Provisioning)[^:]{0,24}: [^"]*/<detail>/g' \
-                | tail -n 40
+              # The log is never printed: this repository's Actions log is public. Only a fixed category message
+              # is printed, chosen by searching the file, so nothing from the file can reach the log.
+              echo "::error::$name failed. The xcodebuild output is not published."
+              grep -qiE 'unable to authenticate|authentication|401|403' "$log" && echo "::error::  category: the App Store Connect key was rejected"
+              grep -qiE 'no signing certificate|no certificate|certificate' "$log" && echo "::error::  category: a signing certificate problem"
+              grep -qiE 'provisioning profile|profile' "$log" && echo "::error::  category: a provisioning profile problem"
+              grep -qiE 'entitlement|capabilit' "$log" && echo "::error::  category: an entitlement or capability mismatch"
+              grep -qiE 'no account|team' "$log" && echo "::error::  category: a team or account problem"
+              grep -qiE 'bundle identifier|bundle id' "$log" && echo "::error::  category: a bundle identifier problem"
+              grep -qiE 'build number|version' "$log" && echo "::error::  category: a version or build number problem"
               exit 1
             fi
           }
@@ -120,10 +126,16 @@ jobs:
           quiet() {
             local name="$1" log="$2"; shift 2
             if ! "$@" > "$log" 2>&1; then
-              echo "::error::$name failed; filtered excerpt follows (the full log is not published)"
-              grep -E 'error:|FAILED|fatal|Error Domain|No (signing|profile|account)' "$log" \
-                | sed -E 's/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/<uuid>/g; s/(Apple|iPhone|iOS) (Development|Distribution)[^"]*/<identity>/g; s/[0-9A-Fa-f]{40}/<hash>/g; s/(Team|Signing|Certificate|Provisioning)[^:]{0,24}: [^"]*/<detail>/g' \
-                | tail -n 40
+              # The log is never printed: this repository's Actions log is public. Only a fixed category message
+              # is printed, chosen by searching the file, so nothing from the file can reach the log.
+              echo "::error::$name failed. The xcodebuild output is not published."
+              grep -qiE 'unable to authenticate|authentication|401|403' "$log" && echo "::error::  category: the App Store Connect key was rejected"
+              grep -qiE 'no signing certificate|no certificate|certificate' "$log" && echo "::error::  category: a signing certificate problem"
+              grep -qiE 'provisioning profile|profile' "$log" && echo "::error::  category: a provisioning profile problem"
+              grep -qiE 'entitlement|capabilit' "$log" && echo "::error::  category: an entitlement or capability mismatch"
+              grep -qiE 'no account|team' "$log" && echo "::error::  category: a team or account problem"
+              grep -qiE 'bundle identifier|bundle id' "$log" && echo "::error::  category: a bundle identifier problem"
+              grep -qiE 'build number|version' "$log" && echo "::error::  category: a version or build number problem"
               exit 1
             fi
           }
