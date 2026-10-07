@@ -82,7 +82,7 @@ jobs:
             if ! "$@" > "$log" 2>&1; then
               echo "::error::$name failed; filtered excerpt follows (the full log is not published)"
               grep -E 'error:|FAILED|fatal|Error Domain|No (signing|profile|account)' "$log" \
-                | sed -E 's/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/<uuid>/g; s/(Apple|iPhone|iOS) (Development|Distribution)[^"]*/<identity>/g' \
+                | sed -E 's/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/<uuid>/g; s/(Apple|iPhone|iOS) (Development|Distribution)[^"]*/<identity>/g; s/[0-9A-Fa-f]{40}/<hash>/g; s/(Team|Signing|Certificate|Provisioning)[^:]{0,24}: [^"]*/<detail>/g' \
                 | tail -n 40
               exit 1
             fi
@@ -122,7 +122,7 @@ jobs:
             if ! "$@" > "$log" 2>&1; then
               echo "::error::$name failed; filtered excerpt follows (the full log is not published)"
               grep -E 'error:|FAILED|fatal|Error Domain|No (signing|profile|account)' "$log" \
-                | sed -E 's/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/<uuid>/g; s/(Apple|iPhone|iOS) (Development|Distribution)[^"]*/<identity>/g' \
+                | sed -E 's/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/<uuid>/g; s/(Apple|iPhone|iOS) (Development|Distribution)[^"]*/<identity>/g; s/[0-9A-Fa-f]{40}/<hash>/g; s/(Team|Signing|Certificate|Provisioning)[^:]{0,24}: [^"]*/<detail>/g' \
                 | tail -n 40
               exit 1
             fi

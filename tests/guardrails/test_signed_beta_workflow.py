@@ -178,6 +178,8 @@ def test_xcodebuild_output_stays_out_of_the_public_log() -> None:
     assert 'quiet Export "$RUNNER_TEMP/export.log" xcodebuild -exportArchive' in text
     assert "<identity>" in text
     assert "<uuid>" in text
+    assert "<hash>" in text
+    assert "<detail>" in text
     cleanup = _steps()[-1]
     assert "archive.log" in str(cleanup["run"])
     assert "export.log" in str(cleanup["run"])
