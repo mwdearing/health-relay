@@ -3,17 +3,16 @@ name: Signed beta upload
 # HealthRelay fork: manual only. Archives, signs with automatic signing and an App Store Connect API key,
 # and uploads the build to App Store Connect for INTERNAL beta testing. The key, its ids and the team id live
 # only in the protected `testflight` GitHub Environment (a reviewer approves each run) and are read only by
-# the steps that need them. The bundle id is a dispatch input so the tracked project keeps its public-neutral
-# placeholder. This workflow never runs on a pull request, never uploads an artifact, and always removes the key file.
+# the steps that need them. The bundle id is ALSO an environment secret (not an input), because a public repository
+# shows workflow inputs and step environments in its logs; secrets are masked. The job runs only from `main`, and the
+# environment must be restricted to the `main` branch in the repository settings. This workflow never runs on a pull
+# request, never uploads an artifact, keeps xcodebuild output out of the public log and always removes the key file.
 
 on:
   workflow_dispatch:
     inputs:
-      bundle_id:
-        description: Bundle identifier of the registered App ID
-        required: true
       marketing_version:
-        description: Marketing version to stamp; empty = 1.2.<workflow run number> (build number = run number + 100)
+        description: Marketing version to stamp; empty = the version recorded in component-versions.json (the build number is run number + 100)
         required: false
         default: ""
 
@@ -29,6 +28,7 @@ jobs:
     name: Signed archive and upload
     runs-on: macos-26
     environment: testflight
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
     timeout-minutes: 60
     defaults:
       run:
@@ -48,7 +48,7 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          BUNDLE_ID: ${{ inputs.bundle_id }}
+          BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
           MARKETING_VERSION: ${{ inputs.marketing_version }}
         run: |
           set -euo pipefail
@@ -60,9 +60,9 @@ jobs:
           [[ "$ASC_ISSUER_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || fail "ASC_ISSUER_ID is not a UUID"
           [[ "$ASC_KEY_P8" == *"BEGIN PRIVATE KEY"* ]] || fail "ASC_KEY_P8 is not a PEM private key"
           [[ "$ASC_KEY_P8" == *"END PRIVATE KEY"* ]] || fail "ASC_KEY_P8 is cut short: no END line"
-          # This repository's logs are public. xcodebuild prints its command-line build settings, so the real
-          # bundle id (and the container id derived from it) is masked before anything else can print it.
-          echo "::add-mask::$BUNDLE_ID"
+          # This repository's logs are public. xcodebuild prints its command-line build settings, so the container
+          # id derived from the bundle id is masked before anything can print it.
+          # BUNDLE_ID is a secret, so it is already masked; the container id derived from it is not.
           echo "::add-mask::iCloud.$BUNDLE_ID"
           umask 077
           mkdir -p "$RUNNER_TEMP/asc"
@@ -73,14 +73,26 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          BUNDLE_ID: ${{ inputs.bundle_id }}
+          BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
           MARKETING_VERSION: ${{ inputs.marketing_version }}
         run: |
           set -euo pipefail
-          MARKETING_VERSION="${MARKETING_VERSION:-1.2.$GITHUB_RUN_NUMBER}"
+          quiet() {
+            local name="$1" log="$2"; shift 2
+            if ! "$@" > "$log" 2>&1; then
+              echo "::error::$name failed; filtered excerpt follows (the full log is not published)"
+              grep -E 'error:|FAILED|fatal|Error Domain|No (signing|profile|account)' "$log" \
+                | sed -E 's/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/<uuid>/g; s/(Apple|iPhone|iOS) (Development|Distribution)[^"]*/<identity>/g' \
+                | tail -n 40
+              exit 1
+            fi
+          }
+          if [[ -z "$MARKETING_VERSION" ]]; then
+            MARKETING_VERSION=$(python3 -c "import json; print(json.load(open('../../component-versions.json'))['ios_companion']['marketing_version'])")
+          fi
           BUILD_NUMBER=$((GITHUB_RUN_NUMBER + 100))
           echo "Stamping version $MARKETING_VERSION build $BUILD_NUMBER"
-          xcodebuild archive \
+          quiet Archive "$RUNNER_TEMP/archive.log" xcodebuild archive \
             -project HealthBridgeCompanion.xcodeproj \
             -scheme HealthBridgeCompanion \
             -configuration Release \
@@ -105,6 +117,16 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+          quiet() {
+            local name="$1" log="$2"; shift 2
+            if ! "$@" > "$log" 2>&1; then
+              echo "::error::$name failed; filtered excerpt follows (the full log is not published)"
+              grep -E 'error:|FAILED|fatal|Error Domain|No (signing|profile|account)' "$log" \
+                | sed -E 's/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/<uuid>/g; s/(Apple|iPhone|iOS) (Development|Distribution)[^"]*/<identity>/g' \
+                | tail -n 40
+              exit 1
+            fi
+          }
           cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -127,7 +149,7 @@ jobs:
           </dict>
           </plist>
           PLIST
-          xcodebuild -exportArchive \
+          quiet Export "$RUNNER_TEMP/export.log" xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/HealthRelay.xcarchive" \
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
             -exportPath "$RUNNER_TEMP/export" \
@@ -138,4 +160,4 @@ jobs:
 
       - name: Remove the key file
         if: ${{ always() }}
-        run: rm -f "$RUNNER_TEMP/asc/AuthKey.p8" "$RUNNER_TEMP/ExportOptions.plist"
+        run: rm -f "$RUNNER_TEMP/asc/AuthKey.p8" "$RUNNER_TEMP/ExportOptions.plist" "$RUNNER_TEMP/archive.log" "$RUNNER_TEMP/export.log"

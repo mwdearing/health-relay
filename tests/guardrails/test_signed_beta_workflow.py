@@ -14,7 +14,13 @@ from typing import cast
 import yaml
 
 WORKFLOW = Path(".github/workflows/signed-beta.yml")
-SECRET_NAMES = ("ASC_KEY_P8", "ASC_KEY_ID", "ASC_ISSUER_ID", "APPLE_TEAM_ID")
+SECRET_NAMES = (
+    "ASC_KEY_P8",
+    "ASC_KEY_ID",
+    "ASC_ISSUER_ID",
+    "APPLE_TEAM_ID",
+    "BUNDLE_ID",
+)
 PINNED_ACTION = re.compile(r"^\s*uses:\s*[^#\s]+@(?P<sha>[0-9a-f]{40})(?:\s+#.*)?$")
 
 
@@ -81,9 +87,13 @@ def test_no_step_prints_or_uploads_a_secret() -> None:
         stripped = line.strip()
         if stripped.startswith(("echo ", "printf ", "cat ")) and "$ASC_KEY_P8" in line:
             assert ">" in line  # only ever redirected into the key file
+    # Registering a derived value for masking is the one allowed echo.
+    printed = "\n".join(
+        line for line in text.splitlines() if "::add-mask::" not in line
+    )
     for name in SECRET_NAMES:
         assert not re.search(
-            rf"echo[^\n]*\$\{{?{name}\}}?(?!\w)[^\n>|]*$", text, re.MULTILINE
+            rf"echo[^\n]*\$\{{?{name}\}}?(?!\w)[^\n>|]*$", printed, re.MULTILINE
         )
 
 
@@ -106,14 +116,13 @@ def test_it_checks_the_secret_formats_without_printing_them() -> None:
     assert "echo" not in run.replace('echo "::error::', "").replace(
         'echo "::add-mask::', ""
     )
-    assert 'echo "::add-mask::$BUNDLE_ID"' in run
     assert 'echo "::add-mask::iCloud.$BUNDLE_ID"' in run
 
 
 def test_the_dispatch_inputs_are_validated_before_they_reach_the_build() -> None:
     check = next(s for s in _steps() if "Check the signing secrets" in str(s["name"]))
     env = cast("dict[str, str]", check["env"])
-    assert env["BUNDLE_ID"] == "${{ inputs.bundle_id }}"
+    assert env["BUNDLE_ID"] == "${{ secrets.BUNDLE_ID }}"
     assert env["MARKETING_VERSION"] == "${{ inputs.marketing_version }}"
     run = str(check["run"])
     assert r"^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$" in run
@@ -140,14 +149,42 @@ def test_it_signs_with_the_api_key_and_uploads_directly() -> None:
     assert "CODE_SIGNING_ALLOWED=NO" not in text
 
 
-def test_the_bundle_id_is_an_input_and_no_identity_is_written_into_the_file() -> None:
+def test_the_bundle_id_is_a_secret_not_an_input_and_no_identity_is_in_the_file() -> (
+    None
+):
     text = WORKFLOW.read_text()
     inputs = cast(
         "dict[str, object]",
         cast("dict[str, object]", _load()["on"])["workflow_dispatch"],
     )
-    assert "bundle_id" in cast("dict[str, object]", inputs["inputs"])
+    assert set(cast("dict[str, object]", inputs["inputs"])) == {"marketing_version"}
+    assert "inputs.bundle_id" not in text
     assert "com.mwdearing" not in text
     assert not re.search(
         r"\b[A-Z0-9]{10}\b(?<![A-Z]{10})", re.sub(r"[A-Z_]{3,}", "", text)
     )
+
+
+def test_it_runs_only_from_main() -> None:
+    (job,) = _jobs().values()
+    condition = str(job["if"])
+    assert "github.ref == 'refs/heads/main'" in condition
+    assert "github.event_name == 'workflow_dispatch'" in condition
+
+
+def test_xcodebuild_output_stays_out_of_the_public_log() -> None:
+    text = WORKFLOW.read_text()
+    assert 'quiet Archive "$RUNNER_TEMP/archive.log" xcodebuild archive' in text
+    assert 'quiet Export "$RUNNER_TEMP/export.log" xcodebuild -exportArchive' in text
+    assert "<identity>" in text
+    assert "<uuid>" in text
+    cleanup = _steps()[-1]
+    assert "archive.log" in str(cleanup["run"])
+    assert "export.log" in str(cleanup["run"])
+
+
+def test_the_default_marketing_version_is_the_recorded_one() -> None:
+    text = WORKFLOW.read_text()
+    assert "component-versions.json" in text
+    assert "ios_companion" in text
+    assert "1.2.$GITHUB_RUN_NUMBER" not in text
