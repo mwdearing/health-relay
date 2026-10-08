@@ -14,7 +14,7 @@ Start with the documentation in this repository (`docs/`). If the documented ste
 
 ## Beta access to the iOS app
 
-The app is distributed as signed beta builds through Apple's beta-testing program; GitHub Releases no longer carry unsigned IPA files. Open a **Beta access request** [issue](https://github.com/mwdearing/health-relay/issues/new?template=beta_access.yml) and the maintainer replies there with the next step. Do not put your e-mail address or any health data in the issue.
+The app is distributed as signed beta builds through TestFlight; GitHub Releases no longer carry unsigned IPA files. Open a **Beta access request** [issue](https://github.com/mwdearing/health-relay/issues/new?template=beta_access.yml) and the maintainer replies there with the next step. Do not put your e-mail address or any health data in the issue.
 
 ## Reproducible bugs
 

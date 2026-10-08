@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        HealthRelay ships as signed beta builds through Apple's beta-testing program. GitHub Releases no longer carry unsigned IPA files.
+        HealthRelay ships as signed beta builds through TestFlight. GitHub Releases no longer carry unsigned IPA files.
         Fill this in and the maintainer replies in this issue with the next step. **Do not post your e-mail address, Apple ID or any health data here**; this issue is public.
   - type: dropdown
     id: device
