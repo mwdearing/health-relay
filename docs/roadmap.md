@@ -17,7 +17,7 @@ Works today:
 
 Current operational constraints:
 
-- real Apple Health sync requires iPhone + Mac/Xcode + signing;
+- real Apple Health sync requires an iPhone and either a signed beta build or a self-build (Mac, Xcode and signing only for the self-build);
 - receiver setup is aimed at technical users or agent-assisted local setup;
 - background sync is best-effort and controlled by iOS;
 - broad non-quantity HealthKit families are not implemented yet.
