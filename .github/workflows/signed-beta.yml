@@ -1,7 +1,7 @@
 name: Signed beta upload
 
 # HealthRelay fork: manual only. Archives, signs with automatic signing and an App Store Connect API key,
-# and uploads the build to App Store Connect for INTERNAL beta testing. The key, its ids and the team id live
+# and uploads the build to App Store Connect for beta testing (internal groups, and external groups once the app has passed beta review). The key, its ids and the team id live
 # only in the protected `testflight` GitHub Environment (a reviewer approves each run) and are read only by
 # the steps that need them. The bundle id is ALSO an environment secret (not an input), because a public repository
 # shows workflow inputs and step environments in its logs; secrets are masked. The job runs only from `main`, and the
@@ -157,7 +157,7 @@ jobs:
             <key>manageAppVersionAndBuildNumber</key>
             <false/>
             <key>testFlightInternalTestingOnly</key>
-            <true/>
+            <false/>
           </dict>
           </plist>
           PLIST
