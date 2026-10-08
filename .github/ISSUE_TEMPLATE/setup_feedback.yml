@@ -12,7 +12,8 @@ body:
         - MCP client setup
         - Local or private receiver setup
         - iOS self-build
-        - Unsigned IPA download, signing or installation
+        - Beta build install
+        - Self-signed IPA build, signing or installation
         - Pairing or setup page
         - Apple Health permission
         - Foreground sync

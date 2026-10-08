@@ -1,12 +1,12 @@
 # Security Policy
 
-HealthRelay moves Apple Health data from an iPhone to a receiver you run yourself. It has four parts: an iOS app distributed as an unsigned IPA that you sign with your own Apple developer certificate, a self-hosted receiver and CLI, a read-only MCP server, and a single-use pairing setup page. Everything is user-owned and local-first.
+HealthRelay moves Apple Health data from an iPhone to a receiver you run yourself. It has four parts: an iOS app distributed as signed beta builds (or as an unsigned IPA you build and sign yourself), a self-hosted receiver and CLI, a read-only MCP server, and a single-use pairing setup page. Everything is user-owned and local-first.
 
 ## Supported versions
 
 | Component | Supported |
 |---|---|
-| iOS app | The release marked **Latest** and the current beta pre-release on the [Releases page](https://github.com/mwdearing/health-relay/releases). Older builds are not patched; update instead. |
+| iOS app | The newest signed beta build, and the newest `app-v*` release notes on the [Releases page](https://github.com/mwdearing/health-relay/releases). Older builds are not patched; update instead. |
 | Receiver, CLI and MCP server | The `main` branch of this repository. Its version is in `pyproject.toml`. Fixes land here and are not backported to upstream tags, so install from this repository's `main` rather than a pinned upstream receiver tag. |
 | Batch protocol | `health_bridge.batch.v1` |
 
@@ -63,10 +63,10 @@ Out of scope:
 
 ## Verify what you install
 
-- Get the app only from the [Releases page](https://github.com/mwdearing/health-relay/releases), from a `Build unsigned IPA` workflow run in this repository, or by building it yourself from a checkout you trust.
-- For a release download, check the IPA against the attached checksum (workflow artifacts include one too): `sha256sum -c HealthRelay-unsigned.ipa.sha256` (on macOS: `shasum -a 256 -c HealthRelay-unsigned.ipa.sha256`).
-- Each release names the commit and the "Build unsigned IPA" workflow run that built it.
-- You sign the IPA with your own Apple developer certificate. Keep that signing identity private.
+- Get the app only as a signed beta build invited by the maintainer (request one with the [Beta access request](https://github.com/mwdearing/health-relay/issues/new?template=beta_access.yml) form), from a `Build unsigned IPA` workflow run in this repository, or by building it yourself from a checkout you trust. GitHub Releases no longer carry IPA files; attachments on releases published before 2026-10-07 are history.
+- For a workflow artifact, check the IPA against the attached checksum: `sha256sum -c HealthRelay-unsigned.ipa.sha256` (on macOS: `shasum -a 256 -c HealthRelay-unsigned.ipa.sha256`).
+- Each `app-v*` release names the commit and the workflow run that built it.
+- If you build it yourself, you sign the IPA with your own Apple developer certificate. Keep that signing identity private.
 - Sign with a provisioning profile for an explicit App ID that has the HealthKit capability, and keep its HealthKit entitlement in the signed app. Build with that App ID as the bundle identifier (the `Build unsigned IPA` workflow takes it as an input) rather than only changing it while re-signing, so the identifiers embedded in the IPA match. A wildcard App ID installs, but Health will not list the app and permissions fail. After installing, check Health › Profile › Privacy › Apps (after allowing Health access in the app if it is not listed yet). Changing the identifier later means pairing again.
 
 ## Deploy the receiver safely

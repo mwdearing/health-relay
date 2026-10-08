@@ -1,0 +1,58 @@
+name: Beta access request
+description: Ask for access to the signed HealthRelay beta builds (no e-mail address or health data here)
+title: "[Beta access]: "
+labels: ["beta-access"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        HealthRelay ships as signed beta builds through Apple's beta-testing program. GitHub Releases no longer carry unsigned IPA files.
+        Fill this in and the maintainer replies in this issue with the next step. **Do not post your e-mail address, Apple ID or any health data here**; this issue is public.
+  - type: dropdown
+    id: device
+    attributes:
+      label: iPhone and iOS version
+      description: Beta builds need iOS 18 or later.
+      options:
+        - iOS 18
+        - iOS 26 or later
+        - Something else (say what below)
+    validations:
+      required: true
+  - type: dropdown
+    id: receiver
+    attributes:
+      label: Where will the receiver run?
+      options:
+        - A Mac or Linux machine I already run
+        - I still have to set one up
+        - I only want to look at the app for now
+    validations:
+      required: true
+  - type: textarea
+    id: purpose
+    attributes:
+      label: What do you want to try?
+      description: One or two lines on how you plan to use HealthRelay, so the maintainer knows what feedback to expect. Synthetic examples only.
+    validations:
+      required: true
+  - type: dropdown
+    id: invite
+    attributes:
+      label: How should the invitation reach you?
+      options:
+        - A public join link posted in this issue is fine
+        - I need a personal invitation and will share my Apple ID e-mail privately when asked
+    validations:
+      required: true
+  - type: checkboxes
+    id: agree
+    attributes:
+      label: Before you send
+      options:
+        - label: This issue contains no e-mail address, Apple ID, health data, tokens or pairing material.
+          required: true
+        - label: I understand beta builds change between versions, may need pairing again and have no support guarantee.
+          required: true
+        - label: I will report problems through the Bug report form with synthetic data.
+          required: true
