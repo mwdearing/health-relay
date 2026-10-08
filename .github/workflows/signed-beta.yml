@@ -68,6 +68,33 @@ jobs:
           mkdir -p "$RUNNER_TEMP/asc"
           printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc/AuthKey.p8"
 
+      # A fresh runner holds no signing identity, so automatic signing would create a new development
+      # certificate on every run, and the team reaches Apple's certificate limit after a handful of runs.
+      # One stored development certificate is imported instead, into a keychain that exists only for this
+      # run; the archive reuses it. The upload is still signed for distribution by App Store Connect.
+      - name: Import the stored signing certificate into a temporary keychain
+        env:
+          SIGNING_CERT_P12_BASE64: ${{ secrets.SIGNING_CERT_P12_BASE64 }}
+          SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          [[ -n "$SIGNING_CERT_P12_BASE64" ]] || fail "SIGNING_CERT_P12_BASE64 is not set in the environment"
+          [[ -n "$SIGNING_CERT_PASSWORD" ]] || fail "SIGNING_CERT_PASSWORD is not set in the environment"
+          umask 077
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 24)
+          printf '%s' "$SIGNING_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/signing.p12" || fail "SIGNING_CERT_P12_BASE64 is not base64"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null 2>&1 || fail "the temporary keychain could not be created"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN" > /dev/null 2>&1
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null 2>&1
+          security import "$RUNNER_TEMP/signing.p12" -k "$KEYCHAIN" -P "$SIGNING_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security > /dev/null 2>&1 || fail "the stored certificate could not be imported: wrong password, or not a PKCS12 file"
+          rm -f "$RUNNER_TEMP/signing.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null 2>&1 || fail "the imported key could not be opened to codesign"
+          # Put the keychain first in the search list, keeping the runner's own after it.
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"') > /dev/null 2>&1
+          security find-identity -v -p codesigning "$KEYCHAIN" | grep -q "Apple Development" || fail "the stored certificate is not a valid Apple Development identity with its private key"
+
       - name: Archive with automatic signing
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -170,6 +197,8 @@ jobs:
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID"
 
-      - name: Remove the key file
+      - name: Remove the key file and the temporary keychain
         if: ${{ always() }}
-        run: rm -f "$RUNNER_TEMP/asc/AuthKey.p8" "$RUNNER_TEMP/ExportOptions.plist" "$RUNNER_TEMP/archive.log" "$RUNNER_TEMP/export.log"
+        run: |
+          rm -f "$RUNNER_TEMP/asc/AuthKey.p8" "$RUNNER_TEMP/ExportOptions.plist" "$RUNNER_TEMP/archive.log" "$RUNNER_TEMP/export.log" "$RUNNER_TEMP/signing.p12"
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" > /dev/null 2>&1 || true
