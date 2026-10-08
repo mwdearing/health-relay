@@ -39,7 +39,7 @@ HealthRelay builds on Apple Health AI Bridge, the open-source project behind Hea
 | **First-sync history window** | Fixed presets | Adds a 7-day option, and the ECG and medication lanes honor the chosen window |
 | **Activity Log** | Generic status labels | Names the lane on each row and collapses runs of empty results into one counted line, so a manual sync reads as a short sequence instead of dozens of identical rows |
 | **Own identity and pairing** | Shares the upstream app's scheme | `healthrelay://pair` scheme, own name, icon and bundle id, so a scanned pairing code cannot open the upstream app |
-| **Release path** | App Store build | Unsigned IPA built by CI and published as a GitHub Release with a SHA-256, for you to sign with your own certificate |
+| **Release path** | App Store build | Signed beta builds on request (see step 1), or an unsigned IPA you build and sign yourself |
 
 Fixes found by running the fork against a real receiver and phone (all in [`FORK.md`](FORK.md)):
 
@@ -47,7 +47,7 @@ Fixes found by running the fork against a real receiver and phone (all in [`FORK
 - The receiver no longer permanently rejects Apple Health export uploads with HTTP 403; because the outbox is strictly first-in-first-out, that one rejected item used to block every lane queued behind it.
 - ECG is kept out of the automatic background lane set, where its foreground-only type stalled the whole sync cycle.
 
-The generic pieces (ECG, dietary types, workouts) are intended to be offered upstream as pull requests. The medication, lab-import and receiver-specific parts stay here. HealthRelay is built and installed by you; there is no App Store listing.
+The generic pieces (ECG, dietary types, workouts) are intended to be offered upstream as pull requests. The medication, lab-import and receiver-specific parts stay here. HealthRelay has no App Store listing: install a maintainer-signed beta build on request, or build it yourself.
 
 ## How it works
 
@@ -79,13 +79,13 @@ Automatic background sync is designed for continuous use. iOS controls backgroun
 
 ### 1. Build and install the iPhone app
 
-HealthRelay is not on the App Store. Build it yourself, then sign and install it with your own Apple developer identity (a sideload signer or Xcode):
+HealthRelay is not on the App Store. There are two ways to get it on your iPhone:
 
-- **GitHub Releases:** download the latest stable unsigned IPA from the [Releases page](https://github.com/mwdearing/health-relay/releases/latest) — no Actions run needed. New builds are published first as **beta pre-releases** and only become the stable release after they have been verified on a device, so the page's "Latest" release is the one to use.
-- **GitHub Actions:** run the `Build unsigned IPA` workflow (Actions → Build unsigned IPA → Run workflow) with your bundle identifier and marketing version, download the `HealthRelay-unsigned-ipa-*` artifact, and sign it on your phone or Mac.
-- **Xcode 16 or later:** follow [docs/self-build.md](docs/self-build.md).
+- **Signed beta builds (recommended):** the maintainer now ships signed builds through TestFlight. Open a [Beta access request](https://github.com/mwdearing/health-relay/issues/new?template=beta_access.yml) and you will get the next step in that issue. Beta builds install like any App Store app, with no signing on your side.
+- **Build and sign it yourself:** run the `Build unsigned IPA` workflow (Actions → Build unsigned IPA → Run workflow) with your bundle identifier and marketing version, download the `HealthRelay-unsigned-ipa-*` artifact and sign it on your phone or Mac (a sideload signer such as AltStore or Sideloadly, or Xcode with your own team), or follow [docs/self-build.md](docs/self-build.md) with Xcode 16 or later.
 
-Either way, the IPA you get is **unsigned**. You must sign it with your own Apple developer certificate before it will install — the same way you'd sideload any other unsigned iOS app (a sideload signer such as AltStore or Sideloadly, or Xcode with your own team). HealthRelay has no App Store listing and the maintainer does not distribute a pre-signed build.
+> [!IMPORTANT]
+> **GitHub Releases no longer carry unsigned IPA files.** Releases published before 2026-10-07 keep their attachments but will not be updated; new app builds go to TestFlight only. The release notes on this page stay as the changelog.
 
 #### Sign with an App ID that has HealthKit
 
@@ -246,7 +246,7 @@ The repository contains independently released components. Always include the co
 | Surface | Current version | Identifier |
 | --- | --- | --- |
 | Receiver/CLI | `1.1.1` | `version` in `pyproject.toml`, installed from `main` |
-| iOS Companion (HealthRelay) | `1.2.0` | release tag `app-v<marketing-version>` (default `1.2.<run>`); build number = `Build unsigned IPA` workflow run number |
+| iOS Companion (HealthRelay) | `1.2.0` | release tag `app-v<marketing-version>` for the notes; build number = the workflow run that built it (signed beta builds add 100) |
 | Batch Protocol | `1.0.0` | `health_bridge.batch.v1` |
 
 These numbers do not need to match. Receiver-only fixes must not force an unchanged iOS Companion update, and compatible product patches must not bump the Batch Protocol. The versions in the table above are authoritative for HealthRelay; [`component-versions.json`](component-versions.json) is upstream bookkeeping. See the complete [versioning and compatibility policy](docs/versioning.md).
@@ -254,7 +254,7 @@ These numbers do not need to match. Receiver-only fixes must not force an unchan
 <details>
 <summary><strong>How releases are published</strong></summary>
 
-The app ships as an unsigned IPA on GitHub Releases (`app-v<marketing-version>` tags, default marketing version `1.2.<run>`, from the `Build unsigned IPA` and `Publish IPA release` workflows). New builds are pre-releases (betas); the stable release is marked Latest after an approval-gated promotion. The receiver is installed from `main` of this repository, so a fix lands for users once it is merged. A pinned receiver release (`healthrelay-receiver-<YYYY.MM.DD>`) is the alternative when you want one known commit: it is not marked Latest, and the package version stays unchanged. There are no `receiver-v*` or `ios-v*` tags in this fork. See [versioning](docs/versioning.md).
+The app ships as signed beta builds through TestFlight (request access with the [Beta access request](https://github.com/mwdearing/health-relay/issues/new?template=beta_access.yml) form); the signed-upload workflow runs manually, on `main` only, behind a reviewer-approved environment. GitHub Releases no longer carry unsigned IPA files: `app-v<marketing-version>` releases published before 2026-10-07 keep their attachments as history, and new `app-v*` releases carry notes only. The receiver is installed from `main` of this repository, so a fix lands for users once it is merged. A pinned receiver release (`healthrelay-receiver-<YYYY.MM.DD>`) is the alternative when you want one known commit: it is not marked Latest, and the package version stays unchanged. There are no `receiver-v*` or `ios-v*` tags in this fork. See [versioning](docs/versioning.md).
 
 </details>
 
@@ -269,7 +269,7 @@ The app ships as an unsigned IPA on GitHub Releases (`app-v<marketing-version>` 
 
 ## Development
 
-Your own build is the only installation path for HealthRelay: the `Build unsigned IPA` workflow (see [step 1](#1-build-and-install-the-iphone-app)) or Xcode 16 or later following [docs/self-build.md](docs/self-build.md). For the receiver:
+To work on the app, build it yourself: the `Build unsigned IPA` workflow (see [step 1](#1-build-and-install-the-iphone-app)) or Xcode 16 or later following [docs/self-build.md](docs/self-build.md). For the receiver:
 
 ```bash
 uv sync --all-extras --dev --locked

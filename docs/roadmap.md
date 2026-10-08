@@ -1,8 +1,8 @@
 # Apple Health AI Bridge Roadmap
 
-HealthRelay is a fork of Apple Health AI Bridge. The iOS app ships as an unsigned IPA on GitHub Releases (betas first, then a promoted stable release) and the receiver is installed from this repository's `main`. Upstream's 1.1.0 coordinated release (Receiver/CLI `1.1.0`, iOS Companion `1.1.0 (39)`, Batch Protocol `health_bridge.batch.v1 (1.0.0)`) is the history this fork started from.
+HealthRelay is a fork of Apple Health AI Bridge. The iOS app ships as signed beta builds (access on request; GitHub Releases carry notes, not IPA files) and the receiver is installed from this repository's `main`. Upstream's 1.1.0 coordinated release (Receiver/CLI `1.1.0`, iOS Companion `1.1.0 (39)`, Batch Protocol `health_bridge.batch.v1 (1.0.0)`) is the history this fork started from.
 
-> The sections below are the upstream Apple Health AI Bridge roadmap, kept as history. HealthRelay's own distribution (an unsigned IPA on GitHub Releases) and versioning are described in [versioning](versioning.md).
+> The sections below are the upstream Apple Health AI Bridge roadmap, kept as history. HealthRelay's own distribution (signed beta builds on request) and versioning are described in [versioning](versioning.md).
 
 ## Current state
 
@@ -17,7 +17,7 @@ Works today:
 
 Current operational constraints:
 
-- real Apple Health sync requires iPhone + Mac/Xcode + signing;
+- real Apple Health sync requires an iPhone and either a signed beta build or a self-build (Mac, Xcode and signing only for the self-build);
 - receiver setup is aimed at technical users or agent-assisted local setup;
 - background sync is best-effort and controlled by iOS;
 - broad non-quantity HealthKit families are not implemented yet.
