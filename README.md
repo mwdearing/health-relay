@@ -47,7 +47,7 @@ Fixes found by running the fork against a real receiver and phone (all in [`FORK
 - The receiver no longer permanently rejects Apple Health export uploads with HTTP 403; because the outbox is strictly first-in-first-out, that one rejected item used to block every lane queued behind it.
 - ECG is kept out of the automatic background lane set, where its foreground-only type stalled the whole sync cycle.
 
-The generic pieces (ECG, dietary types, workouts) are intended to be offered upstream as pull requests. The medication, lab-import and receiver-specific parts stay here. HealthRelay is built and installed by you; there is no App Store listing.
+The generic pieces (ECG, dietary types, workouts) are intended to be offered upstream as pull requests. The medication, lab-import and receiver-specific parts stay here. HealthRelay has no App Store listing: install a maintainer-signed beta build on request, or build it yourself.
 
 ## How it works
 
