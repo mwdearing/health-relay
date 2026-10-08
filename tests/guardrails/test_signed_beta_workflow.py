@@ -223,6 +223,7 @@ def test_the_stored_certificate_is_imported_before_the_archive() -> None:
     assert set(cast("dict[str, str]", step["env"])) == {
         "SIGNING_CERT_P12_BASE64",
         "SIGNING_CERT_PASSWORD",
+        "APPLE_TEAM_ID",
     }
     run = str(step["run"])
     assert "umask 077" in run
@@ -263,3 +264,15 @@ def test_the_temporary_keychain_and_certificate_file_are_always_removed() -> Non
     assert "signing.keychain-db" in run
     assert "signing.p12" in run
     assert "AuthKey.p8" in run
+
+
+def test_the_stored_certificate_must_belong_to_the_signing_team() -> None:
+    # A valid development identity of another team would pass the identity check, and
+    # Xcode would then create a new certificate for the right team on every run after
+    # all. The certificate's organisational unit is the team it was issued to.
+    run = str(_import_step()["run"])
+    check = next(line for line in run.splitlines() if "find-certificate" in line)
+    assert "openssl x509 -noout -subject" in check
+    assert '"OU *= *$APPLE_TEAM_ID' in check
+    assert "| grep -q" in check
+    assert run.index("find-identity") < run.index("find-certificate")
