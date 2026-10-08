@@ -24,6 +24,7 @@ def test_install_docs_use_this_repository() -> None:
 
 
 BETA_REQUEST_FORM = "issues/new?template=beta_access.yml"
+UPSTREAM_NAMES = ("apple-health-ai-bridge", "apple health ai bridge", "roian6")
 
 
 def test_user_docs_that_offer_testflight_point_at_the_request_form() -> None:
@@ -36,8 +37,12 @@ def test_user_docs_that_offer_testflight_point_at_the_request_form() -> None:
         if "testflight" not in text.lower():
             continue
         assert BETA_REQUEST_FORM in text or "see the README" in text, path
-        before = text.lower().split("test" + "flight")[0][-200:]
-        assert "apple-health-ai-bridge" not in before, path
+        lowered = text.lower()
+        parts = lowered.split("testflight")
+        for before in parts[:-1]:
+            window = before[-200:]
+            for upstream_name in UPSTREAM_NAMES:
+                assert upstream_name not in window, (path, upstream_name)
 
 
 def test_roadmap_opens_with_healthrelay() -> None:
