@@ -86,11 +86,18 @@ jobs:
           KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
           KEYCHAIN_PASSWORD=$(openssl rand -hex 24)
           printf '%s' "$SIGNING_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/signing.p12" || fail "SIGNING_CERT_P12_BASE64 is not base64"
+          # A bundle written by OpenSSL 3 uses AES and a SHA-256 MAC, which the keychain import refuses with the
+          # same message as a wrong password. Prove the password first, then re-wrap the bundle with the older
+          # algorithms. The unwrapped copy is private to this user (umask 077) and removed in the same line.
+          /usr/bin/openssl pkcs12 -in "$RUNNER_TEMP/signing.p12" -passin env:SIGNING_CERT_PASSWORD -noout > /dev/null 2>&1 || fail "SIGNING_CERT_PASSWORD does not open the stored certificate file"
+          rewrap() { /usr/bin/openssl pkcs12 -in "$RUNNER_TEMP/signing.p12" -passin env:SIGNING_CERT_PASSWORD -nodes -out "$RUNNER_TEMP/signing.pem" > /dev/null 2>&1 && /usr/bin/openssl pkcs12 -export -in "$RUNNER_TEMP/signing.pem" -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 -passout env:SIGNING_CERT_PASSWORD -out "$RUNNER_TEMP/signing-keychain.p12" > /dev/null 2>&1; }
+          rewrap || { rm -f "$RUNNER_TEMP/signing.pem"; fail "the stored certificate file could not be re-wrapped for the keychain"; }
+          rm -f "$RUNNER_TEMP/signing.pem"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null 2>&1 || fail "the temporary keychain could not be created"
           security set-keychain-settings -lut 21600 "$KEYCHAIN" > /dev/null 2>&1
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null 2>&1
-          security import "$RUNNER_TEMP/signing.p12" -k "$KEYCHAIN" -P "$SIGNING_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security > /dev/null 2>&1 || fail "the stored certificate could not be imported: wrong password, or not a PKCS12 file"
-          rm -f "$RUNNER_TEMP/signing.p12"
+          security import "$RUNNER_TEMP/signing-keychain.p12" -k "$KEYCHAIN" -P "$SIGNING_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security > /dev/null 2>&1 || fail "the keychain refused the stored certificate"
+          rm -f "$RUNNER_TEMP/signing.p12" "$RUNNER_TEMP/signing-keychain.p12"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null 2>&1 || fail "the imported key could not be opened to codesign"
           # Put the keychain first in the search list, keeping the runner's own after it.
           security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"') > /dev/null 2>&1
@@ -204,5 +211,5 @@ jobs:
       - name: Remove the key file and the temporary keychain
         if: ${{ always() }}
         run: |
-          rm -f "$RUNNER_TEMP/asc/AuthKey.p8" "$RUNNER_TEMP/ExportOptions.plist" "$RUNNER_TEMP/archive.log" "$RUNNER_TEMP/export.log" "$RUNNER_TEMP/signing.p12"
+          rm -f "$RUNNER_TEMP/asc/AuthKey.p8" "$RUNNER_TEMP/ExportOptions.plist" "$RUNNER_TEMP/archive.log" "$RUNNER_TEMP/export.log" "$RUNNER_TEMP/signing.p12" "$RUNNER_TEMP/signing-keychain.p12" "$RUNNER_TEMP/signing.pem"
           security delete-keychain "$RUNNER_TEMP/signing.keychain-db" > /dev/null 2>&1 || true

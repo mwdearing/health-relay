@@ -276,3 +276,29 @@ def test_the_stored_certificate_must_belong_to_the_signing_team() -> None:
     assert '"OU *= *$APPLE_TEAM_ID' in check
     assert "| grep -q" in check
     assert run.index("find-identity") < run.index("find-certificate")
+
+
+def test_the_stored_bundle_is_rewrapped_in_the_form_the_keychain_reads() -> None:
+    # A bundle written by OpenSSL 3 uses AES and a SHA-256 MAC, which the macOS keychain
+    # import refuses with the same message as a wrong password. The step first proves
+    # the password opens the bundle, then re-wraps it with the older algorithms. The
+    # unwrapped copy is private, and removed whether or not the re-wrap worked.
+    run = str(_import_step()["run"])
+    lines = [line.strip() for line in run.splitlines()]
+    check = next(line for line in lines if "pkcs12" in line and "-noout" in line)
+    assert "-passin env:SIGNING_CERT_PASSWORD" in check
+    assert "does not open" in check
+    rewrap = next(line for line in lines if "pkcs12 -export" in line)
+    for option in ("-keypbe PBE-SHA1-3DES", "-certpbe PBE-SHA1-3DES", "-macalg sha1"):
+        assert option in rewrap
+    assert "-passout env:SIGNING_CERT_PASSWORD" in rewrap
+    assert run.index("umask 077") < run.index("signing.pem")
+    after = lines[lines.index(rewrap) + 1 :]
+    assert 'rm -f "$RUNNER_TEMP/signing.pem"' in after[0]  # on failure
+    assert after[1] == 'rm -f "$RUNNER_TEMP/signing.pem"'  # on success
+    assert run.index("pkcs12 -export") < run.index("security import")
+    imported = next(line for line in lines if line.startswith("security import"))
+    assert "signing-keychain.p12" in imported
+    cleanup = str(_steps()[-1]["run"])
+    assert "signing-keychain.p12" in cleanup
+    assert "signing.pem" in cleanup
