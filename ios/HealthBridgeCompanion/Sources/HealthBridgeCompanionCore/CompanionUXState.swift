@@ -1,5 +1,88 @@
 import Foundation
 
+public struct CompanionOnboardingSnapshot: Equatable, Sendable {
+    public let hasReceiverSettings: Bool
+    public let healthAccessRequested: Bool
+    public let hasCompletedFirstSync: Bool
+    public let isSyncActive: Bool
+    public let hasCurrentError: Bool
+    public let pendingOutboxCount: Int
+    public let hasPendingRecovery: Bool
+
+    public init(
+        hasReceiverSettings: Bool,
+        healthAccessRequested: Bool,
+        hasCompletedFirstSync: Bool,
+        isSyncActive: Bool,
+        hasCurrentError: Bool,
+        pendingOutboxCount: Int,
+        hasPendingRecovery: Bool
+    ) {
+        self.hasReceiverSettings = hasReceiverSettings
+        self.healthAccessRequested = healthAccessRequested
+        self.hasCompletedFirstSync = hasCompletedFirstSync
+        self.isSyncActive = isSyncActive
+        self.hasCurrentError = hasCurrentError
+        self.pendingOutboxCount = pendingOutboxCount
+        self.hasPendingRecovery = hasPendingRecovery
+    }
+}
+
+public enum CompanionOnboardingStep: Equatable, Sendable {
+    case connectReceiver, requestHealthAccess, reviewSyncPreferences, firstSync
+}
+
+public enum CompanionOnboardingStepState: Equatable, Sendable {
+    case complete, current, upcoming, optional, inProgress, needsAttention
+}
+
+public struct CompanionOnboardingStepPresentation: Equatable, Sendable {
+    public let step: CompanionOnboardingStep
+    public let state: CompanionOnboardingStepState
+    public let title: String
+    public let detail: String
+
+    public init(step: CompanionOnboardingStep, state: CompanionOnboardingStepState, title: String, detail: String) {
+        self.step = step
+        self.state = state
+        self.title = title
+        self.detail = detail
+    }
+}
+
+public enum CompanionOnboardingPresentation {
+    public static func steps(from snapshot: CompanionOnboardingSnapshot) -> [CompanionOnboardingStepPresentation] {
+        let unfinished: CompanionOnboardingStep = !snapshot.hasReceiverSettings
+            ? .connectReceiver
+            : (!snapshot.healthAccessRequested ? .requestHealthAccess : .firstSync)
+        let needsAttention = snapshot.hasPendingRecovery || snapshot.hasCurrentError || snapshot.pendingOutboxCount > 0
+        func state(_ step: CompanionOnboardingStep, completed: Bool) -> CompanionOnboardingStepState {
+            if completed { return .complete }
+            if step == .reviewSyncPreferences { return .optional }
+            if step == unfinished {
+                if needsAttention { return .needsAttention }
+                return snapshot.isSyncActive ? .inProgress : .current
+            }
+            return .upcoming
+        }
+        return [
+            CompanionOnboardingStepPresentation(step: .connectReceiver, state: state(.connectReceiver, completed: snapshot.hasReceiverSettings), title: "Connect your receiver", detail: "Choose the server that receives this iPhone’s sync."),
+            CompanionOnboardingStepPresentation(step: .requestHealthAccess, state: state(.requestHealthAccess, completed: snapshot.healthAccessRequested), title: "Choose Health access", detail: snapshot.healthAccessRequested ? "The read-only access request was made. Review allowed data in Apple Health." : "Request read-only access and choose what to share."),
+            CompanionOnboardingStepPresentation(step: .reviewSyncPreferences, state: .optional, title: "Review sync preferences", detail: "Optional: adjust background delivery and sync preferences."),
+            CompanionOnboardingStepPresentation(step: .firstSync, state: state(.firstSync, completed: snapshot.hasCompletedFirstSync), title: "Run your first sync", detail: "Use Sync Now to send allowed data to your receiver."),
+        ]
+    }
+}
+
+public enum CompanionSyncProgressPresentation {
+    private static let allowedLanes: Set<String> = ["Steps", "Daily activity", "Workouts", "Sleep", "ECG", "Medications", "Other metrics"]
+
+    public static func label(activeLane: String?) -> String {
+        guard let activeLane, allowedLanes.contains(activeLane) else { return "Syncing…" }
+        return "Syncing · \(activeLane)"
+    }
+}
+
 public struct CompanionSetupSnapshot: Equatable, Sendable {
     public let receiverURLString: String
     public let hasBearerToken: Bool
