@@ -14,8 +14,8 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
         let runtime = try await makeStepsFaultRuntime(fixture)
         XCTAssertEqual(
             runtime.viewModel.automaticSyncSelectedEligibleTypeCodes(),
-            HealthKitReadTypeCatalog.availableTypeCodes(
-                forTypeCodes: HealthBridgeBackgroundSync.supportedUnifiedReadTypeCodes
+            HealthKitReadTypeCatalog.availableLaneTypeCodes(
+                forTypeCodes: HealthBridgeBackgroundSync.supportedAutomaticLaneTypeCodes
             )
         )
     }
