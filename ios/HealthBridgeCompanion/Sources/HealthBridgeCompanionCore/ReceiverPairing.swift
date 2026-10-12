@@ -43,6 +43,72 @@ public enum ReceiverPairingTransport: String, Codable, Equatable, Sendable {
     case mailbox
 }
 
+/// A redacted destination summary suitable for a pre-pairing confirmation screen.
+public struct ReceiverPairingDestinationPresentation: Equatable, Sendable {
+    public let receiverAuthority: String
+    public let transport: ReceiverPairingTransport
+    public let usesHTTPS: Bool
+    public let privacySummary: String
+
+    public static func from(material: ReceiverPairingMaterial) throws -> Self {
+        switch material {
+        case .legacy(let bundle):
+            guard let url = bundle.receiverURL else {
+                throw ReceiverPairingBundleError.invalidReceiverURL
+            }
+            return try make(url: url, transport: .direct)
+        case .invitation(let invitation):
+            return try make(url: invitation.receiverURL, transport: invitation.transport)
+        }
+    }
+
+    public static func from(manualPairing: ReceiverManualPairing) throws -> Self {
+        try make(url: manualPairing.receiverURL, transport: .direct)
+    }
+
+    public static func from(pending: ReceiverPendingPairing) throws -> Self {
+        let url = try validatedHTTPURL(pending.receiverURLString)
+        return try make(url: url, transport: pending.transport)
+    }
+
+    private static func make(
+        url: URL,
+        transport: ReceiverPairingTransport
+    ) throws -> Self {
+        guard let scheme = url.scheme?.lowercased(),
+              let host = url.host?.lowercased() else {
+            throw ReceiverPairingBundleError.invalidReceiverURL
+        }
+        let defaultPort = scheme == "https" ? 443 : 80
+        let canonicalHost = host.contains(":") && !host.hasPrefix("[")
+            ? "[\(host)]"
+            : host
+        let authority: String
+        if let port = url.port, port != defaultPort {
+            authority = "\(canonicalHost):\(port)"
+        } else {
+            authority = canonicalHost
+        }
+        let usesHTTPS = scheme == "https"
+        let privacySummary: String
+        if transport == .mailbox {
+            privacySummary = usesHTTPS
+                ? "Mailbox delivery is encrypted and delayed. It requires your Mac and is an optional Beta. Pairing details use HTTPS."
+                : "Mailbox delivery is encrypted and delayed. It requires your Mac and is an optional Beta. Pairing details use unencrypted HTTP on a trusted local network only."
+        } else {
+            privacySummary = usesHTTPS
+                ? "Direct delivery over HTTPS. Pairing details are sent only to this receiver."
+                : "Direct delivery over HTTP is unencrypted. Use HTTP only on a trusted local network."
+        }
+        return Self(
+            receiverAuthority: authority,
+            transport: transport,
+            usesHTTPS: usesHTTPS,
+            privacySummary: privacySummary
+        )
+    }
+}
+
 public struct ReceiverPairingBundle: Equatable, Sendable {
     public static let supportedSchemaID = "health_bridge.receiver_pairing.v1"
     public static let supportedSchemaVersion = "1.0.0"

@@ -521,36 +521,28 @@ def test_pairing_entry_points_stay_closed_until_private_recovery_completes() -> 
     assert "!hasPendingPrivateStorageRecovery" in resume
     assert "outboxIdentityMigrationReady" in resume
 
-    cold_url_start = source.index("func importPairingURL(_ url: URL) async")
-    cold_url_end = source.index("private func performImportPairingURL", cold_url_start)
-    cold_url = source[cold_url_start:cold_url_end]
-    pending_match = cold_url.index("pairingCoordinator.pendingPairingMatches")
-    decision = cold_url.index("ReceiverIncomingPairingPolicy.decision(")
-    reject_different = cold_url.index("case .rejectDifferentPending:")
-    resume_matching = cold_url.index("case .resumeMatchingPending:")
-    bootstrap_wait = cold_url.index("await bootstrap()", resume_matching)
-    tracked_operation = cold_url.index("await runTrackedPairingOperation {")
-    assert (
-        pending_match
-        < decision
-        < reject_different
-        < resume_matching
-        < bootstrap_wait
-        < tracked_operation
-    )
+    import_start = source.index("func importPairingURL(_ url: URL) async")
+    import_end = source.index("func redeemManualPairing() async", import_start)
+    import_body = source[import_start:import_end]
+    assert "preparePairingReview(from: url)" in import_body
+    assert "await bootstrap()" not in import_body
+    assert "runTrackedPairingOperation" not in import_body
 
-    for name, end_marker in (
-        ("private func performImportPairingText()", "func importPairingURL("),
-        ("private func performImportPairingURL(", "func redeemManualPairing()"),
-        (
-            "private func performRedeemManualPairing()",
-            "private func applyPairingMaterial(",
-        ),
-    ):
-        start = source.index(name)
-        block = source[start : source.index(end_marker, start)]
-        assert "privateStorageAdmissionReady" in block
-        assert "!hasPendingPrivateStorageRecovery" in block
+    review_start = source.index("func preparePairingReview(from url: URL)")
+    review_end = source.index("func confirmPairingReview() async", review_start)
+    review_body = source[review_start:review_end]
+    assert "presentExistingPendingReviewOrConflict()" in review_body
+    assert "pairingReviewMaterial = .pairing(material)" in review_body
+
+    confirm_start = source.index("func confirmPairingReview() async")
+    confirm_end = source.index("private func applyPairingMaterial(", confirm_start)
+    confirm = source[confirm_start:confirm_end]
+    assert (
+        "guard privateStorageAdmissionReady, !hasPendingPrivateStorageRecovery"
+        in confirm
+    )
+    assert "await runTrackedPairingOperation" in confirm
+    assert "case .pairing(let pairing):" in confirm
 
 
 def test_destructive_recovery_resets_all_progress_and_unreadable_connection() -> None:

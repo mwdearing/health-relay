@@ -2762,6 +2762,7 @@ public struct ReceiverPendingPairing: Codable, Equatable, Sendable {
     public let deviceCredential: String
     public let platform: String
     public let transport: ReceiverPairingTransport
+    public let destinationReviewAccepted: Bool
 
     public init(
         label: String,
@@ -2772,7 +2773,8 @@ public struct ReceiverPendingPairing: Codable, Equatable, Sendable {
         installationID: String,
         deviceCredential: String,
         platform: String,
-        transport: ReceiverPairingTransport = .direct
+        transport: ReceiverPairingTransport = .direct,
+        destinationReviewAccepted: Bool = false
     ) {
         self.label = label
         self.receiverURLString = receiverURLString
@@ -2783,6 +2785,7 @@ public struct ReceiverPendingPairing: Codable, Equatable, Sendable {
         self.deviceCredential = deviceCredential
         self.platform = platform
         self.transport = transport
+        self.destinationReviewAccepted = destinationReviewAccepted
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -2796,6 +2799,7 @@ public struct ReceiverPendingPairing: Codable, Equatable, Sendable {
         case platform
         case transport
         case mailboxProtocolVersion
+        case destinationReviewAccepted
     }
 
     public init(from decoder: Decoder) throws {
@@ -2828,6 +2832,10 @@ public struct ReceiverPendingPairing: Codable, Equatable, Sendable {
                 debugDescription: "Pending pairing transport is inconsistent."
             )
         }
+        destinationReviewAccepted = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .destinationReviewAccepted
+        ) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -2841,6 +2849,7 @@ public struct ReceiverPendingPairing: Codable, Equatable, Sendable {
         try container.encode(deviceCredential, forKey: .deviceCredential)
         try container.encode(platform, forKey: .platform)
         try container.encode(transport, forKey: .transport)
+        try container.encode(destinationReviewAccepted, forKey: .destinationReviewAccepted)
         if transport == .mailbox {
             try container.encode(1, forKey: .mailboxProtocolVersion)
         }
@@ -2865,6 +2874,8 @@ public struct ReceiverPendingPairing: Codable, Equatable, Sendable {
 public enum ReceiverPairingStateError: LocalizedError, Equatable {
     case pendingPairingConflict
     case legacyCancellationRequiresRetry
+    case destinationReviewRequired
+    case pendingPairingChanged
 
     public var errorDescription: String? {
         switch self {
@@ -2872,6 +2883,10 @@ public enum ReceiverPairingStateError: LocalizedError, Equatable {
             "A different pairing is already pending. Resume or cancel it before starting another pairing."
         case .legacyCancellationRequiresRetry:
             "A cancellation from an older app version has unknown connection scope. Confirm Cancel Pending Pairing again to clear it safely."
+        case .destinationReviewRequired:
+            "Review the pairing destination before continuing."
+        case .pendingPairingChanged:
+            "The pending pairing changed. Review its destination again before continuing."
         }
     }
 }
@@ -2884,6 +2899,7 @@ public final class ReceiverPairingStateStore {
     private let cancellationStore: ReceiverTokenStoring
     private let installationIDGenerator: () -> String
     private let deviceCredentialGenerator: () -> String
+    private let pairingStateLock = NSRecursiveLock()
 
     public init(
         pendingStore: ReceiverTokenStoring = KeychainReceiverTokenStore(account: "pending-pairing"),
@@ -2905,36 +2921,77 @@ public final class ReceiverPairingStateStore {
         self.deviceCredentialGenerator = deviceCredentialGenerator
     }
 
-    public func stage(invitation: ReceiverPairingInvitation) throws -> ReceiverPendingPairing {
+    public func stage(
+        invitation: ReceiverPairingInvitation,
+        destinationReviewAccepted: Bool = false
+    ) throws -> ReceiverPendingPairing {
         try stage(
             label: invitation.label,
             receiverURLString: invitation.receiverURLString,
             redeemURLString: invitation.redeemURLString,
             invitationSecret: invitation.invitationSecret,
             invitationCode: nil,
-            transport: invitation.transport
+            transport: invitation.transport,
+            destinationReviewAccepted: destinationReviewAccepted
         )
     }
 
-    public func stage(manualPairing: ReceiverManualPairing) throws -> ReceiverPendingPairing {
+    public func stage(
+        manualPairing: ReceiverManualPairing,
+        destinationReviewAccepted: Bool = false
+    ) throws -> ReceiverPendingPairing {
         try stage(
             label: "iOS companion",
             receiverURLString: manualPairing.receiverURL.absoluteString,
             redeemURLString: manualPairing.redeemURL.absoluteString,
             invitationSecret: nil,
             invitationCode: manualPairing.invitationCode,
-            transport: .direct
+            transport: .direct,
+            destinationReviewAccepted: destinationReviewAccepted
         )
     }
 
     public func loadPending() throws -> ReceiverPendingPairing? {
+        pairingStateLock.lock()
+        defer { pairingStateLock.unlock() }
         let encoded = try pendingStore.loadToken()
         guard !encoded.isEmpty else { return nil }
         return try JSONDecoder().decode(ReceiverPendingPairing.self, from: Data(encoded.utf8))
     }
 
     public func clearPending() throws {
+        pairingStateLock.lock()
+        defer { pairingStateLock.unlock() }
         try pendingStore.saveToken("")
+    }
+
+    public func confirmPendingDestinationReview(
+        expected: ReceiverPendingPairing
+    ) throws -> ReceiverPendingPairing {
+        pairingStateLock.lock()
+        defer { pairingStateLock.unlock() }
+        guard let current = try loadPending(), current == expected else {
+            throw ReceiverPairingStateError.pendingPairingChanged
+        }
+        guard !current.destinationReviewAccepted else { return current }
+        let reviewed = ReceiverPendingPairing(
+            label: current.label,
+            receiverURLString: current.receiverURLString,
+            redeemURLString: current.redeemURLString,
+            invitationSecret: current.invitationSecret,
+            invitationCode: current.invitationCode,
+            installationID: current.installationID,
+            deviceCredential: current.deviceCredential,
+            platform: current.platform,
+            transport: current.transport,
+            destinationReviewAccepted: true
+        )
+        let encoded = try JSONEncoder().encode(reviewed)
+        guard let string = String(data: encoded, encoding: .utf8) else {
+            throw CocoaError(.fileWriteInapplicableStringEncoding)
+        }
+        try pendingStore.saveToken(string)
+        return reviewed
     }
 
     public func resetPrivatePairingState() throws {
@@ -2983,8 +3040,11 @@ public final class ReceiverPairingStateStore {
         redeemURLString: String,
         invitationSecret: String?,
         invitationCode: String?,
-        transport: ReceiverPairingTransport
+        transport: ReceiverPairingTransport,
+        destinationReviewAccepted: Bool
     ) throws -> ReceiverPendingPairing {
+        pairingStateLock.lock()
+        defer { pairingStateLock.unlock() }
         guard try !hasPendingCancellation() else {
             throw ReceiverPairingStateError.pendingPairingConflict
         }
@@ -3010,7 +3070,8 @@ public final class ReceiverPairingStateStore {
             installationID: installationID,
             deviceCredential: deviceCredentialGenerator(),
             platform: "ios",
-            transport: transport
+            transport: transport,
+            destinationReviewAccepted: destinationReviewAccepted
         )
         let encoded = try JSONEncoder().encode(pending)
         guard let string = String(data: encoded, encoding: .utf8) else {

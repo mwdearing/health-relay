@@ -2,6 +2,56 @@ import XCTest
 @testable import HealthBridgeCompanionCore
 
 final class CompanionUXStateTests: XCTestCase {
+    func testOnboardingProgressUsesRequestStateAndKeepsPreferencesOptional() {
+        let steps = CompanionOnboardingPresentation.steps(from: CompanionOnboardingSnapshot(
+            hasReceiverSettings: true,
+            healthAccessRequested: true,
+            hasCompletedFirstSync: false,
+            isSyncActive: false,
+            hasCurrentError: false,
+            pendingOutboxCount: 0,
+            hasPendingRecovery: false
+        ))
+        XCTAssertEqual(steps.map(\.state), [.complete, .complete, .optional, .current])
+        XCTAssertTrue(steps[1].detail.lowercased().contains("request was made"))
+        XCTAssertFalse(steps[1].detail.lowercased().contains("granted"))
+    }
+
+    func testOnboardingAttentionOverridesActiveAndUnpairedCopy() {
+        let steps = CompanionOnboardingPresentation.steps(from: CompanionOnboardingSnapshot(
+            hasReceiverSettings: false,
+            healthAccessRequested: false,
+            hasCompletedFirstSync: false,
+            isSyncActive: true,
+            hasCurrentError: false,
+            pendingOutboxCount: 1,
+            hasPendingRecovery: true
+        ))
+        XCTAssertEqual(steps.first?.state, .needsAttention)
+        XCTAssertEqual(CompanionSyncProgressPresentation.label(activeLane: nil), "Syncing…")
+        XCTAssertEqual(CompanionSyncProgressPresentation.label(activeLane: "Steps"), "Syncing · Steps")
+        XCTAssertEqual(CompanionSyncProgressPresentation.label(activeLane: "unsafe"), "Syncing…")
+    }
+
+    func testCompletedSyncStillShowsAttentionForErrorOrQueuedUploads() {
+        for snapshot in [
+            CompanionOnboardingSnapshot(
+                hasReceiverSettings: true, healthAccessRequested: true,
+                hasCompletedFirstSync: true, isSyncActive: false,
+                hasCurrentError: true, pendingOutboxCount: 0, hasPendingRecovery: false
+            ),
+            CompanionOnboardingSnapshot(
+                hasReceiverSettings: true, healthAccessRequested: true,
+                hasCompletedFirstSync: true, isSyncActive: false,
+                hasCurrentError: false, pendingOutboxCount: 1, hasPendingRecovery: false
+            ),
+        ] {
+            let steps = CompanionOnboardingPresentation.steps(from: snapshot)
+            XCTAssertEqual(steps.last?.state, .needsAttention)
+            XCTAssertEqual(steps.last?.title, "Sync needs attention")
+        }
+    }
+
     func testSetupStateIsUnpairedWhenReceiverSettingsAreIncomplete() {
         let snapshot = CompanionSetupSnapshot(
             receiverURLString: "",

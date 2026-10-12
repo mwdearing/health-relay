@@ -16,6 +16,7 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: HealthBridgeSpacing.section) {
                     intro
                     statusCard
+                    firstRunProgress
 
                     if viewModel.hasPendingPairing {
                         pairingRecoveryCard
@@ -88,6 +89,20 @@ struct ContentView: View {
                 )
             }
         }
+        .sheet(isPresented: Binding(
+            get: { viewModel.pendingPairingDestinationReview != nil },
+            set: { isPresented in
+                if !isPresented { viewModel.cancelPairingReview() }
+            }
+        )) {
+            if let destination = viewModel.pendingPairingDestinationReview {
+                PairingDestinationReviewView(
+                    destination: destination,
+                    onCancel: { viewModel.cancelPairingReview() },
+                    onContinue: { Task { await viewModel.confirmPairingReview() } }
+                )
+            }
+        }
     }
 
     /// The Sync card only appears once the iPhone is paired and Health access was requested.
@@ -128,6 +143,36 @@ struct ContentView: View {
         .cardStyle()
     }
 
+    private var firstRunProgress: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Getting started")
+                .font(.headline)
+            ForEach(Array(viewModel.onboardingSteps.enumerated()), id: \.offset) { item in
+                let step = item.element
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: onboardingSymbol(step.state))
+                        .foregroundStyle(step.state == .needsAttention ? .relayWaitingInk : .relayAccentInk)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(step.title).font(.subheadline.weight(.semibold))
+                        Text(step.detail).font(.footnote).foregroundStyle(.relaySecondaryText)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .cardStyle()
+    }
+
+    private func onboardingSymbol(_ state: CompanionOnboardingStepState) -> String {
+        switch state {
+        case .complete: "checkmark.circle.fill"
+        case .current: "arrow.right.circle.fill"
+        case .upcoming, .optional: "circle"
+        case .inProgress: "arrow.triangle.2.circlepath.circle"
+        case .needsAttention: "exclamationmark.circle.fill"
+        }
+    }
+
     private var pairingCard: some View {
         VStack(alignment: .leading, spacing: 16) {
             SectionHeader(
@@ -151,13 +196,13 @@ struct ContentView: View {
             SetupLinkInput(viewModel: viewModel)
 
             PrimaryButton(
-                title: "Connect",
-                subtitle: "Redeem this one-time invitation",
+                title: "Review destination",
+                subtitle: "Check where this setup link connects",
                 systemImage: "link.badge.plus",
                 isDisabled: !viewModel.canImportPairingText,
                 isLoading: viewModel.isPairing
             ) {
-                Task { await viewModel.importPairingText() }
+                viewModel.preparePairingReview(from: viewModel.pairingImportText)
             }
 
             Divider()
@@ -444,7 +489,7 @@ struct ContentView: View {
             return "Queued uploads remain on this iPhone. Reconnect from setup link to retry them."
         }
         if viewModel.syncPresentationIsActive && viewModel.canSendConnectionTest {
-            return "Updating allowed Apple Health data."
+            return CompanionSyncProgressPresentation.label(activeLane: viewModel.currentSyncLaneLabel)
         }
         if viewModel.statusIsError { return userFacingStatusMessage }
         if !viewModel.canSendConnectionTest { return "Connect this iPhone before syncing." }
@@ -1053,6 +1098,51 @@ private struct SetupLinkInput: View {
     }
 }
 
+private struct PairingDestinationReviewView: View {
+    let destination: ReceiverPairingDestinationPresentation
+    let onCancel: () -> Void
+    let onContinue: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Review where this iPhone will connect")
+                    .font(.title2.weight(.semibold))
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Receiver")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.relaySecondaryText)
+                    Text(destination.receiverAuthority)
+                        .font(.body.monospaced())
+                        .accessibilityLabel("Receiver destination")
+                        .accessibilityHint("Canonical server host and non-default port")
+                }
+                Label(
+                    destination.transport == .mailbox ? "Mailbox delivery" : "Direct delivery",
+                    systemImage: destination.transport == .mailbox ? "envelope" : "arrow.up.right"
+                )
+                Text(destination.privacySummary)
+                    .font(.subheadline)
+                    .foregroundStyle(.relaySecondaryText)
+                Spacer()
+                Button(action: onContinue) {
+                    Text("Continue").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityLabel("Continue with this receiver")
+                .accessibilityHint("Confirms this destination and continues pairing")
+                Button("Cancel", role: .cancel, action: onCancel)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityLabel("Cancel destination review")
+            }
+            .padding(24)
+            .navigationTitle("Confirm destination")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
 /// Server address and invitation code fields, shared by the first-run card and the
 /// Connection settings screen. The code is grouped as `ABCDE-FGHJK-MNPQR` while typing.
 private struct ManualPairingFields: View {
@@ -1103,8 +1193,8 @@ private struct ManualPairingFields: View {
             }
 
             PrimaryButton(
-                title: "Connect with Code",
-                subtitle: "Codes expire and work only once",
+                title: "Review Server",
+                subtitle: "Check the destination before using this code",
                 systemImage: "number.square.fill",
                 isDisabled: !viewModel.canRedeemManualPairing,
                 isLoading: viewModel.isPairing

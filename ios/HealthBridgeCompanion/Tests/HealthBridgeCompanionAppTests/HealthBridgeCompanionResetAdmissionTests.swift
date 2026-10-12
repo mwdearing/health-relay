@@ -14,8 +14,8 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
         let runtime = try await makeStepsFaultRuntime(fixture)
         XCTAssertEqual(
             runtime.viewModel.automaticSyncSelectedEligibleTypeCodes(),
-            HealthKitReadTypeCatalog.availableTypeCodes(
-                forTypeCodes: HealthBridgeBackgroundSync.supportedUnifiedReadTypeCodes
+            HealthKitReadTypeCatalog.availableLaneTypeCodes(
+                forTypeCodes: HealthBridgeBackgroundSync.supportedAutomaticLaneTypeCodes
             )
         )
     }
@@ -1212,7 +1212,7 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
             installationIDGenerator: { "synthetic-installation" },
             deviceCredentialGenerator: { "synthetic-pairing-credential" }
         )
-        _ = try pairingStateStore.stage(invitation: syntheticInvitation())
+        _ = try pairingStateStore.stage(invitation: syntheticInvitation(), destinationReviewAccepted: true)
 
         let viewModel = try makeViewModel(
             root: root,
@@ -1301,7 +1301,7 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
             installationIDGenerator: { "synthetic-installation" },
             deviceCredentialGenerator: { "synthetic-pairing-credential" }
         )
-        _ = try pairingStateStore.stage(invitation: syntheticInvitation())
+        _ = try pairingStateStore.stage(invitation: syntheticInvitation(), destinationReviewAccepted: true)
 
         let cleanupStarted = expectation(description: "bootstrap cleanup started")
         let cleanupCancelled = expectation(description: "bootstrap cleanup cancelled")
@@ -1382,7 +1382,7 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
             installationIDGenerator: { "synthetic-installation" },
             deviceCredentialGenerator: { "synthetic-pairing-credential" }
         )
-        _ = try pairingStateStore.stage(invitation: syntheticInvitation())
+        _ = try pairingStateStore.stage(invitation: syntheticInvitation(), destinationReviewAccepted: true)
 
         let cleanupStarted = expectation(description: "bootstrap cleanup started")
         let cleanupCancelled = expectation(description: "bootstrap cleanup cancelled")
@@ -1506,7 +1506,7 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
             installationIDGenerator: { "synthetic-installation" },
             deviceCredentialGenerator: { "synthetic-pairing-credential" }
         )
-        _ = try pairingStateStore.stage(invitation: syntheticInvitation())
+        _ = try pairingStateStore.stage(invitation: syntheticInvitation(), destinationReviewAccepted: true)
         let cancellationGeneration = settingsStore.receiverSettingsGenerationToken
 
         let drainStarted = expectation(description: "terminal background drain started")
@@ -1694,7 +1694,7 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
             installationIDGenerator: { "synthetic-installation" },
             deviceCredentialGenerator: { "synthetic-pairing-credential" }
         )
-        _ = try pairingStateStore.stage(invitation: syntheticInvitation())
+        _ = try pairingStateStore.stage(invitation: syntheticInvitation(), destinationReviewAccepted: true)
         let cancellationGeneration = settingsStore.receiverSettingsGenerationToken
         let coordinator = ReceiverPairingCoordinator(
             client: ReceiverClient(),
@@ -1880,7 +1880,7 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
             installationIDGenerator: { "synthetic-installation" },
             deviceCredentialGenerator: { "synthetic-pairing-credential" }
         )
-        _ = try pairingStateStore.stage(invitation: syntheticInvitation())
+        _ = try pairingStateStore.stage(invitation: syntheticInvitation(), destinationReviewAccepted: true)
 
         let cleanupStarted = expectation(description: "bootstrap cleanup started")
         let cleanupCancelled = expectation(description: "bootstrap cleanup cancelled")
@@ -2061,6 +2061,129 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
             }
             """.utf8
         ))
+    }
+
+    func testPairingReviewDefersRedemptionUntilExplicitConfirmation() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PairingReviewFlowTests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let suiteName = "PairingReviewFlowTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settingsStore = ReceiverSettingsStore(
+            userDefaults: defaults,
+            tokenStore: MemoryReceiverTokenStore(),
+            synchronize: { true }
+        )
+        let pairingStateStore = ReceiverPairingStateStore(
+            pendingStore: MemoryReceiverTokenStore(),
+            installationIDStore: MemoryReceiverTokenStore(),
+            cancellationStore: MemoryReceiverTokenStore()
+        )
+        let outbox = try FileOutbox(directory: root.appendingPathComponent("outbox"))
+        let networkRecorder = PayloadFenceNetworkRecorder()
+        PayloadFenceURLProtocol.networkRecorder = networkRecorder
+        defer { PayloadFenceURLProtocol.networkRecorder = nil }
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [PayloadFenceURLProtocol.self]
+        let viewModel = try makeViewModel(
+            root: root,
+            defaults: defaults,
+            settingsStore: settingsStore,
+            pairingStateStore: pairingStateStore,
+            outbox: outbox,
+            receiverClient: ReceiverClient(session: URLSession(configuration: sessionConfiguration))
+        )
+        let syntheticLink = """
+        {"schema_id":"health_bridge.receiver_pairing_invitation.v2","schema_version":"2.0.0","label":"synthetic","receiver_url":"https://receiver.example.test:8443/v1/batches?hidden=secret","redeem_url":"https://receiver.example.test:8443/v1/pairing/redeem","invitation_secret":"hbi_synthetic_invitation","expires_at":"2099-01-01T00:00:00Z","transport":"direct"}
+        """
+        await viewModel.bootstrap()
+        viewModel.pairingImportText = syntheticLink
+        viewModel.preparePairingReview(from: syntheticLink)
+
+        XCTAssertEqual(networkRecorder.invocationCount, 0)
+        XCTAssertEqual(viewModel.pendingPairingDestinationReview?.receiverAuthority, "receiver.example.test:8443")
+        XCTAssertFalse(viewModel.pendingPairingDestinationReview?.privacySummary.contains("hbi_synthetic") ?? true)
+        viewModel.cancelPairingReview()
+        XCTAssertNil(viewModel.pendingPairingDestinationReview)
+        XCTAssertEqual(viewModel.pairingImportText, syntheticLink)
+        XCTAssertEqual(networkRecorder.invocationCount, 0)
+
+        viewModel.manualPairingServer = "https://manual.example.test/v1/batches"
+        viewModel.manualPairingCode = "ABCDE-FGHJK-MNPQR"
+        viewModel.prepareManualPairingReview()
+        XCTAssertEqual(viewModel.pendingPairingDestinationReview?.receiverAuthority, "manual.example.test")
+        viewModel.manualPairingServer = "https://changed.example.test/v1/batches"
+        XCTAssertNil(viewModel.pendingPairingDestinationReview)
+        XCTAssertEqual(networkRecorder.invocationCount, 0)
+
+        viewModel.preparePairingReview(from: syntheticLink)
+        viewModel.pairingImportText += " "
+        XCTAssertNil(viewModel.pendingPairingDestinationReview)
+        viewModel.pairingImportText = syntheticLink
+        viewModel.preparePairingReview(from: syntheticLink)
+        await viewModel.confirmPairingReview()
+        XCTAssertEqual(networkRecorder.invocationCount, 1)
+        XCTAssertEqual(
+            networkRecorder.requestURLs.first?.absoluteString,
+            "https://receiver.example.test:8443/v1/pairing/redeem"
+        )
+    }
+
+    func testConfirmingRecoveredPairingCompletesWithoutNestedTrackedOperation() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RecoveredPairingReviewTests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let suiteName = "RecoveredPairingReviewTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settingsStore = ReceiverSettingsStore(
+            userDefaults: defaults,
+            tokenStore: MemoryReceiverTokenStore(),
+            synchronize: { true }
+        )
+        let pairingStateStore = ReceiverPairingStateStore(
+            pendingStore: MemoryReceiverTokenStore(),
+            installationIDStore: MemoryReceiverTokenStore(),
+            cancellationStore: MemoryReceiverTokenStore()
+        )
+        _ = try pairingStateStore.stage(
+            invitation: syntheticInvitation(),
+            destinationReviewAccepted: false
+        )
+        let outbox = try FileOutbox(directory: root.appendingPathComponent("outbox"))
+        let networkRecorder = PayloadFenceNetworkRecorder()
+        PayloadFenceURLProtocol.networkRecorder = networkRecorder
+        defer { PayloadFenceURLProtocol.networkRecorder = nil }
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [PayloadFenceURLProtocol.self]
+        let viewModel = try makeViewModel(
+            root: root,
+            defaults: defaults,
+            settingsStore: settingsStore,
+            pairingStateStore: pairingStateStore,
+            outbox: outbox,
+            receiverClient: ReceiverClient(session: URLSession(configuration: sessionConfiguration))
+        )
+        await viewModel.bootstrap()
+        XCTAssertNotNil(viewModel.pendingPairingDestinationReview)
+        XCTAssertEqual(networkRecorder.invocationCount, 0)
+
+        let confirmationFinished = expectation(description: "recovered pairing confirmation finishes")
+        Task { @MainActor in
+            await viewModel.confirmPairingReview()
+            confirmationFinished.fulfill()
+        }
+
+        let result = await XCTWaiter.fulfillment(of: [confirmationFinished], timeout: 3)
+        XCTAssertEqual(result, .completed)
+        XCTAssertEqual(networkRecorder.requestURLs.map(\.absoluteString), [
+            "http://127.0.0.1:8765/v1/pairing/redeem",
+        ])
     }
 
     private func makeViewModel(
@@ -2329,6 +2452,7 @@ private struct ResetObservation {
 private final class PayloadFenceNetworkRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
+    private var urls: [URL] = []
     private var recordedPayloads: [Data] = []
     private var successfulPayloads: [Data] = []
     private var failedStepsSampleKinds: Set<String> = []
@@ -2406,9 +2530,16 @@ private final class PayloadFenceNetworkRecorder: @unchecked Sendable {
         return count
     }
 
-    func recordInvocation() {
+    var requestURLs: [URL] {
+        lock.lock()
+        defer { lock.unlock() }
+        return urls
+    }
+
+    func recordInvocation(_ url: URL? = nil) {
         lock.lock()
         count += 1
+        if let url { urls.append(url) }
         lock.unlock()
     }
 }
@@ -2437,7 +2568,7 @@ private final class PayloadFenceURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        Self.networkRecorder?.recordInvocation()
+        Self.networkRecorder?.recordInvocation(request.url)
         var payload: Data?
         if let body = request.httpBody {
             payload = body

@@ -2,6 +2,76 @@ import XCTest
 @testable import HealthBridgeCompanionCore
 
 final class ReceiverPairingTests: XCTestCase {
+    func testDestinationPresentationRedactsSecretsAndCanonicalizesAuthority() throws {
+        let invitation = try ReceiverPairingInvitation(jsonData: Data(validInvitationJSON.utf8))
+        let presentation = try ReceiverPairingDestinationPresentation.from(
+            material: .invitation(invitation)
+        )
+
+        XCTAssertEqual(presentation.receiverAuthority, "health-bridge.example.test")
+        XCTAssertEqual(presentation.transport, .direct)
+        XCTAssertTrue(presentation.usesHTTPS)
+        XCTAssertFalse(presentation.privacySummary.contains(invitation.invitationSecret))
+        for forbidden in ["https://", "/v1", "?", "#", "@", invitation.invitationSecret] {
+            XCTAssertFalse(presentation.receiverAuthority.contains(forbidden))
+            XCTAssertFalse(presentation.privacySummary.contains(forbidden))
+        }
+    }
+
+    func testDestinationPresentationKeepsNonDefaultPortAndWarnsForHTTP() throws {
+        let manual = try ReceiverManualPairing(
+            serverURLString: "http://bücher.example:8080/v1/batches?secret=synthetic#fragment",
+            invitationCode: "ABCDE-FGHJK-MNPQR"
+        )
+        let presentation = try ReceiverPairingDestinationPresentation.from(manualPairing: manual)
+
+        XCTAssertEqual(presentation.receiverAuthority, "xn--bcher-kva.example:8080")
+        XCTAssertFalse(presentation.usesHTTPS)
+        XCTAssertTrue(presentation.privacySummary.lowercased().contains("http"))
+        XCTAssertFalse(presentation.privacySummary.contains("synthetic"))
+        XCTAssertFalse(presentation.receiverAuthority.contains("/"))
+    }
+
+    func testDestinationPresentationOmitsDefaultPort() throws {
+        let manual = try ReceiverManualPairing(
+            serverURLString: "https://health-bridge.example.test:443",
+            invitationCode: "ABCDE-FGHJK-MNPQR"
+        )
+        XCTAssertEqual(
+            try ReceiverPairingDestinationPresentation.from(manualPairing: manual).receiverAuthority,
+            "health-bridge.example.test"
+        )
+    }
+
+    func testDestinationPresentationHandlesLegacyAndMailboxPayloads() throws {
+        let legacy = try ReceiverPairingBundle(jsonData: Data(validPairingJSON.utf8))
+        let legacyPresentation = try ReceiverPairingDestinationPresentation.from(
+            material: .legacy(legacy)
+        )
+        let mailbox = try ReceiverPairingInvitation(jsonData: Data(mailboxInvitationJSON.utf8))
+        let mailboxPresentation = try ReceiverPairingDestinationPresentation.from(
+            material: .invitation(mailbox)
+        )
+
+        XCTAssertEqual(legacyPresentation.transport, .direct)
+        XCTAssertEqual(mailboxPresentation.transport, .mailbox)
+        XCTAssertTrue(mailboxPresentation.privacySummary.contains("Mailbox"))
+        XCTAssertTrue(mailboxPresentation.privacySummary.contains("delayed"))
+        XCTAssertTrue(mailboxPresentation.privacySummary.contains("your Mac"))
+        XCTAssertTrue(mailboxPresentation.privacySummary.contains("optional Beta"))
+        XCTAssertFalse(mailboxPresentation.privacySummary.contains(mailbox.invitationSecret))
+    }
+
+    func testHTTPDestinationRequiresTrustedLocalNetworkDisclosure() throws {
+        let manual = try ReceiverManualPairing(
+            serverURLString: "http://receiver.local:8080",
+            invitationCode: "ABCDE-FGHJK-MNPQR"
+        )
+        let presentation = try ReceiverPairingDestinationPresentation.from(manualPairing: manual)
+        XCTAssertTrue(presentation.privacySummary.contains("unencrypted"))
+        XCTAssertTrue(presentation.privacySummary.contains("trusted local network"))
+    }
+
     func testDecodesReceiverPairingBundleJSON() throws {
         let bundle = try ReceiverPairingBundle(jsonData: Data(validPairingJSON.utf8))
 

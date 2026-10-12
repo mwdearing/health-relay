@@ -563,24 +563,34 @@ public final class ReceiverPairingCoordinator {
 
     public func pair(
         invitation: ReceiverPairingInvitation,
+        destinationReviewAccepted: Bool = false,
         expectedGeneration: String? = nil
     ) async throws -> ReceiverPairingCredential {
+        guard destinationReviewAccepted else {
+            throw ReceiverPairingStateError.destinationReviewRequired
+        }
         let expectedGeneration = expectedGeneration ?? settingsStore.receiverSettingsGenerationToken
-        return try await complete(
-            stateStore.stage(invitation: invitation),
-            expectedGeneration: expectedGeneration
-        )
+        let pending = try stateStore.stage(invitation: invitation, destinationReviewAccepted: true)
+        guard pending.destinationReviewAccepted else {
+            throw ReceiverPairingStateError.destinationReviewRequired
+        }
+        return try await complete(pending, expectedGeneration: expectedGeneration)
     }
 
     public func pair(
         manualPairing: ReceiverManualPairing,
+        destinationReviewAccepted: Bool = false,
         expectedGeneration: String? = nil
     ) async throws -> ReceiverPairingCredential {
+        guard destinationReviewAccepted else {
+            throw ReceiverPairingStateError.destinationReviewRequired
+        }
         let expectedGeneration = expectedGeneration ?? settingsStore.receiverSettingsGenerationToken
-        return try await complete(
-            stateStore.stage(manualPairing: manualPairing),
-            expectedGeneration: expectedGeneration
-        )
+        let pending = try stateStore.stage(manualPairing: manualPairing, destinationReviewAccepted: true)
+        guard pending.destinationReviewAccepted else {
+            throw ReceiverPairingStateError.destinationReviewRequired
+        }
+        return try await complete(pending, expectedGeneration: expectedGeneration)
     }
 
     public func resumePendingPairing(
@@ -591,10 +601,19 @@ public final class ReceiverPairingCoordinator {
             return nil
         }
         guard let pending = try stateStore.loadPending() else { return nil }
+        guard pending.destinationReviewAccepted else {
+            throw ReceiverPairingStateError.destinationReviewRequired
+        }
         return try await complete(
             pending,
             expectedGeneration: expectedGeneration
         )
+    }
+
+    public func confirmPendingDestinationReview(
+        expected: ReceiverPendingPairing
+    ) throws -> ReceiverPendingPairing {
+        try stateStore.confirmPendingDestinationReview(expected: expected)
     }
 
     public func hasPendingPairing() throws -> Bool {
