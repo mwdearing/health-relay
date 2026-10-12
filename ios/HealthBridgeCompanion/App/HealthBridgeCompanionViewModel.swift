@@ -273,11 +273,26 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     @Published private(set) var exportSendNotice: String?
     /// Time of the last successful sync (manual or automatic), persisted across launches.
     @Published private(set) var lastSuccessfulSyncAt: Date? = LastSyncedStore().lastSyncedAt
+    @Published private(set) var currentSyncLaneLabel: String?
     private var exportReadTask: Task<Result<AppleHealthExportLabImporter.Summary, Error>, Never>?
     private var exportReadGeneration = 0
-    @Published var pairingImportText = ""
-    @Published var manualPairingServer = ""
-    @Published var manualPairingCode = ""
+    @Published var pairingImportText = "" {
+        didSet { if pairingImportText != oldValue { cancelPairingReview() } }
+    }
+    @Published var manualPairingServer = "" {
+        didSet { if manualPairingServer != oldValue { cancelPairingReview() } }
+    }
+    @Published var manualPairingCode = "" {
+        didSet { if manualPairingCode != oldValue { cancelPairingReview() } }
+    }
+    @Published private(set) var pendingPairingDestinationReview:
+        ReceiverPairingDestinationPresentation?
+    private enum PairingReviewMaterial {
+        case pairing(ReceiverPairingMaterial)
+        case manual(ReceiverManualPairing)
+        case pending(ReceiverPendingPairing)
+    }
+    private var pairingReviewMaterial: PairingReviewMaterial?
     @Published var isPairing = false
     @Published private var publishedHasPendingPairing: Bool
     private(set) var hasPendingPairing: Bool {
@@ -344,7 +359,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     @Published var healthPermissionNoticeIsError = false
     @Published var isRequestingHealthPermissions = false
     @Published var isCheckingConnection = false
-    @Published var isSyncing = false
+    @Published var isSyncing = false {
+        didSet { if !isSyncing { currentSyncLaneLabel = nil } }
+    }
     @Published private(set) var automaticSyncOwnerIsActive = false
     @Published var healthHistoryDepth: HealthHistoryDepth
     @Published var historicalBackfillState: HealthHistoricalBackfillState
@@ -720,6 +737,18 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             && !isPairing
             && !manualPairingServer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !manualPairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var onboardingSteps: [CompanionOnboardingStepPresentation] {
+        CompanionOnboardingPresentation.steps(from: CompanionOnboardingSnapshot(
+            hasReceiverSettings: canSendConnectionTest,
+            healthAccessRequested: healthPermissionsRequested,
+            hasCompletedFirstSync: lastSuccessfulSyncAt != nil,
+            isSyncActive: syncPresentationIsActive,
+            hasCurrentError: statusIsError,
+            pendingOutboxCount: pendingOutboxCount,
+            hasPendingRecovery: hasPendingPairing || hasPendingPrivateStorageRecovery
+        ))
     }
 
     var canResetLostMailboxConnectionKey: Bool {
@@ -1796,6 +1825,16 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 pairingFailurePresentation = nil
                 return
             }
+            if let pending = try pairingStateStore.loadPending(),
+               !pending.destinationReviewAccepted {
+                hasPendingPairing = true
+                automaticSyncRuntime?.stopAdmission()
+                pairingReviewMaterial = .pending(pending)
+                pendingPairingDestinationReview = try ReceiverPairingDestinationPresentation.from(
+                    pending: pending
+                )
+                return
+            }
             let previousGeneration = settingsStore.receiverSettingsGenerationToken
             let transition = try await performTerminalConnectionTransitionWhileHoldingRequestGate(
                 cancelPairingOperation: false,
@@ -2373,168 +2412,141 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     }
 
     func importPairingText() async {
-        await runTrackedPairingOperation { [weak self] in
-            await self?.performImportPairingText()
+        preparePairingReview(from: pairingImportText)
+    }
+
+    func preparePairingReview(from text: String) {
+        guard !presentExistingPendingReviewOrConflict() else { return }
+        do {
+            let material = try ReceiverPairingMaterial.decode(text)
+            let presentation = try ReceiverPairingDestinationPresentation.from(material: material)
+            pairingReviewMaterial = .pairing(material)
+            pendingPairingDestinationReview = presentation
+            pairingFailurePresentation = nil
+        } catch {
+            cancelPairingReview()
+            publishPairingFailure("Setup link could not be reviewed", error: error)
         }
     }
 
-    private func performImportPairingText() async {
-        guard !taskUIPublicationIsSuppressed,
-              connectionTerminalBarrier.admissionIsOpen else {
-            return
-        }
-        guard privateStorageAdmissionReady, !hasPendingPrivateStorageRecovery else {
-            statusIsError = true
-            statusMessage = "Reset unreadable private sync state before importing a new setup link."
-            return
-        }
-        guard !isPairing else { return }
-        pairingFailurePresentation = nil
-        let trimmed = pairingImportText.trimmingCharacters(in: .whitespacesAndNewlines)
-        isPairing = true
-        defer {
-            if !taskUIPublicationIsSuppressed {
-                isPairing = false
-                finishPairingAttempt()
-            }
-        }
+    func preparePairingReview(from url: URL) {
+        guard !presentExistingPendingReviewOrConflict() else { return }
         do {
-            let material = try ReceiverPairingMaterial.decode(trimmed)
-            try await applyPairingMaterial(material)
-            pairingImportText = ""
+            let material = try ReceiverPairingMaterial(deepLink: url)
+            let presentation = try ReceiverPairingDestinationPresentation.from(material: material)
+            pairingReviewMaterial = .pairing(material)
+            pendingPairingDestinationReview = presentation
+            pairingFailurePresentation = nil
         } catch {
-            publishPairingFailure("Setup link import failed", error: error)
+            cancelPairingReview()
+            publishPairingFailure("Setup link could not be reviewed", error: error)
         }
     }
 
     func importPairingURL(_ url: URL) async {
-        guard !taskUIPublicationIsSuppressed else { return }
-        pairingFailurePresentation = nil
-        let pendingPairingExists: Bool
-        do {
-            pendingPairingExists = try pairingCoordinator.hasPendingPairing()
-        } catch {
-            hasPendingPairing = true
-            publishPairingFailure(
-                "Could not read the saved pending pairing. Recover private storage before opening another setup link."
-            )
-            return
-        }
-        let matchesPendingBootstrapInvitation: Bool
-        do {
-            let material = try ReceiverPairingMaterial(deepLink: url)
-            if case .invitation(let invitation) = material {
-                matchesPendingBootstrapInvitation = (
-                    try pairingCoordinator.pendingPairingMatches(invitation)
-                )
-            } else {
-                matchesPendingBootstrapInvitation = false
-            }
-        } catch {
-            matchesPendingBootstrapInvitation = false
-        }
-        let decision = ReceiverIncomingPairingPolicy.decision(
-            hasPendingPairing: pendingPairingExists,
-            matchesPendingInvitation: matchesPendingBootstrapInvitation
-        )
-        switch decision {
-        case .rejectDifferentPending:
-            hasPendingPairing = true
-            automaticSyncRuntime?.stopAdmission()
-            publishPairingFailure(
-                "A different pairing is already pending. Retry it, or clear the pending pairing and saved connection before opening this setup link again."
-            )
-            return
-        case .resumeMatchingPending:
-            await bootstrap()
-            return
-        case .importIncoming:
-            await bootstrap()
-        }
-        await runTrackedPairingOperation { [weak self] in
-            await self?.performImportPairingURL(url)
-        }
-    }
-
-    private func performImportPairingURL(_ url: URL) async {
-        guard !taskUIPublicationIsSuppressed,
-              connectionTerminalBarrier.admissionIsOpen else {
-            return
-        }
-        guard privateStorageAdmissionReady, !hasPendingPrivateStorageRecovery else {
-            statusIsError = true
-            statusMessage = "Reset unreadable private sync state before opening a new setup link."
-            return
-        }
-        guard !isPairing else { return }
-        isPairing = true
-        defer {
-            if !taskUIPublicationIsSuppressed {
-                isPairing = false
-                finishPairingAttempt()
-            }
-        }
-        do {
-            let material = try ReceiverPairingMaterial(deepLink: url)
-            try await applyPairingMaterial(material)
-        } catch {
-            publishPairingFailure("Setup link failed", error: error)
-        }
+        preparePairingReview(from: url)
     }
 
     func redeemManualPairing() async {
-        await runTrackedPairingOperation { [weak self] in
-            await self?.performRedeemManualPairing()
-        }
+        prepareManualPairingReview()
     }
 
-    private func performRedeemManualPairing() async {
-        guard !taskUIPublicationIsSuppressed,
-              connectionTerminalBarrier.admissionIsOpen else {
-            return
-        }
-        guard privateStorageAdmissionReady, !hasPendingPrivateStorageRecovery else {
-            statusIsError = true
-            statusMessage = "Reset unreadable private sync state before entering a new setup code."
-            return
-        }
-        guard !isPairing else { return }
-        pairingFailurePresentation = nil
-        isPairing = true
-        defer {
-            if !taskUIPublicationIsSuppressed {
-                isPairing = false
-                finishPairingAttempt()
-            }
-        }
+    func prepareManualPairingReview() {
+        guard !presentExistingPendingReviewOrConflict() else { return }
         do {
             let manualPairing = try ReceiverManualPairing(
                 serverURLString: manualPairingServer,
                 invitationCode: manualPairingCode
             )
-            statusIsError = false
-            statusMessage = "Redeeming temporary pairing invitation..."
-            pauseAutomaticSyncForPendingPairing()
-            let previousGeneration = settingsStore.receiverSettingsGenerationToken
-            let transition = try await performTerminalConnectionTransitionWhileHoldingRequestGate(
-                cancelPairingOperation: false,
-                diagnosePairingCommitBarriers: true
-            ) { expectedGeneration in
-                try await self.pairingCoordinator.pair(
-                    manualPairing: manualPairing,
-                    expectedGeneration: expectedGeneration
-                )
-            }
-            let credential = transition.result
-            try requireCommittedConnectionGenerationWhileHoldingRequestGate(transition.committedGeneration)
-            applyCommittedPairingCredential(
-                credential,
-                previousGeneration: previousGeneration
+            pairingReviewMaterial = .manual(manualPairing)
+            pendingPairingDestinationReview = try ReceiverPairingDestinationPresentation.from(
+                manualPairing: manualPairing
             )
-            manualPairingServer = ""
-            manualPairingCode = ""
+            pairingFailurePresentation = nil
         } catch {
-            publishPairingFailure("Manual pairing failed", error: error)
+            cancelPairingReview()
+            publishPairingFailure("Manual pairing could not be reviewed", error: error)
+        }
+    }
+
+    func cancelPairingReview() {
+        pairingReviewMaterial = nil
+        pendingPairingDestinationReview = nil
+    }
+
+    private func presentExistingPendingReviewOrConflict() -> Bool {
+        do {
+            guard let pending = try pairingStateStore.loadPending() else { return false }
+            hasPendingPairing = true
+            automaticSyncRuntime?.stopAdmission()
+            guard !pending.destinationReviewAccepted else {
+                publishPairingFailure("Retry or clear the saved pairing before starting another one.")
+                return true
+            }
+            pairingReviewMaterial = .pending(pending)
+            pendingPairingDestinationReview = try ReceiverPairingDestinationPresentation.from(
+                pending: pending
+            )
+            return true
+        } catch {
+            hasPendingPairing = true
+            publishPairingFailure("Could not read the saved pairing. Recover private storage before continuing.")
+            return true
+        }
+    }
+
+    func confirmPairingReview() async {
+        guard let material = pairingReviewMaterial,
+              pendingPairingDestinationReview != nil else { return }
+        guard privateStorageAdmissionReady, !hasPendingPrivateStorageRecovery else {
+            publishPairingFailure("Recover private sync state before continuing with pairing.")
+            return
+        }
+        pairingReviewMaterial = nil
+        pendingPairingDestinationReview = nil
+        await runTrackedPairingOperation { [weak self] in
+            guard let self else { return }
+            self.isPairing = true
+            defer {
+                if !self.taskUIPublicationIsSuppressed {
+                    self.isPairing = false
+                    self.finishPairingAttempt()
+                }
+            }
+            do {
+                switch material {
+                case .pairing(let pairing):
+                    try await self.applyPairingMaterial(pairing)
+                    self.pairingImportText = ""
+                case .manual(let manualPairing):
+                    let previousGeneration = self.settingsStore.receiverSettingsGenerationToken
+                    self.pauseAutomaticSyncForPendingPairing()
+                    let transition = try await self.performTerminalConnectionTransitionWhileHoldingRequestGate(
+                        cancelPairingOperation: false,
+                        diagnosePairingCommitBarriers: true
+                    ) { expectedGeneration in
+                        try await self.pairingCoordinator.pair(
+                            manualPairing: manualPairing,
+                            destinationReviewAccepted: true,
+                            expectedGeneration: expectedGeneration
+                        )
+                    }
+                    try self.requireCommittedConnectionGenerationWhileHoldingRequestGate(
+                        transition.committedGeneration
+                    )
+                    self.applyCommittedPairingCredential(
+                        transition.result,
+                        previousGeneration: previousGeneration
+                    )
+                    self.manualPairingServer = ""
+                    self.manualPairingCode = ""
+                case .pending(let pending):
+                    _ = try self.pairingCoordinator.confirmPendingDestinationReview(expected: pending)
+                    await self.retryPendingPairing()
+                }
+            } catch {
+                self.publishPairingFailure("Pairing failed", error: error)
+            }
         }
     }
 
@@ -2575,6 +2587,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             ) { expectedGeneration in
                 try await self.pairingCoordinator.pair(
                     invitation: invitation,
+                    destinationReviewAccepted: true,
                     expectedGeneration: expectedGeneration
                 )
             }
@@ -6598,8 +6611,12 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         let trimmed = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         switch ActivityLogMerger.laneUpdate(fromManualMessage: trimmed) {
-        case let .started(name): activityLogLane = name
-        case .finished: activityLogLane = nil
+        case let .started(name):
+            activityLogLane = name
+            currentSyncLaneLabel = name
+        case .finished:
+            activityLogLane = nil
+            currentSyncLaneLabel = nil
         case nil: break
         }
         let time = Self.activityLogTimeFormatter.string(from: Date())
