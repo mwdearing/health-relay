@@ -13,7 +13,7 @@ final class CompanionUXStateTests: XCTestCase {
             hasPendingRecovery: false
         ))
         XCTAssertEqual(steps.map(\.state), [.complete, .complete, .optional, .current])
-        XCTAssertTrue(steps[1].detail.lowercased().contains("requested"))
+        XCTAssertTrue(steps[1].detail.lowercased().contains("request was made"))
         XCTAssertFalse(steps[1].detail.lowercased().contains("granted"))
     }
 

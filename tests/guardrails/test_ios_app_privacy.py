@@ -1045,16 +1045,26 @@ def test_different_setup_link_is_rejected_before_bootstrap_retry() -> None:
         "ios/HealthBridgeCompanion/App/HealthBridgeCompanionViewModel.swift"
     ).read_text(encoding="utf-8")
     import_start = view_model.index("func importPairingURL(_ url: URL) async")
-    import_end = view_model.index("private func performImportPairingURL", import_start)
+    import_end = view_model.index("func redeemManualPairing() async", import_start)
     implementation = view_model[import_start:import_end]
+    assert "preparePairingReview(from: url)" in implementation
+    assert "await bootstrap()" not in implementation
+    assert "runTrackedPairingOperation" not in implementation
 
-    decision = "ReceiverIncomingPairingPolicy.decision"
-    rejection = "case .rejectDifferentPending:"
-    bootstrap = "await bootstrap()"
-    assert decision in implementation
-    assert rejection in implementation
-    assert implementation.index(rejection) < implementation.index(bootstrap)
-    assert "A different pairing is already pending" in implementation
+    prepare_start = view_model.index("func preparePairingReview(from url: URL)")
+    prepare_end = view_model.index("func redeemManualPairing() async", prepare_start)
+    prepare = view_model[prepare_start:prepare_end]
+    assert "guard !presentExistingPendingReviewOrConflict() else { return }" in prepare
+    assert "ReceiverPairingMaterial(deepLink: url)" in prepare
+
+    conflict_start = view_model.index(
+        "private func presentExistingPendingReviewOrConflict()"
+    )
+    conflict_end = view_model.index("func confirmPairingReview() async", conflict_start)
+    conflict = view_model[conflict_start:conflict_end]
+    assert "guard !pending.destinationReviewAccepted else" in conflict
+    assert "Retry or clear the saved pairing before starting another one." in conflict
+    assert "pairingReviewMaterial = .pending(pending)" in conflict
 
 
 def test_ios_companion_uses_simple_history_sync_copy() -> None:
@@ -1747,30 +1757,29 @@ def test_ios_cold_launch_pairing_url_runs_after_bootstrap_without_losing_new_lin
     )
 
     import_start = view_model.index("func importPairingURL(_ url: URL) async")
-    import_end = view_model.index("private func performImportPairingURL", import_start)
+    import_end = view_model.index("func redeemManualPairing() async", import_start)
     import_body = view_model[import_start:import_end]
-    pending_match = import_body.index(
-        "pairingCoordinator.pendingPairingMatches(invitation)"
-    )
-    decision = import_body.index("ReceiverIncomingPairingPolicy.decision(")
-    reject_different = import_body.index("case .rejectDifferentPending:")
-    resume_matching = import_body.index("case .resumeMatchingPending:")
-    bootstrap_wait = import_body.index("await bootstrap()", resume_matching)
-    tracked_operation = import_body.index("await runTrackedPairingOperation {")
+    assert "preparePairingReview(from: url)" in import_body
+    assert "confirmPairingReview()" not in import_body
+    assert "applyPairingMaterial" not in import_body
+
+    prepare_start = view_model.index("func preparePairingReview(from url: URL)")
+    prepare_end = view_model.index("func confirmPairingReview() async", prepare_start)
+    review_flow = view_model[prepare_start:prepare_end]
+    assert "ReceiverPairingMaterial(deepLink: url)" in review_flow
+    assert "pairingReviewMaterial = .pairing(material)" in review_flow
+    assert "pendingPairingDestinationReview = presentation" in review_flow
+
+    confirm_start = view_model.index("func confirmPairingReview() async")
+    confirm_end = view_model.index("private func applyPairingMaterial(", confirm_start)
+    confirm = view_model[confirm_start:confirm_end]
+    assert "guard let material = pairingReviewMaterial" in confirm
     assert (
-        pending_match
-        < decision
-        < reject_different
-        < resume_matching
-        < bootstrap_wait
-        < tracked_operation
+        "guard privateStorageAdmissionReady, !hasPendingPrivateStorageRecovery"
+        in confirm
     )
-    assert "case .importIncoming:" in import_body
-    assert (
-        "skipAfterBootstrapRecovery: matchesPendingBootstrapInvitation"
-        not in import_body
-    )
-    assert "await self?.performImportPairingURL(url)" in import_body
+    assert "await runTrackedPairingOperation" in confirm
+    assert "case .pairing(let pairing):" in confirm
 
 
 def test_ios_copy_does_not_expose_removed_optional_selection_contract() -> None:

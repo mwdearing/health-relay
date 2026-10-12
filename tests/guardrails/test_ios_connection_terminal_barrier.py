@@ -468,18 +468,22 @@ def test_terminal_transition_suppresses_transitive_task_ui_until_decision() -> N
         ]
         assert "!taskUIPublicationIsSuppressed" in readiness_body
 
-    for pairing_worker in (
-        "private func performResumePendingPairingIfNeeded() async",
-        "private func performImportPairingText() async",
-        "private func performImportPairingURL(_ url: URL) async",
-        "private func performRedeemManualPairing() async",
-    ):
-        pairing_start = source.index(pairing_worker)
-        pairing_body = source[
-            pairing_start : source.index("\n    }", pairing_start) + 6
-        ]
-        assert "!taskUIPublicationIsSuppressed" in pairing_body
-        assert "connectionTerminalBarrier.admissionIsOpen" in pairing_body
+    resume_start = source.index(
+        "private func performResumePendingPairingIfNeeded() async"
+    )
+    resume_body = source[resume_start : source.index("\n    }", resume_start) + 6]
+    assert "!taskUIPublicationIsSuppressed" in resume_body
+    assert "connectionTerminalBarrier.admissionIsOpen" in resume_body
+
+    confirm_start = source.index("func confirmPairingReview() async")
+    confirm_end = source.index("private func applyPairingMaterial(", confirm_start)
+    confirm_body = source[confirm_start:confirm_end]
+    assert (
+        "guard privateStorageAdmissionReady, !hasPendingPrivateStorageRecovery"
+        in confirm_body
+    )
+    assert "await runTrackedPairingOperation" in confirm_body
+    assert "case .pairing(let pairing):" in confirm_body
 
     for property_name in (
         "statusMessage",
