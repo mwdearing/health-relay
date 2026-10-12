@@ -365,8 +365,8 @@ final class ReceiverClientTests: XCTestCase {
         )
         let invitation = try ReceiverPairingInvitation(jsonData: Data(validInvitationJSON.utf8))
 
-        let first = try stateStore.stage(invitation: invitation)
-        let second = try stateStore.stage(invitation: invitation)
+        let first = try stateStore.stage(invitation: invitation, destinationReviewAccepted: true)
+        let second = try stateStore.stage(invitation: invitation, destinationReviewAccepted: true)
 
         XCTAssertEqual(first, second)
         XCTAssertEqual(first.installationID, syntheticInstallationID)
@@ -389,7 +389,7 @@ final class ReceiverClientTests: XCTestCase {
             deviceCredentialGenerator: { syntheticDeviceCredential }
         )
         let invitation = try ReceiverPairingInvitation(jsonData: Data(validInvitationJSON.utf8))
-        _ = try stateStore.stage(invitation: invitation)
+        _ = try stateStore.stage(invitation: invitation, destinationReviewAccepted: true)
         try stateStore.beginPendingCancellation(expectedGeneration: "g1")
 
         try stateStore.resetPrivatePairingState()
@@ -429,8 +429,18 @@ final class ReceiverClientTests: XCTestCase {
         )
 
         XCTAssertEqual(implicitDirect.transport, .direct)
+        XCTAssertFalse(implicitDirect.destinationReviewAccepted)
         XCTAssertEqual(explicitDirect.transport, .direct)
         XCTAssertEqual(explicitMailbox.transport, .mailbox)
+        let reviewed = try JSONDecoder().decode(
+            ReceiverPendingPairing.self,
+            from: adding("  \"destinationReviewAccepted\": true")
+        )
+        XCTAssertTrue(reviewed.destinationReviewAccepted)
+        XCTAssertTrue(try JSONDecoder().decode(
+            ReceiverPendingPairing.self,
+            from: JSONEncoder().encode(reviewed)
+        ).destinationReviewAccepted)
         XCTAssertThrowsError(
             try JSONDecoder().decode(
                 ReceiverPendingPairing.self,
@@ -449,6 +459,107 @@ final class ReceiverClientTests: XCTestCase {
                 from: adding("  \"transport\": \"mailbox\",\n  \"mailboxProtocolVersion\": 2")
             )
         )
+    }
+
+    @MainActor
+    func testPairingCoordinatorRejectsWithoutDestinationReviewBeforeRequest() async throws {
+        let suiteName = "PairingReviewAdmissionTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let stateStore = ReceiverPairingStateStore(
+            pendingStore: MemoryReceiverTokenStore(),
+            installationIDStore: MemoryReceiverTokenStore(),
+            cancellationStore: MemoryReceiverTokenStore()
+        )
+        let coordinator = ReceiverPairingCoordinator(
+            client: makeClient(),
+            stateStore: stateStore,
+            settingsStore: ReceiverSettingsStore(
+                userDefaults: defaults,
+                tokenStore: MemoryReceiverTokenStore()
+            )
+        )
+        let invitation = try ReceiverPairingInvitation(jsonData: Data(validInvitationJSON.utf8))
+        var requests = 0
+        MockURLProtocol.requestHandler = { _ in
+            requests += 1
+            throw URLError(.cancelled)
+        }
+
+        do {
+            _ = try await coordinator.pair(invitation: invitation)
+            XCTFail("Expected destination review to be required")
+        } catch {
+            XCTAssertEqual(error as? ReceiverPairingStateError, .destinationReviewRequired)
+        }
+        XCTAssertEqual(requests, 0)
+        XCTAssertNil(try stateStore.loadPending())
+    }
+
+    @MainActor
+    func testResumeOfLegacyPendingPairingStopsBeforeRedemption() async throws {
+        let suiteName = "LegacyPairingReviewFenceTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let stateStore = ReceiverPairingStateStore(
+            pendingStore: MemoryReceiverTokenStore(),
+            installationIDStore: MemoryReceiverTokenStore(),
+            cancellationStore: MemoryReceiverTokenStore()
+        )
+        let invitation = try ReceiverPairingInvitation(jsonData: Data(validInvitationJSON.utf8))
+        let pending = try stateStore.stage(invitation: invitation)
+        let coordinator = ReceiverPairingCoordinator(
+            client: makeClient(),
+            stateStore: stateStore,
+            settingsStore: ReceiverSettingsStore(
+                userDefaults: defaults,
+                tokenStore: MemoryReceiverTokenStore()
+            )
+        )
+        var requests = 0
+        MockURLProtocol.requestHandler = { _ in
+            requests += 1
+            throw URLError(.cancelled)
+        }
+
+        do {
+            _ = try await coordinator.resumePendingPairing()
+            XCTFail("Expected review before resuming pending pairing")
+        } catch {
+            XCTAssertEqual(error as? ReceiverPairingStateError, .destinationReviewRequired)
+        }
+        XCTAssertEqual(requests, 0)
+        _ = try coordinator.confirmPendingDestinationReview(expected: pending)
+        XCTAssertTrue(try XCTUnwrap(stateStore.loadPending()).destinationReviewAccepted)
+    }
+
+    func testPendingDestinationConfirmationRequiresExactStoredRecord() throws {
+        let pendingStore = MemoryReceiverTokenStore()
+        let stateStore = ReceiverPairingStateStore(
+            pendingStore: pendingStore,
+            installationIDStore: MemoryReceiverTokenStore(),
+            cancellationStore: MemoryReceiverTokenStore(),
+            installationIDGenerator: { syntheticInstallationID },
+            deviceCredentialGenerator: { syntheticDeviceCredential }
+        )
+        let invitation = try ReceiverPairingInvitation(jsonData: Data(validInvitationJSON.utf8))
+        let pending = try stateStore.stage(invitation: invitation)
+        let replaced = ReceiverPendingPairing(
+            label: pending.label,
+            receiverURLString: pending.receiverURLString,
+            redeemURLString: pending.redeemURLString,
+            invitationSecret: "hbi_replaced_synthetic_secret",
+            invitationCode: pending.invitationCode,
+            installationID: pending.installationID,
+            deviceCredential: pending.deviceCredential,
+            platform: pending.platform,
+            transport: pending.transport
+        )
+        try pendingStore.saveToken(String(data: JSONEncoder().encode(replaced), encoding: .utf8)!)
+        XCTAssertThrowsError(try stateStore.confirmPendingDestinationReview(expected: pending)) { error in
+            XCTAssertEqual(error as? ReceiverPairingStateError, .pendingPairingChanged)
+        }
+        XCTAssertFalse(try XCTUnwrap(stateStore.loadPending()).destinationReviewAccepted)
     }
 
     func testNewMailboxPendingRecordSupportsImmediatePhysicalDowngrade() throws {
@@ -491,9 +602,9 @@ final class ReceiverClientTests: XCTestCase {
                 ).utf8
             )
         )
-        let firstPending = try stateStore.stage(invitation: firstInvitation)
+        let firstPending = try stateStore.stage(invitation: firstInvitation, destinationReviewAccepted: true)
 
-        XCTAssertThrowsError(try stateStore.stage(invitation: secondInvitation)) { error in
+        XCTAssertThrowsError(try stateStore.stage(invitation: secondInvitation, destinationReviewAccepted: true)) { error in
             XCTAssertEqual(error as? ReceiverPairingStateError, .pendingPairingConflict)
         }
         XCTAssertEqual(try stateStore.loadPending(), firstPending)
@@ -530,7 +641,7 @@ final class ReceiverClientTests: XCTestCase {
         )
 
         XCTAssertFalse(try coordinator.pendingPairingMatches(firstInvitation))
-        _ = try stateStore.stage(invitation: firstInvitation)
+        _ = try stateStore.stage(invitation: firstInvitation, destinationReviewAccepted: true)
         XCTAssertTrue(try coordinator.pendingPairingMatches(firstInvitation))
         XCTAssertFalse(try coordinator.pendingPairingMatches(secondInvitation))
     }
@@ -573,7 +684,7 @@ final class ReceiverClientTests: XCTestCase {
         )
 
         do {
-            _ = try await coordinator.pair(invitation: invitation)
+            _ = try await coordinator.pair(invitation: invitation, destinationReviewAccepted: true)
             XCTFail("Expected mailbox-key preflight failure")
         } catch {
             XCTAssertEqual(
@@ -618,7 +729,7 @@ final class ReceiverClientTests: XCTestCase {
         MockURLProtocol.requestHandler = { _ in throw URLError(.networkConnectionLost) }
 
         do {
-            _ = try await coordinator.pair(invitation: invitation)
+            _ = try await coordinator.pair(invitation: invitation, destinationReviewAccepted: true)
             XCTFail("Expected response loss")
         } catch {}
 
@@ -678,10 +789,10 @@ final class ReceiverClientTests: XCTestCase {
         }
 
         do {
-            _ = try await coordinator.pair(invitation: invitation)
+            _ = try await coordinator.pair(invitation: invitation, destinationReviewAccepted: true)
             XCTFail("Expected response loss")
         } catch {}
-        let recovered = try await coordinator.pair(invitation: invitation)
+        let recovered = try await coordinator.pair(invitation: invitation, destinationReviewAccepted: true)
 
         XCTAssertEqual(
             submittedCredentials,
@@ -730,7 +841,7 @@ final class ReceiverClientTests: XCTestCase {
         }
 
         do {
-            _ = try await coordinator.pair(invitation: invitation)
+            _ = try await coordinator.pair(invitation: invitation, destinationReviewAccepted: true)
             XCTFail("Expected ambiguous pairing failure")
         } catch let error as ReceiverPairingRedeemError {
             XCTAssertEqual(error, .unsuccessfulStatusCode(408))
@@ -776,7 +887,7 @@ final class ReceiverClientTests: XCTestCase {
         }
 
         let pairingTask = Task {
-            try await coordinator.pair(invitation: invitation)
+            try await coordinator.pair(invitation: invitation, destinationReviewAccepted: true)
         }
         await fulfillment(of: [requestStarted], timeout: 1)
         try coordinator.cancelPendingPairing()
@@ -824,7 +935,7 @@ final class ReceiverClientTests: XCTestCase {
         }
 
         let task = Task {
-            try await coordinator.pair(invitation: invitation)
+            try await coordinator.pair(invitation: invitation, destinationReviewAccepted: true)
         }
         await fulfillment(of: [requestStarted], timeout: 1)
         task.cancel()
@@ -868,7 +979,7 @@ final class ReceiverClientTests: XCTestCase {
             settingsStore: settingsStore
         )
         let invitation = try ReceiverPairingInvitation(jsonData: Data(validInvitationJSON.utf8))
-        _ = try stateStore.stage(invitation: invitation)
+        _ = try stateStore.stage(invitation: invitation, destinationReviewAccepted: true)
         let expectedGeneration = settingsStore.receiverSettingsGenerationToken
 
         try coordinator.beginPendingCancellation(expectedGeneration: expectedGeneration)
@@ -907,7 +1018,7 @@ final class ReceiverClientTests: XCTestCase {
             settingsStore: settingsStore
         )
         let invitation = try ReceiverPairingInvitation(jsonData: Data(validInvitationJSON.utf8))
-        _ = try stateStore.stage(invitation: invitation)
+        _ = try stateStore.stage(invitation: invitation, destinationReviewAccepted: true)
         cancellationStore.shouldFail = true
 
         try coordinator.cancelPendingPairing()
@@ -950,7 +1061,7 @@ final class ReceiverClientTests: XCTestCase {
         let invitation = try ReceiverPairingInvitation(
             jsonData: Data(validInvitationJSON.utf8)
         )
-        _ = try stateStore.stage(invitation: invitation)
+        _ = try stateStore.stage(invitation: invitation, destinationReviewAccepted: true)
         pendingStore.shouldFail = true
 
         let outcome = try coordinator.cancelPendingPairing()
@@ -1025,7 +1136,7 @@ final class ReceiverClientTests: XCTestCase {
             settingsStore: settingsStore
         )
         let invitation = try ReceiverPairingInvitation(jsonData: Data(validInvitationJSON.utf8))
-        _ = try stateStore.stage(invitation: invitation)
+        _ = try stateStore.stage(invitation: invitation, destinationReviewAccepted: true)
         activeStore.shouldFail = true
 
         XCTAssertThrowsError(try coordinator.cancelPendingPairing())
@@ -1236,7 +1347,7 @@ final class ReceiverClientTests: XCTestCase {
         MockURLProtocol.requestHandler = { request in pairingCompletionResponse(for: request) }
 
         do {
-            _ = try await coordinator.pair(invitation: invitation)
+            _ = try await coordinator.pair(invitation: invitation, destinationReviewAccepted: true)
             XCTFail("Expected active Keychain promotion failure")
         } catch {}
 
