@@ -2504,6 +2504,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         }
         pairingReviewMaterial = nil
         pendingPairingDestinationReview = nil
+        var shouldRetryPendingPairing = false
         await runTrackedPairingOperation { [weak self] in
             guard let self else { return }
             self.isPairing = true
@@ -2542,11 +2543,14 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                     self.manualPairingCode = ""
                 case .pending(let pending):
                     _ = try self.pairingCoordinator.confirmPendingDestinationReview(expected: pending)
-                    await self.retryPendingPairing()
+                    shouldRetryPendingPairing = true
                 }
             } catch {
                 self.publishPairingFailure("Pairing failed", error: error)
             }
+        }
+        if shouldRetryPendingPairing {
+            await retryPendingPairing()
         }
     }
 
