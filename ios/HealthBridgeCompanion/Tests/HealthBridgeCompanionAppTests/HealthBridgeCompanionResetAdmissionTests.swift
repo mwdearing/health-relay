@@ -1534,6 +1534,18 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
         XCTAssertEqual(viewModel.pairingImportText, syntheticLink)
         XCTAssertEqual(networkRecorder.invocationCount, 0)
 
+        viewModel.manualPairingServer = "https://manual.example.test/v1/batches"
+        viewModel.manualPairingCode = "ABCDE-FGHJK-MNPQR"
+        viewModel.prepareManualPairingReview()
+        XCTAssertEqual(viewModel.pendingPairingDestinationReview?.receiverAuthority, "manual.example.test")
+        viewModel.manualPairingServer = "https://changed.example.test/v1/batches"
+        XCTAssertNil(viewModel.pendingPairingDestinationReview)
+        XCTAssertEqual(networkRecorder.invocationCount, 0)
+
+        viewModel.preparePairingReview(from: syntheticLink)
+        viewModel.pairingImportText += " "
+        XCTAssertNil(viewModel.pendingPairingDestinationReview)
+        viewModel.pairingImportText = syntheticLink
         viewModel.preparePairingReview(from: syntheticLink)
         await viewModel.confirmPairingReview()
         XCTAssertEqual(networkRecorder.invocationCount, 1)

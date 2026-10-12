@@ -93,12 +93,12 @@ public struct ReceiverPairingDestinationPresentation: Equatable, Sendable {
         let privacySummary: String
         if transport == .mailbox {
             privacySummary = usesHTTPS
-                ? "Mailbox delivery. Pairing details use HTTPS; sync data is delivered through the encrypted mailbox."
-                : "Mailbox delivery. Pairing details use HTTP and are not encrypted in transit."
+                ? "Mailbox delivery is encrypted and delayed. It requires your Mac and is an optional Beta. Pairing details use HTTPS."
+                : "Mailbox delivery is encrypted and delayed. It requires your Mac and is an optional Beta. Pairing details use unencrypted HTTP on a trusted local network only."
         } else {
             privacySummary = usesHTTPS
                 ? "Direct delivery over HTTPS. Pairing details are sent only to this receiver."
-                : "Direct delivery over HTTP. This connection is not encrypted in transit."
+                : "Direct delivery over HTTP is unencrypted. Use HTTP only on a trusted local network."
         }
         return Self(
             receiverAuthority: authority,

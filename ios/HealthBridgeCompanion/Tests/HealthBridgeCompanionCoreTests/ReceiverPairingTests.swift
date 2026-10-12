@@ -56,7 +56,20 @@ final class ReceiverPairingTests: XCTestCase {
         XCTAssertEqual(legacyPresentation.transport, .direct)
         XCTAssertEqual(mailboxPresentation.transport, .mailbox)
         XCTAssertTrue(mailboxPresentation.privacySummary.contains("Mailbox"))
+        XCTAssertTrue(mailboxPresentation.privacySummary.contains("delayed"))
+        XCTAssertTrue(mailboxPresentation.privacySummary.contains("your Mac"))
+        XCTAssertTrue(mailboxPresentation.privacySummary.contains("optional Beta"))
         XCTAssertFalse(mailboxPresentation.privacySummary.contains(mailbox.invitationSecret))
+    }
+
+    func testHTTPDestinationRequiresTrustedLocalNetworkDisclosure() throws {
+        let manual = try ReceiverManualPairing(
+            serverURLString: "http://receiver.local:8080",
+            invitationCode: "ABCDE-FGHJK-MNPQR"
+        )
+        let presentation = try ReceiverPairingDestinationPresentation.from(manualPairing: manual)
+        XCTAssertTrue(presentation.privacySummary.contains("unencrypted"))
+        XCTAssertTrue(presentation.privacySummary.contains("trusted local network"))
     }
 
     func testDecodesReceiverPairingBundleJSON() throws {

@@ -33,6 +33,25 @@ final class CompanionUXStateTests: XCTestCase {
         XCTAssertEqual(CompanionSyncProgressPresentation.label(activeLane: "unsafe"), "Syncing…")
     }
 
+    func testCompletedSyncStillShowsAttentionForErrorOrQueuedUploads() {
+        for snapshot in [
+            CompanionOnboardingSnapshot(
+                hasReceiverSettings: true, healthAccessRequested: true,
+                hasCompletedFirstSync: true, isSyncActive: false,
+                hasCurrentError: true, pendingOutboxCount: 0, hasPendingRecovery: false
+            ),
+            CompanionOnboardingSnapshot(
+                hasReceiverSettings: true, healthAccessRequested: true,
+                hasCompletedFirstSync: true, isSyncActive: false,
+                hasCurrentError: false, pendingOutboxCount: 1, hasPendingRecovery: false
+            ),
+        ] {
+            let steps = CompanionOnboardingPresentation.steps(from: snapshot)
+            XCTAssertEqual(steps.last?.state, .needsAttention)
+            XCTAssertEqual(steps.last?.title, "Sync needs attention")
+        }
+    }
+
     func testSetupStateIsUnpairedWhenReceiverSettingsAreIncomplete() {
         let snapshot = CompanionSetupSnapshot(
             receiverURLString: "",

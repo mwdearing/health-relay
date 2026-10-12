@@ -57,8 +57,11 @@ public enum CompanionOnboardingPresentation {
             : (!snapshot.healthAccessRequested ? .requestHealthAccess : .firstSync)
         let needsAttention = snapshot.hasPendingRecovery || snapshot.hasCurrentError || snapshot.pendingOutboxCount > 0
         func state(_ step: CompanionOnboardingStep, completed: Bool) -> CompanionOnboardingStepState {
-            if completed { return .complete }
             if step == .reviewSyncPreferences { return .optional }
+            if step == .firstSync, snapshot.hasCompletedFirstSync, needsAttention {
+                return .needsAttention
+            }
+            if completed { return .complete }
             if step == unfinished {
                 if needsAttention { return .needsAttention }
                 return snapshot.isSyncActive ? .inProgress : .current
@@ -69,7 +72,14 @@ public enum CompanionOnboardingPresentation {
             CompanionOnboardingStepPresentation(step: .connectReceiver, state: state(.connectReceiver, completed: snapshot.hasReceiverSettings), title: "Connect your receiver", detail: "Choose the server that receives this iPhone’s sync."),
             CompanionOnboardingStepPresentation(step: .requestHealthAccess, state: state(.requestHealthAccess, completed: snapshot.healthAccessRequested), title: "Choose Health access", detail: snapshot.healthAccessRequested ? "The read-only access request was made. Review allowed data in Apple Health." : "Request read-only access and choose what to share."),
             CompanionOnboardingStepPresentation(step: .reviewSyncPreferences, state: .optional, title: "Review sync preferences", detail: "Optional: adjust background delivery and sync preferences."),
-            CompanionOnboardingStepPresentation(step: .firstSync, state: state(.firstSync, completed: snapshot.hasCompletedFirstSync), title: "Run your first sync", detail: "Use Sync Now to send allowed data to your receiver."),
+            CompanionOnboardingStepPresentation(
+                step: .firstSync,
+                state: state(.firstSync, completed: snapshot.hasCompletedFirstSync),
+                title: snapshot.hasCompletedFirstSync && needsAttention ? "Sync needs attention" : "Run your first sync",
+                detail: snapshot.hasCompletedFirstSync && needsAttention
+                    ? "Review the current error or pending uploads before continuing."
+                    : "Use Sync Now to send allowed data to your receiver."
+            ),
         ]
     }
 }
