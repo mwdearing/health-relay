@@ -1555,6 +1555,60 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
         )
     }
 
+    func testConfirmingRecoveredPairingCompletesWithoutNestedTrackedOperation() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RecoveredPairingReviewTests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let suiteName = "RecoveredPairingReviewTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settingsStore = ReceiverSettingsStore(
+            userDefaults: defaults,
+            tokenStore: MemoryReceiverTokenStore(),
+            synchronize: { true }
+        )
+        let pairingStateStore = ReceiverPairingStateStore(
+            pendingStore: MemoryReceiverTokenStore(),
+            installationIDStore: MemoryReceiverTokenStore(),
+            cancellationStore: MemoryReceiverTokenStore()
+        )
+        _ = try pairingStateStore.stage(
+            invitation: syntheticInvitation(),
+            destinationReviewAccepted: false
+        )
+        let outbox = try FileOutbox(directory: root.appendingPathComponent("outbox"))
+        let networkRecorder = PayloadFenceNetworkRecorder()
+        PayloadFenceURLProtocol.networkRecorder = networkRecorder
+        defer { PayloadFenceURLProtocol.networkRecorder = nil }
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [PayloadFenceURLProtocol.self]
+        let viewModel = try makeViewModel(
+            root: root,
+            defaults: defaults,
+            settingsStore: settingsStore,
+            pairingStateStore: pairingStateStore,
+            outbox: outbox,
+            receiverClient: ReceiverClient(session: URLSession(configuration: sessionConfiguration))
+        )
+        await viewModel.bootstrap()
+        XCTAssertNotNil(viewModel.pendingPairingDestinationReview)
+        XCTAssertEqual(networkRecorder.invocationCount, 0)
+
+        let confirmationFinished = expectation(description: "recovered pairing confirmation finishes")
+        Task { @MainActor in
+            await viewModel.confirmPairingReview()
+            confirmationFinished.fulfill()
+        }
+
+        let result = await XCTWaiter.fulfillment(of: [confirmationFinished], timeout: 3)
+        XCTAssertEqual(result, .completed)
+        XCTAssertEqual(networkRecorder.requestURLs.map(\.absoluteString), [
+            "http://127.0.0.1:8765/v1/pairing/redeem",
+        ])
+    }
+
     private func makeViewModel(
         root: URL,
         defaults: UserDefaults,
