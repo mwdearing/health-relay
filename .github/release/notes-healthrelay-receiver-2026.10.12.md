@@ -1,4 +1,4 @@
-# HealthRelay receiver release healthrelay-receiver-2026.10.06
+# HealthRelay receiver release healthrelay-receiver-2026.10.12
 
 **Receiver-only pinned release.** This release does not change the receiver package version: it stays
 `1.1.1`, the version the Mailbox helper manifests are bound to. The tag, not the version number,
@@ -6,8 +6,8 @@ identifies the code.
 
 | Field | Value |
 | --- | --- |
-| Tag | `healthrelay-receiver-2026.10.06` |
-| Base commit | `15cc160` |
+| Tag | `healthrelay-receiver-2026.10.12` |
+| Base commit | `0b0aee6` |
 | Receiver/CLI package version | `1.1.1` (unchanged) |
 | Batch Protocol | `health_bridge.batch.v1` (`1.0.0`, unchanged) |
 
@@ -16,6 +16,12 @@ release) and it is not a pre-release. `receiver-v*` and `ios-v*` tags are never 
 repository, so this tag matches no workflow tag trigger.
 
 ## What this receiver adds that matters to plugin users
+
+- **The MCP server answers `ping`.** A client that sends the standard JSON-RPC `ping` used to get
+  `Method not found`. It now receives an empty result with its request ID preserved, without opening the
+  database. The nine read-only tools and their schemas are unchanged.
+- **Supersedes the unpublished 2026.10.06 notes.** The source-binding and export-claim changes below were
+  prepared as release `2026.10.06`, which was never tagged; they ship here with the ping fix.
 
 - **Source binding now covers electrocardiograms and medication dose events.** A device-bound token's
   batch was bound to its installation for samples, workouts, sleep, deletions, lab results and cursors,
@@ -81,7 +87,7 @@ pending. A Direct batch that trips this refusal therefore keeps retrying until t
 ## Install or upgrade the receiver
 
 ```bash
-uv tool install "git+https://github.com/mwdearing/health-relay.git@healthrelay-receiver-2026.10.06"
+uv tool install "git+https://github.com/mwdearing/health-relay.git@healthrelay-receiver-2026.10.12"
 ```
 
 ## Verify what you have
@@ -90,9 +96,9 @@ uv tool install "git+https://github.com/mwdearing/health-relay.git@healthrelay-r
 cat "$(uv tool dir)"/apple-health-ai-bridge/lib/python*/site-packages/apple_health_ai_bridge-*.dist-info/direct_url.json
 ```
 
-`vcs_info.requested_revision` must be `healthrelay-receiver-2026.10.06`, and `vcs_info.commit_id` must
+`vcs_info.requested_revision` must be `healthrelay-receiver-2026.10.12`, and `vcs_info.commit_id` must
 equal the commit the release tag points to (`git ls-remote
-https://github.com/mwdearing/health-relay.git refs/tags/healthrelay-receiver-2026.10.06`).
+https://github.com/mwdearing/health-relay.git refs/tags/healthrelay-receiver-2026.10.12`).
 
 ## Privacy and operating boundaries
 

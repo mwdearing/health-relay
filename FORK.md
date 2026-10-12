@@ -31,6 +31,7 @@ receiver-specific parts stay here.
 - Version: do not bump the iOS version by hand. The `Build unsigned IPA` workflow stamps both the marketing version and the build number as `1.2.<run number>`; the tracked values (`MARKETING_VERSION` 1.2.0, `CURRENT_PROJECT_VERSION` 50, `component-versions.json` `ios_companion`) are placeholders that never change on an app change.
 
 ## Modifications (newest first)
+- 2026-10-12 (`0b0aee6`): pinned receiver release `healthrelay-receiver-2026.10.12`, notes in `.github/release/notes-healthrelay-receiver-2026.10.12.md`. It carries the source-binding and export-claim refusals (#103, #110, prepared as the never-tagged `2026.10.06`, whose notes file this one replaces) and the MCP `ping` response from upstream `d97e15f` (#142). Package version unchanged.
 - 2026-10-04 (`0b42c4f`): pinned receiver releases. A receiver release in this fork is the tag
   `healthrelay-receiver-<YYYY.MM.DD>` on an immutable merge commit, created through `gh release
   create` with `--latest=false`; the first one is `healthrelay-receiver-2026.10.04`, with notes in
