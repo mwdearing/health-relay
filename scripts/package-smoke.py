@@ -179,6 +179,49 @@ def verify_crypto_primitives(python: Path, *, cwd: Path) -> None:
     _ = run([str(python), "-c", CRYPTO_IMPORT], cwd=cwd)
 
 
+def install_locked_wheel(
+    uv: str, python: Path, wheel: Path, *, temp_root: Path
+) -> None:
+    """Install the runtime tree pinned in uv.lock, then the wheel without deps.
+
+    Dependencies are never resolved at smoke time: the lock is exported with
+    hashes and installed with ``--require-hashes``, so a wheel that needs an
+    unlocked dependency fails the smoke instead of pulling the latest release.
+    """
+    requirements = temp_root / "runtime-requirements.txt"
+    _ = run(
+        [
+            uv,
+            "export",
+            "--locked",
+            "--no-dev",
+            "--no-emit-project",
+            "--format",
+            "requirements-txt",
+            "--output-file",
+            str(requirements),
+        ],
+        cwd=ROOT,
+    )
+    _ = run(
+        [
+            uv,
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            "--require-hashes",
+            "--requirement",
+            str(requirements),
+        ],
+        cwd=temp_root,
+    )
+    _ = run(
+        [uv, "pip", "install", "--python", str(python), "--no-deps", str(wheel)],
+        cwd=temp_root,
+    )
+
+
 def smoke_installed_wheel(wheel: Path, expected_migrations: list[str]) -> None:
     """Install the wheel cleanly and run synthetic CLI/MCP checks."""
     uv = shutil.which("uv")
@@ -190,10 +233,7 @@ def smoke_installed_wheel(wheel: Path, expected_migrations: list[str]) -> None:
         venv = temp_root / "venv"
         _ = run([uv, "venv", str(venv)], cwd=temp_root)
         python = venv_executable(venv, "python")
-        _ = run(
-            [uv, "pip", "install", "--python", str(python), str(wheel)],
-            cwd=temp_root,
-        )
+        install_locked_wheel(uv, python, wheel, temp_root=temp_root)
         verify_crypto_primitives(python, cwd=temp_root)
         _ = run([str(python), "-c", QA_RUNTIME_IMPORTS], cwd=temp_root)
         cli = venv_executable(venv, "health-bridge")

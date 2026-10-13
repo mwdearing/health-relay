@@ -24,6 +24,12 @@ def run_strict_audit(
         candidate_text,
         encoding="utf-8",
     )
+    # Strict mode fails closed without the operator's denylist, so supply an
+    # empty synthetic one; it stays untracked and is not scanned.
+    _ = (tmp_path / ".public-release-denylist.local").write_text(
+        "# synthetic empty denylist for fixture repositories\n",
+        encoding="utf-8",
+    )
     _ = subprocess.run([git, "init", "-q"], cwd=tmp_path, check=True)
     _ = subprocess.run(
         [git, "add", "scripts/public-release-audit.py", candidate_path],

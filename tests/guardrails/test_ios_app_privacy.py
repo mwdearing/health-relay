@@ -622,7 +622,12 @@ def test_public_release_audit_does_not_echo_marker_or_strict_context_values(
 
 def test_public_release_audit_passes_its_real_tracked_tree() -> None:
     completed = subprocess.run(
-        [sys.executable, "scripts/public-release-audit.py", "--strict"],
+        [
+            sys.executable,
+            "scripts/public-release-audit.py",
+            "--strict",
+            "--allow-missing-local-denylist",
+        ],
         check=False,
         capture_output=True,
         text=True,
@@ -630,6 +635,7 @@ def test_public_release_audit_passes_its_real_tracked_tree() -> None:
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "strict_blockers=0" in completed.stdout
+    assert "local_denylist_consulted=" in completed.stdout
     assert "unreviewed_binaryish_tracked_files=0" in completed.stdout
 
 

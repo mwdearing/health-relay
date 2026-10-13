@@ -24,8 +24,8 @@ def _valid_evidence() -> dict[str, object]:
         "schema_version": 1,
         "synthetic": False,
         "candidate": {
-            "marketing_version": "1.0.0",
-            "build_number": 15,
+            "marketing_version": "1.2.2",
+            "build_number": 101,
             "source_tree": EXPECTED_SOURCE_TREE,
             "executable_sha256": EXPECTED_APP_SHA256,
         },
@@ -128,6 +128,20 @@ def _delete_path(document: dict[str, object], path: str) -> None:
     del _nested_object(document, parent_path)[key]
 
 
+def _write_component_versions(tmp_path: Path) -> Path:
+    path = tmp_path / "component-versions.json"
+    _ = path.write_text(
+        json.dumps(
+            {
+                "ios_companion": {"build": "50", "marketing_version": "1.2.2"},
+                "release_scope": "ios",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def _run_validator(
     tmp_path: Path,
     evidence: dict[str, object],
@@ -149,6 +163,8 @@ def _run_validator(
             expected_app_sha256,
             "--expected-receiver-sha256",
             expected_receiver_sha256,
+            "--component-versions",
+            str(_write_component_versions(tmp_path)),
         ],
         check=False,
         capture_output=True,
@@ -173,6 +189,8 @@ def _run_raw_validator(
             EXPECTED_APP_SHA256,
             "--expected-receiver-sha256",
             EXPECTED_RECEIVER_SHA256,
+            "--component-versions",
+            str(_write_component_versions(tmp_path)),
         ],
         check=False,
         capture_output=True,
@@ -187,6 +205,80 @@ def test_fresh_device_evidence_validator_accepts_complete_aggregate_evidence(
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "fresh-device evidence: PASS"
+
+
+def test_fresh_device_evidence_validator_accepts_newer_declared_build(
+    tmp_path: Path,
+) -> None:
+    # Given: a candidate build newer than the declared floor of the same version.
+    evidence = _valid_evidence()
+    _set_path(evidence, "candidate.build_number", 120)
+
+    # When: the validator checks it against the declared component versions.
+    completed = _run_validator(tmp_path, evidence)
+
+    # Then: the newer build passes.
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "fresh-device evidence: PASS"
+
+
+def test_fresh_device_evidence_validator_refuses_stale_build(
+    tmp_path: Path,
+) -> None:
+    # Given: a candidate build older than the declared build (the retired pin 15).
+    evidence = _valid_evidence()
+    _set_path(evidence, "candidate.build_number", 15)
+
+    # When: the validator checks it.
+    completed = _run_validator(tmp_path, evidence)
+
+    # Then: it refuses the stale build by field name only.
+    assert completed.returncode == 1
+    assert "stale candidate build: candidate.build_number" in completed.stderr
+
+
+def test_fresh_device_evidence_validator_refuses_other_marketing_version(
+    tmp_path: Path,
+) -> None:
+    # Given: a candidate marketing version that differs from the declared one.
+    evidence = _valid_evidence()
+    _set_path(evidence, "candidate.marketing_version", "1.0.0")
+
+    # When: the validator checks it.
+    completed = _run_validator(tmp_path, evidence)
+
+    # Then: it refuses the candidate identity.
+    assert completed.returncode == 1
+    assert "invalid field: candidate.marketing_version" in completed.stderr
+
+
+def test_fresh_device_evidence_validator_defaults_to_repository_declared_version(
+    tmp_path: Path,
+) -> None:
+    # Given: evidence for the version the repository currently declares.
+    path = tmp_path / "private-evidence.json"
+    _ = path.write_text(json.dumps(_valid_evidence()), encoding="utf-8")
+
+    # When: no component-versions path is given.
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(VALIDATOR),
+            str(path),
+            "--expected-source-tree",
+            EXPECTED_SOURCE_TREE,
+            "--expected-app-sha256",
+            EXPECTED_APP_SHA256,
+            "--expected-receiver-sha256",
+            EXPECTED_RECEIVER_SHA256,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    # Then: the repository's declared marketing version is the default truth.
+    assert completed.returncode == 0, completed.stderr
 
 
 @pytest.mark.parametrize(

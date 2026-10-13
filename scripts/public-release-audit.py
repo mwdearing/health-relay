@@ -722,6 +722,37 @@ def scan_strict_blockers(paths: Iterable[Path]) -> list[str]:
     return blockers
 
 
+def local_denylist_consulted() -> bool:
+    return any(path.exists() for path in LOCAL_DENYLIST_FILES)
+
+
+def strict_audit_blockers(
+    paths: list[Path], *, allow_missing_denylist: bool
+) -> list[str]:
+    if local_denylist_consulted():
+        return scan_strict_blockers(paths)
+    if allow_missing_denylist:
+        # CI opt-out only: the private values are not checked, and the summary says so.
+        return []
+    # Fail closed: without the operator's values a strict run proves nothing
+    # about them, so it must not report the same PASS as a checked run.
+    names = ", ".join(path.as_posix() for path in LOCAL_DENYLIST_FILES)
+    return [f"local-denylist missing: {names}; strict private values were not checked"]
+
+
+def strict_pass_line() -> str:
+    if local_denylist_consulted():
+        count = len(local_strict_patterns())
+        return (
+            "PASS: no strict public-surface blockers found "
+            f"({count} local denylist patterns)."
+        )
+    return (
+        "PASS: no strict public-surface blockers found in the tracked tree, but the "
+        "local denylist was NOT consulted (--allow-missing-local-denylist)."
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -729,6 +760,15 @@ def main() -> int:
         type=int,
         default=80,
         help="Maximum marker lines to print before truncating output.",
+    )
+    parser.add_argument(
+        "--allow-missing-local-denylist",
+        action="store_true",
+        help=(
+            "CI only: let --strict pass when the private local denylist is absent. "
+            "The summary then reports that it was not consulted. Release operators "
+            "must run --strict with the local denylist present before tagging."
+        ),
     )
     parser.add_argument(
         "--strict",
@@ -749,7 +789,13 @@ def main() -> int:
         and not is_intentional_visual_asset(path)
     ]
     marker_hits = scan_markers(paths)
-    strict_blockers = scan_strict_blockers(paths) if args.strict else []
+    strict_blockers = (
+        strict_audit_blockers(
+            paths, allow_missing_denylist=args.allow_missing_local_denylist
+        )
+        if args.strict
+        else []
+    )
 
     print("Public release tracked-file audit")
     print(f"tracked_files={len(paths)}")
@@ -766,6 +812,7 @@ def main() -> int:
 
     if args.strict:
         print(f"strict_blockers={len(strict_blockers)}")
+        print(f"local_denylist_consulted={str(local_denylist_consulted()).lower()}")
         for blocker in strict_blockers:
             print(f"STRICT {blocker}")
 
@@ -785,7 +832,7 @@ def main() -> int:
         "release."
     )
     if args.strict:
-        print("PASS: no strict public-surface blockers found.")
+        print(strict_pass_line())
     return 0
 
 
