@@ -407,10 +407,28 @@ class DeletedRecord(StrictModel):
     deleted_at: UtcTimestamp
 
 
+SLEEP_BASELINE_RESET_KIND: Final = "anchored_sleep_baseline_reset"
+ORDERED_SLEEP_RESET_PATTERN: Final = re.compile(r"^v2:([1-9][0-9]{0,18})$")
+
+
 class SyncCursor(StrictModel):
     source_key: SyntheticSourceKey
     cursor_kind: NonEmptyString
     cursor_value: NonEmptyString
+
+    @model_validator(mode="after")
+    def reject_unbounded_sleep_reset_epoch(self) -> Self:
+        # The epoch is stored as a signed 64-bit integer, and an unbounded digit run
+        # would make int() raise instead of refusing the batch (RELAY-S11).
+        if self.cursor_kind != SLEEP_BASELINE_RESET_KIND:
+            return self
+        if not self.cursor_value.startswith("v2:"):
+            return self
+        match = ORDERED_SLEEP_RESET_PATTERN.fullmatch(self.cursor_value)
+        if match is None or int(match.group(1)) > INT64_MAX:
+            message = "sleep baseline reset has an invalid ordered epoch"
+            raise ValueError(message)
+        return self
 
 
 class SyncContext(StrictModel):
