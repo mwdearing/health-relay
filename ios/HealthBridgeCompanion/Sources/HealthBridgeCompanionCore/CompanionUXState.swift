@@ -36,6 +36,20 @@ public enum CompanionOnboardingStepState: Equatable, Sendable {
     case complete, current, upcoming, optional, inProgress, needsAttention
 }
 
+public extension CompanionOnboardingStepState {
+    /// Spoken state for VoiceOver; the icon alone does not convey it.
+    var accessibilityDescription: String {
+        switch self {
+        case .complete: "Complete"
+        case .current: "Next step"
+        case .upcoming: "Not started"
+        case .optional: "Optional"
+        case .inProgress: "In progress"
+        case .needsAttention: "Needs attention"
+        }
+    }
+}
+
 public struct CompanionOnboardingStepPresentation: Equatable, Sendable {
     public let step: CompanionOnboardingStep
     public let state: CompanionOnboardingStepState
@@ -55,7 +69,9 @@ public enum CompanionOnboardingPresentation {
         let unfinished: CompanionOnboardingStep = !snapshot.hasReceiverSettings
             ? .connectReceiver
             : (!snapshot.healthAccessRequested ? .requestHealthAccess : .firstSync)
-        let needsAttention = snapshot.hasPendingRecovery || snapshot.hasCurrentError || snapshot.pendingOutboxCount > 0
+        // Uploads queued while a sync is running are normal progress; they only need attention once the sync has stopped.
+        let queuedUploadsNeedAttention = snapshot.pendingOutboxCount > 0 && !snapshot.isSyncActive
+        let needsAttention = snapshot.hasPendingRecovery || snapshot.hasCurrentError || queuedUploadsNeedAttention
         func state(_ step: CompanionOnboardingStep, completed: Bool) -> CompanionOnboardingStepState {
             if step == .reviewSyncPreferences { return .optional }
             if step == .firstSync, snapshot.hasCompletedFirstSync, needsAttention {
@@ -64,19 +80,20 @@ public enum CompanionOnboardingPresentation {
             if completed { return .complete }
             if step == unfinished {
                 if needsAttention { return .needsAttention }
-                return snapshot.isSyncActive ? .inProgress : .current
+                return snapshot.isSyncActive && step == .firstSync ? .inProgress : .current
             }
             return .upcoming
         }
+        let firstSyncState = state(.firstSync, completed: snapshot.hasCompletedFirstSync)
         return [
             CompanionOnboardingStepPresentation(step: .connectReceiver, state: state(.connectReceiver, completed: snapshot.hasReceiverSettings), title: "Connect your receiver", detail: "Choose the server that receives this iPhone’s sync."),
             CompanionOnboardingStepPresentation(step: .requestHealthAccess, state: state(.requestHealthAccess, completed: snapshot.healthAccessRequested), title: "Choose Health access", detail: snapshot.healthAccessRequested ? "The read-only access request was made. Review allowed data in Apple Health." : "Request read-only access and choose what to share."),
             CompanionOnboardingStepPresentation(step: .reviewSyncPreferences, state: .optional, title: "Review sync preferences", detail: "Optional: adjust background delivery and sync preferences."),
             CompanionOnboardingStepPresentation(
                 step: .firstSync,
-                state: state(.firstSync, completed: snapshot.hasCompletedFirstSync),
-                title: snapshot.hasCompletedFirstSync && needsAttention ? "Sync needs attention" : "Run your first sync",
-                detail: snapshot.hasCompletedFirstSync && needsAttention
+                state: firstSyncState,
+                title: firstSyncState == .needsAttention ? "Sync needs attention" : "Run your first sync",
+                detail: firstSyncState == .needsAttention
                     ? "Review the current error or pending uploads before continuing."
                     : "Use Sync Now to send allowed data to your receiver."
             ),

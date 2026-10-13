@@ -158,6 +158,7 @@ struct ContentView: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
+                .accessibilityValue(step.state.accessibilityDescription)
             }
         }
         .cardStyle()

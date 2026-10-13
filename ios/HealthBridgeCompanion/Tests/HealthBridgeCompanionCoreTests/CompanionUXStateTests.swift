@@ -52,6 +52,58 @@ final class CompanionUXStateTests: XCTestCase {
         }
     }
 
+    func testActiveSyncWithQueuedUploadsIsProgressNotAttention() {
+        let steps = CompanionOnboardingPresentation.steps(from: CompanionOnboardingSnapshot(
+            hasReceiverSettings: true, healthAccessRequested: true,
+            hasCompletedFirstSync: true, isSyncActive: true,
+            hasCurrentError: false, pendingOutboxCount: 3, hasPendingRecovery: false
+        ))
+        XCTAssertEqual(steps.last?.state, .complete)
+        XCTAssertEqual(steps.last?.title, "Run your first sync")
+    }
+
+    func testActiveSyncStillShowsAttentionForErrorOrRecovery() {
+        for snapshot in [
+            CompanionOnboardingSnapshot(
+                hasReceiverSettings: true, healthAccessRequested: true,
+                hasCompletedFirstSync: true, isSyncActive: true,
+                hasCurrentError: true, pendingOutboxCount: 0, hasPendingRecovery: false
+            ),
+            CompanionOnboardingSnapshot(
+                hasReceiverSettings: true, healthAccessRequested: true,
+                hasCompletedFirstSync: true, isSyncActive: true,
+                hasCurrentError: false, pendingOutboxCount: 2, hasPendingRecovery: true
+            ),
+        ] {
+            let steps = CompanionOnboardingPresentation.steps(from: snapshot)
+            XCTAssertEqual(steps.last?.state, .needsAttention)
+        }
+    }
+
+    func testAttentionBeforeFirstSyncExplainsItself() {
+        let steps = CompanionOnboardingPresentation.steps(from: CompanionOnboardingSnapshot(
+            hasReceiverSettings: true, healthAccessRequested: true,
+            hasCompletedFirstSync: false, isSyncActive: false,
+            hasCurrentError: true, pendingOutboxCount: 0, hasPendingRecovery: false
+        ))
+        XCTAssertEqual(steps.last?.state, .needsAttention)
+        XCTAssertEqual(steps.last?.title, "Sync needs attention")
+    }
+
+    func testActiveSyncMarksOnlyTheSyncStepInProgress() {
+        let steps = CompanionOnboardingPresentation.steps(from: CompanionOnboardingSnapshot(
+            hasReceiverSettings: false, healthAccessRequested: false,
+            hasCompletedFirstSync: false, isSyncActive: true,
+            hasCurrentError: false, pendingOutboxCount: 0, hasPendingRecovery: false
+        ))
+        XCTAssertFalse(steps.contains { $0.state == .inProgress })
+    }
+
+    func testEveryOnboardingStateHasASpokenDescription() {
+        let states: [CompanionOnboardingStepState] = [.complete, .current, .upcoming, .optional, .inProgress, .needsAttention]
+        XCTAssertEqual(Set(states.map(\.accessibilityDescription)).count, states.count)
+    }
+
     func testSetupStateIsUnpairedWhenReceiverSettingsAreIncomplete() {
         let snapshot = CompanionSetupSnapshot(
             receiverURLString: "",

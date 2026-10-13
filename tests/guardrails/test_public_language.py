@@ -431,9 +431,9 @@ def test_current_component_identities_are_explicit() -> None:
     assert 'version = "1.1.1"' in pyproject
     assert '__version__: Final = "1.1.1"' in package_init
     assert '"version": "1.1.1"' in server_manifest
-    assert xcode_project.count("MARKETING_VERSION = 1.2.1;") == 2
+    assert xcode_project.count("MARKETING_VERSION = 1.2.2;") == 2
     assert xcode_project.count("CURRENT_PROJECT_VERSION = 50;") == 2
-    assert '?? "1.2.1"' not in content_view
+    assert '?? "1.2.2"' not in content_view
     assert "versionLine(" in content_view
     assert "pre-1.0" not in security
 

@@ -246,7 +246,7 @@ The repository contains independently released components. Always include the co
 | Surface | Current version | Identifier |
 | --- | --- | --- |
 | Receiver/CLI | `1.1.1` | `version` in `pyproject.toml`, installed from `main` |
-| iOS Companion (HealthRelay) | `1.2.1` | release tag `app-v<marketing-version>` for the notes; build number = the workflow run that built it (signed beta builds add 100) |
+| iOS Companion (HealthRelay) | `1.2.2` | release tag `app-v<marketing-version>` for the notes; build number = the workflow run that built it (signed beta builds add 100) |
 | Batch Protocol | `1.0.0` | `health_bridge.batch.v1` |
 
 These numbers do not need to match. Receiver-only fixes must not force an unchanged iOS Companion update, and compatible product patches must not bump the Batch Protocol. The versions in the table above are authoritative for HealthRelay; [`component-versions.json`](component-versions.json) is upstream bookkeeping. See the complete [versioning and compatibility policy](docs/versioning.md).
