@@ -18,6 +18,9 @@ from pathlib import Path
 from typing import Any
 
 MAX_OFFLINE_PREFLIGHT_SECONDS = 8.0
+DEFAULT_COMPONENT_VERSIONS = (
+    Path(__file__).resolve().parents[1] / "component-versions.json"
+)
 LEAF = None
 EVIDENCE_SCHEMA: dict[str, Any] = {
     "schema_version": LEAF,
@@ -208,18 +211,36 @@ def _require_bound_hash(
         raise ValueError(f"candidate binding mismatch: {path}")
 
 
-def validate(  # noqa: PLR0915
+def _declared_ios_companion(path: Path) -> tuple[str, int]:
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    companion = raw.get("ios_companion") if isinstance(raw, dict) else None
+    if not isinstance(companion, dict):
+        raise ValueError("invalid component versions: ios_companion")
+    marketing_version = companion.get("marketing_version")
+    build = companion.get("build")
+    if not isinstance(marketing_version, str) or not isinstance(build, str):
+        raise ValueError("invalid component versions: ios_companion")
+    if not build.isdigit():
+        raise ValueError("invalid component versions: ios_companion.build")
+    return marketing_version, int(build)
+
+
+def validate(  # noqa: PLR0913, PLR0915
     document: dict[str, Any],
     *,
     expected_source_tree: str,
     expected_app_sha256: str,
     expected_receiver_sha256: str,
+    declared_marketing_version: str,
+    declared_build_number: int,
 ) -> None:
     _validate_structure(document, EVIDENCE_SCHEMA)
     _require_equal(document, "schema_version", 1)
     _require_equal(document, "synthetic", False)
-    _require_equal(document, "candidate.marketing_version", "1.0.0")
-    _require_equal(document, "candidate.build_number", 15)
+    _require_equal(document, "candidate.marketing_version", declared_marketing_version)
+    build_number = _require_integer(document, "candidate.build_number", minimum=1)
+    if build_number < declared_build_number:
+        raise ValueError("stale candidate build: candidate.build_number")
     _require_bound_hash(document, "candidate.source_tree", expected_source_tree, 40)
     _require_bound_hash(
         document,
@@ -365,13 +386,24 @@ def main() -> int:
     parser.add_argument("--expected-source-tree", required=True)
     parser.add_argument("--expected-app-sha256", required=True)
     parser.add_argument("--expected-receiver-sha256", required=True)
+    parser.add_argument(
+        "--component-versions",
+        type=Path,
+        default=DEFAULT_COMPONENT_VERSIONS,
+        help="Declared iOS companion version source; candidates must match it.",
+    )
     args = parser.parse_args()
     try:
+        marketing_version, build_number = _declared_ios_companion(
+            args.component_versions
+        )
         validate(
             _parse_document(args.evidence),
             expected_source_tree=args.expected_source_tree,
             expected_app_sha256=args.expected_app_sha256,
             expected_receiver_sha256=args.expected_receiver_sha256,
+            declared_marketing_version=marketing_version,
+            declared_build_number=build_number,
         )
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         print(f"fresh-device evidence: FAIL ({exc})", file=sys.stderr)
