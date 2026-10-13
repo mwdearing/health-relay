@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias, assert_never, final
 
+from health_bridge.ingest import UndeclaredReferenceError
 from health_bridge.receiver.batch_acceptance import (
     BatchAcceptanceCore,
     BatchAcceptanceInput,
@@ -79,6 +80,8 @@ class DirectHTTPAcceptance:
             )
         except StaleOrderedSleepBaselineResetError as exc:
             return DirectBatchSleepBaselineConflict(exc.current_epoch)
+        except UndeclaredReferenceError:
+            return DirectBatchPayloadInvalid()
         except (sqlite3.Error, OSError):
             return DirectBatchStorageUnavailable()
         return DirectBatchAccepted(result)

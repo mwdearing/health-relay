@@ -16,7 +16,7 @@ from health_bridge.contract.batch_v1 import (
     SyncCursor,
     TimeWindow,
 )
-from health_bridge.ingest import ingest_batch, ingest_fixture
+from health_bridge.ingest import UndeclaredReferenceError, ingest_batch, ingest_fixture
 from health_bridge.storage import initialize_database
 from health_bridge.storage.sqlite_rows import fetch_one_int
 
@@ -176,7 +176,7 @@ def test_ingest_fixture_records_failed_sync_run_when_schema_version_is_invalid(
     assert "2.0.0" not in row[1]
 
 
-def test_ingest_fixture_records_failed_sync_run_when_storage_write_fails(
+def test_ingest_fixture_refuses_undeclared_source_without_sync_run(
     tmp_path: Path,
 ) -> None:
     # Given
@@ -194,23 +194,15 @@ def test_ingest_fixture_records_failed_sync_run_when_storage_write_fails(
     initialize_database(db_path)
 
     # When / Then
-    with pytest.raises(sqlite3.Error):
+    with pytest.raises(UndeclaredReferenceError):
         _ = ingest_fixture(db_path, invalid_storage_path)
 
     with sqlite3.connect(db_path) as connection:
         sync_runs_count = fetch_count(connection, "sync_runs")
         samples_count = fetch_count(connection, "samples")
-        row = FAILED_SYNC_ROW_ADAPTER.validate_python(
-            connection.execute(
-                FAILED_SYNC_RUN_SQL,
-            ).fetchone(),
-        )
 
-    assert sync_runs_count == 1
+    assert sync_runs_count == 0
     assert samples_count == 0
-    assert row is not None
-    assert row[0] == "failed"
-    assert row[1] == "Fixture records could not be stored."
 
 
 def test_ingest_fixture_counts_unique_logical_records_when_batch_has_duplicates(

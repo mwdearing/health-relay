@@ -231,7 +231,7 @@
         "symptoms_status": { "enum": ["not_set", "none", "present"] },
         "average_heart_rate_bpm": { "type": "number", "minimum": 0 },
         "sampling_frequency_hz": { "type": "number", "minimum": 0 },
-        "voltage_count": { "type": "integer", "minimum": 0 },
+        "voltage_count": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 },
         "voltages_microvolts": { "type": "array", "items": { "type": "number" } }
       }
     },
@@ -262,7 +262,7 @@
             "unknown"
           ]
         },
-        "status_raw": { "type": "integer" },
+        "status_raw": { "type": "integer", "minimum": -9223372036854775808, "maximum": 9223372036854775807 },
         "start_time": { "$ref": "#/$defs/utcTimestamp" },
         "scheduled_time": { "$ref": "#/$defs/utcTimestamp" },
         "dose": { "type": "number", "minimum": 0 },

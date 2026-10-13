@@ -35,7 +35,7 @@ from health_bridge.dev_validation import (
     anchored_step_validation_json,
     read_anchored_step_validation_snapshot,
 )
-from health_bridge.ingest import MALFORMED_JSON_SUMMARY
+from health_bridge.ingest import MALFORMED_JSON_SUMMARY, UndeclaredReferenceError
 from health_bridge.ingest import ingest_fixture as ingest_fixture_batch
 from health_bridge.status import read_status, read_status_markdown, read_status_snapshot
 from health_bridge.storage import initialize_database
@@ -233,7 +233,7 @@ def ingest_fixture(
         summary = _summary_for_validation_error(exc)
         typer.echo(f"Fixture ingest failed: {summary}", err=True)
         raise typer.Exit(code=1) from exc
-    except sqlite3.Error as exc:
+    except (UndeclaredReferenceError, sqlite3.Error) as exc:
         typer.echo("Fixture ingest failed: records could not be stored.", err=True)
         raise typer.Exit(code=1) from exc
     output_parts = [

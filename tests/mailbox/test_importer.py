@@ -28,6 +28,11 @@ from health_bridge.mailbox.publication import (
     publish_final_at,
 )
 from health_bridge.receiver._delivery_acceptance_crypto import receipt_ack_id
+from health_bridge.receiver.delivery_acceptance import (
+    DeliveryAcceptanceRequest,
+    DeliveryAcceptanceResult,
+    DeliveryAcceptanceService,
+)
 from health_bridge.storage.database import connect_database
 from tests.contract.delivery_v1_support import authenticated_oversize_envelope
 from tests.mailbox.importer_support import (
@@ -776,3 +781,76 @@ def test_scan_and_quarantine_caps_are_numeric_and_oldest_first(
     size_scan = scan_size_cap(tmp_path / "size-cap")
     assert (len(size_scan.entries), size_scan.skipped) == (1_024, 1)
     assert quarantine_byte_and_age_caps(tmp_path / "quarantine-caps")
+
+
+def test_unexpected_delivery_exception_quarantines_only_that_delivery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    value = environment(tmp_path)
+    _ = write_delivery(value, envelope_byte=1)
+    _ = write_delivery(value, envelope_byte=2)
+    original_accept = DeliveryAcceptanceService.accept
+    calls: list[int] = []
+
+    def fail_first_delivery(
+        self: DeliveryAcceptanceService,
+        request: DeliveryAcceptanceRequest,
+    ) -> DeliveryAcceptanceResult:
+        calls.append(1)
+        if len(calls) == 1:
+            message = "synthetic unexpected acceptance failure"
+            raise RuntimeError(message)
+        return original_accept(self, request)
+
+    monkeypatch.setattr(DeliveryAcceptanceService, "accept", fail_first_delivery)
+
+    # When
+    result = import_once(value)
+
+    # Then
+    assert result.quarantined == 1
+    assert result.imported == 1
+    assert database_counts(value)[0] == 1
+
+
+def test_failed_delivery_stays_quarantined_across_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: the first run quarantines a delivery whose acceptance raised.
+    value = environment(tmp_path)
+    delivery = write_delivery(value, envelope_byte=1)
+    original_accept = DeliveryAcceptanceService.accept
+
+    def raise_once(
+        _service: DeliveryAcceptanceService,
+        _request: DeliveryAcceptanceRequest,
+    ) -> DeliveryAcceptanceResult:
+        message = "synthetic unexpected acceptance failure"
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(DeliveryAcceptanceService, "accept", raise_once)
+    first = import_once(value)
+    assert first.quarantined == 1
+
+    # When: the process restarts (a fresh importer) and acceptance would now succeed.
+    attempts: list[DeliveryAcceptanceRequest] = []
+
+    def count_and_accept(
+        self: DeliveryAcceptanceService,
+        request: DeliveryAcceptanceRequest,
+    ) -> DeliveryAcceptanceResult:
+        attempts.append(request)
+        return original_accept(self, request)
+
+    monkeypatch.setattr(DeliveryAcceptanceService, "accept", count_and_accept)
+    restarted = import_once(value)
+
+    # Then: the poisoned delivery is not reprocessed or imported again.
+    assert attempts == []
+    assert restarted.imported == 0
+    assert restarted.quarantined == 0
+    assert delivery.exists()
+    assert database_counts(value)[0] == 0
