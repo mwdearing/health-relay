@@ -581,3 +581,10 @@ def test_trickled_body_hits_whole_request_deadline(tmp_path: Path) -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_default_request_deadline_is_generous_for_batch_uploads() -> None:
+    # A 5 MB batch over a slow phone link must still finish inside the budget.
+    assert server_module.DEFAULT_REQUEST_DEADLINE_SECONDS == 300.0
+    assert server_module.MAX_CONNECTIONS_PER_CLIENT == 8
+    assert server_module.MAX_CONCURRENT_CONNECTIONS == 64

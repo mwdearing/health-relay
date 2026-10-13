@@ -94,7 +94,7 @@ MAX_CONCURRENT_CONNECTIONS: Final = 64
 # Connections one client address may hold at once, so one peer cannot take every slot.
 MAX_CONNECTIONS_PER_CLIENT: Final = 8
 # Wall-clock budget for the body and its handling, after the request head arrived.
-DEFAULT_REQUEST_DEADLINE_SECONDS: Final = 120.0
+DEFAULT_REQUEST_DEADLINE_SECONDS: Final = 300.0
 MAX_PAIRING_REDEEM_BYTES: Final = 4_096
 INTAKE_CONTEXT_CAPABILITIES_PATH: Final = "/v1/intake-context/capabilities"
 INTAKE_CONTEXT_BATCHES_PATH: Final = "/v1/intake-context/batches"
