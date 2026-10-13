@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -8,6 +9,7 @@ from typing import TYPE_CHECKING, assert_never, cast, final
 from typing_extensions import override
 
 from health_bridge.contract._delivery_common import MAX_ACK_BYTES, MAX_ENVELOPE_BYTES
+from health_bridge.contract._hbjcs1 import hbjcs1_encode
 from health_bridge.contract.delivery_v1 import DeliveryProtocolError
 from health_bridge.mailbox.filesystem import (
     FileSnapshot,
@@ -117,6 +119,9 @@ class MailboxImporter:
         scan = scan_delivery_lane(directory.deliveries_fd)
         aggregate = MailboxImportResult(skipped=scan.skipped)
         for entry in scan.entries:
+            if self._delivery_failed_marker_present(directory, entry.name):
+                aggregate = _combine(aggregate, MailboxImportResult(skipped=1))
+                continue
             try:
                 accepted = self._accept_with_path_replacement_retry(
                     directory,
@@ -316,6 +321,28 @@ class MailboxImporter:
             ack_name=f"{ack_identifier.hex()}.hba",
         )
 
+    def _delivery_failed_marker_present(
+        self,
+        directory: MailboxDirectoryHandle,
+        source_name: str,
+    ) -> bool:
+        # A delivery whose acceptance raised stays terminal: its quarantine marker is
+        # a durable, separately published record, so a restart never reprocesses it.
+        marker_id = hashlib.sha256(source_name.encode("utf-8")).digest()[:16].hex()
+        marker_name = f"{marker_id}.hbq"
+        try:
+            _ = os.stat(
+                marker_name, dir_fd=directory.quarantine_fd, follow_symlinks=False
+            )
+        except FileNotFoundError:
+            return False
+        snapshot = read_final_at(
+            directory.quarantine_fd,
+            marker_name,
+            maximum_bytes=MAX_DELIVERY_FAILED_MARKER_BYTES,
+        )
+        return snapshot.content == _delivery_failed_marker_content()
+
     def _quarantine(
         self,
         directory: MailboxDirectoryHandle,
@@ -398,6 +425,14 @@ def _combine(
         conflict=left.conflict + right.conflict,
         skipped=left.skipped + right.skipped,
     )
+
+
+MAX_DELIVERY_FAILED_MARKER_BYTES = 256
+
+
+def _delivery_failed_marker_content() -> bytes:
+    reason = MailboxFileErrorCode.DELIVERY_FAILED.value
+    return hbjcs1_encode({"v": 1, "kind": "quarantine", "reason": reason})
 
 
 def _fault(

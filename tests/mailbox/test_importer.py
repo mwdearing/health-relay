@@ -813,3 +813,44 @@ def test_unexpected_delivery_exception_quarantines_only_that_delivery(
     assert result.quarantined == 1
     assert result.imported == 1
     assert database_counts(value)[0] == 1
+
+
+def test_failed_delivery_stays_quarantined_across_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: the first run quarantines a delivery whose acceptance raised.
+    value = environment(tmp_path)
+    delivery = write_delivery(value, envelope_byte=1)
+    original_accept = DeliveryAcceptanceService.accept
+
+    def raise_once(
+        _service: DeliveryAcceptanceService,
+        _request: DeliveryAcceptanceRequest,
+    ) -> DeliveryAcceptanceResult:
+        message = "synthetic unexpected acceptance failure"
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(DeliveryAcceptanceService, "accept", raise_once)
+    first = import_once(value)
+    assert first.quarantined == 1
+
+    # When: the process restarts (a fresh importer) and acceptance would now succeed.
+    attempts: list[DeliveryAcceptanceRequest] = []
+
+    def count_and_accept(
+        self: DeliveryAcceptanceService,
+        request: DeliveryAcceptanceRequest,
+    ) -> DeliveryAcceptanceResult:
+        attempts.append(request)
+        return original_accept(self, request)
+
+    monkeypatch.setattr(DeliveryAcceptanceService, "accept", count_and_accept)
+    restarted = import_once(value)
+
+    # Then: the poisoned delivery is not reprocessed or imported again.
+    assert attempts == []
+    assert restarted.imported == 0
+    assert restarted.quarantined == 0
+    assert delivery.exists()
+    assert database_counts(value)[0] == 0
