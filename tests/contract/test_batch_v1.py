@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from health_bridge.contract import HealthBridgeBatchV1
+from health_bridge.contract.batch_v1 import MAX_BATCH_ENTRIES
 from health_bridge.mcp.types import (
     JsonObject,
     JsonValue,
@@ -269,3 +270,62 @@ def test_batch_rejects_non_finite_sample_values(value: float) -> None:
 
     with pytest.raises(ValidationError, match="finite number"):
         _ = HealthBridgeBatchV1.model_validate_json(json.dumps(payload))
+
+
+BATCH_ENTRY_ARRAYS: Final[tuple[str, ...]] = (
+    "sources",
+    "health_types",
+    "samples",
+    "workouts",
+    "electrocardiograms",
+    "medication_dose_events",
+    "lab_results",
+    "sleep_sessions",
+    "deleted_records",
+)
+
+
+ENTRY_TEMPLATE_FIXTURES: Final[tuple[Path, ...]] = (
+    FIXTURE_PATH,
+    Path("fixtures/health_bridge_batch_v1.electrocardiogram.synthetic.json"),
+    Path("fixtures/health_bridge_batch_v1.medication.synthetic.json"),
+    Path("fixtures/health_bridge_batch_v1.lab_result.synthetic.json"),
+)
+
+
+def _entry_template(array_name: str) -> JsonValue:
+    for fixture_path in ENTRY_TEMPLATE_FIXTURES:
+        document = required_object(
+            cast("JsonValue", json.loads(fixture_path.read_text(encoding="utf-8")))
+        )
+        entries = cast("list[JsonValue]", document.get(array_name, []))
+        if entries:
+            return entries[0]
+    message = f"no synthetic fixture carries a {array_name} entry"
+    raise AssertionError(message)
+
+
+@pytest.mark.parametrize("array_name", BATCH_ENTRY_ARRAYS)
+def test_batch_rejects_more_entries_than_documented_maximum(array_name: str) -> None:
+    # Given
+    payload = _fixture_object()
+    template = _entry_template(array_name)
+    oversized = [template] * (MAX_BATCH_ENTRIES + 1)
+    payload[array_name] = cast("JsonValue", oversized)
+
+    # When / Then
+    with pytest.raises(ValidationError, match="at most"):
+        _ = HealthBridgeBatchV1.model_validate_json(json.dumps(payload))
+
+
+def test_public_schema_declares_the_documented_maximum_entry_count() -> None:
+    schema = cast(
+        "dict[str, dict[str, dict[str, int]]]",
+        json.loads(
+            Path("schemas/health_bridge.batch.v1.schema.json").read_text(
+                encoding="utf-8"
+            )
+        ),
+    )
+    for array_name in BATCH_ENTRY_ARRAYS:
+        assert schema["properties"][array_name]["maxItems"] == MAX_BATCH_ENTRIES
