@@ -91,6 +91,10 @@ DEFAULT_REQUEST_TIMEOUT_SECONDS: Final = 30.0
 # Extra connections are closed without a response so a silent client cannot
 # pin one thread and file descriptor each.
 MAX_CONCURRENT_CONNECTIONS: Final = 64
+# Connections one client address may hold at once, so one peer cannot take every slot.
+MAX_CONNECTIONS_PER_CLIENT: Final = 8
+# Wall-clock budget for the body and its handling, after the request head arrived.
+DEFAULT_REQUEST_DEADLINE_SECONDS: Final = 120.0
 MAX_PAIRING_REDEEM_BYTES: Final = 4_096
 INTAKE_CONTEXT_CAPABILITIES_PATH: Final = "/v1/intake-context/capabilities"
 INTAKE_CONTEXT_BATCHES_PATH: Final = "/v1/intake-context/batches"
@@ -254,11 +258,14 @@ class IntakeRateLimiter:
 
 
 _INTAKE_LIMITER_LOCK = Lock()
+_CLIENT_CONNECTIONS_LOCK = Lock()
 
 
 class ReceiverHTTPServer(ThreadingHTTPServer):
     # Class-level defaults so a subclass that skips __init__ still works.
     request_timeout_seconds = DEFAULT_REQUEST_TIMEOUT_SECONDS
+    request_deadline_seconds = DEFAULT_REQUEST_DEADLINE_SECONDS
+    max_connections_per_client = MAX_CONNECTIONS_PER_CLIENT
     intake_rate_limit_count: int = INTAKE_RATE_LIMIT_COUNT
     intake_rate_limit_window_seconds: float = INTAKE_RATE_LIMIT_WINDOW_SECONDS
 
@@ -276,6 +283,8 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
         intake_rate_limit_count: int = INTAKE_RATE_LIMIT_COUNT,
         intake_rate_limit_window_seconds: float = INTAKE_RATE_LIMIT_WINDOW_SECONDS,
         max_connections: int = MAX_CONCURRENT_CONNECTIONS,
+        max_connections_per_client: int = MAX_CONNECTIONS_PER_CLIENT,
+        request_deadline_seconds: float = DEFAULT_REQUEST_DEADLINE_SECONDS,
     ) -> None:
         self.db_path: Path = db_path
         self.intake_context_enabled: bool = intake_context_enabled
@@ -299,6 +308,9 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
             window_seconds=INTAKE_CAPABILITIES_RATE_LIMIT_WINDOW_SECONDS,
         )
         self.max_connections: int = max_connections
+        self.max_connections_per_client: int = max_connections_per_client
+        self.request_deadline_seconds: float = request_deadline_seconds
+        self._client_connections: dict[str, int] = {}
         self._connection_slots: Semaphore = Semaphore(max_connections)
         super().__init__((host, port), ReceiverRequestHandler)
 
@@ -308,9 +320,14 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
         request: object,  # noqa: RUF100 -- stdlib override; no-excuse "# noqa: OBJECT_OK".
         client_address: object,  # noqa: RUF100 -- stdlib override; no-excuse "# noqa: OBJECT_OK".
     ) -> None:
-        """Start a handler thread only while a connection slot is free."""
+        """Start a handler thread only while the global and per-client caps allow."""
+        address = cast("tuple[str, int]", client_address)[0]
         slots = self.connection_slots
         if not slots.acquire(blocking=False):
+            self.shutdown_request(cast("socket.socket", request))
+            return
+        if not self._admit_client(address):
+            slots.release()
             self.shutdown_request(cast("socket.socket", request))
             return
         try:
@@ -318,7 +335,7 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
                 cast("socket.socket", request), cast("tuple[str, int]", client_address)
             )
         except BaseException:
-            slots.release()
+            self._release_connection(address)
             raise
 
     @override
@@ -327,12 +344,41 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
         request: object,  # noqa: RUF100 -- stdlib override; no-excuse "# noqa: OBJECT_OK".
         client_address: object,  # noqa: RUF100 -- stdlib override; no-excuse "# noqa: OBJECT_OK".
     ) -> None:
+        address = cast("tuple[str, int]", client_address)[0]
         try:
             super().process_request_thread(
                 cast("socket.socket", request), cast("tuple[str, int]", client_address)
             )
         finally:
-            self.connection_slots.release()
+            self._release_connection(address)
+
+    def _admit_client(self, address: str) -> bool:
+        """Count one more connection from this address if it is under its cap."""
+        with _CLIENT_CONNECTIONS_LOCK:
+            counts = self.client_connections
+            if counts.get(address, 0) >= self.max_connections_per_client:
+                return False
+            counts[address] = counts.get(address, 0) + 1
+            return True
+
+    def _release_connection(self, address: str) -> None:
+        with _CLIENT_CONNECTIONS_LOCK:
+            counts = self.client_connections
+            remaining = counts.get(address, 0) - 1
+            if remaining > 0:
+                counts[address] = remaining
+            else:
+                del counts[address]
+        self.connection_slots.release()
+
+    @property
+    def client_connections(self) -> dict[str, int]:
+        """Open connections per client address, created if __init__ was bypassed."""
+        counts: dict[str, int] | None = getattr(self, "_client_connections", None)
+        if counts is None:
+            counts = {}
+            self._client_connections = counts
+        return counts
 
     @property
     def connection_slots(self) -> Semaphore:
@@ -429,10 +475,11 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
     _response_started: bool = False
     _request_started: bool = False
     raw_requestline: bytes = b""
-    _head_timer: Timer | None = None
-    _head_deadline_expired: bool = False
+    _deadline_timer: Timer | None = None
+    _deadline_expired: bool = False
+    _deadline_generation: int = 0
     # Shared by all handlers: the critical sections only flip flags and shut down.
-    _head_lock: ClassVar[Lock] = Lock()
+    _deadline_lock: ClassVar[Lock] = Lock()
 
     @override
     def setup(self) -> None:
@@ -467,17 +514,27 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
 
     def _read_and_dispatch_request(self) -> None:
         """Keep stdlib HTTP parsing and dispatch, with our error boundary outside."""
-        self._arm_head_deadline()
+        receiver = self.receiver_server
+        self._arm_deadline(receiver.request_timeout_seconds)
         try:
             head_ready = self._read_request_head()
+            if self._deadline_has_expired():
+                # Never dispatch a head the deadline cut short; a silent peek is idle.
+                if head_ready or self._request_started:
+                    self._finish_failed_request(
+                        HTTPStatus.REQUEST_TIMEOUT, "request_timeout"
+                    )
+                return
+            if not head_ready:
+                return
+            # The head arrived in time. The body and its handling get their own
+            # bounded budget, so a trickled body cannot hold the thread indefinitely.
+            self._arm_deadline(receiver.request_deadline_seconds)
+            self._dispatch_request()
         finally:
-            head_expired = self._disarm_head_deadline()
-        if head_expired:
-            # Never dispatch a head the deadline cut short; a silent peek is idle.
-            self._finish_failed_request(HTTPStatus.REQUEST_TIMEOUT, "request_timeout")
-            return
-        if not head_ready:
-            return
+            self._disarm_deadline()
+
+    def _dispatch_request(self) -> None:
         method_name = "do_" + self.command
         if not hasattr(self, method_name):
             self.send_error(
@@ -509,37 +566,43 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
             return False
         return self.parse_request()
 
-    def _arm_head_deadline(self) -> None:
-        """Bound the whole request head, not just each read, so drip-feeding fails."""
-        timer = Timer(
-            self.receiver_server.request_timeout_seconds, self._expire_head_deadline
-        )
-        timer.daemon = True
-        with self._head_lock:
-            self._head_deadline_expired = False
-            self._head_timer = timer
+    def _arm_deadline(self, seconds: float) -> None:
+        """Start a wall-clock deadline for the current phase of this request."""
+        with self._deadline_lock:
+            self._cancel_deadline_locked()
+            self._deadline_generation += 1
+            generation = self._deadline_generation
+            self._deadline_expired = False
+            timer = Timer(seconds, self._expire_deadline, args=(generation,))
+            timer.daemon = True
+            self._deadline_timer = timer
         timer.start()
 
-    def _expire_head_deadline(self) -> None:
-        with self._head_lock:
-            if self._head_timer is None:
+    def _expire_deadline(self, generation: int) -> None:
+        with self._deadline_lock:
+            if generation != self._deadline_generation or self._deadline_timer is None:
                 return
-            self._head_deadline_expired = True
+            self._deadline_expired = True
             connection = cast("socket.socket", self.connection)
             # Shutting down only the read side wakes a blocked read with EOF,
             # so the reply can still be written.
             with contextlib.suppress(OSError):
                 connection.shutdown(socket.SHUT_RD)
 
-    def _disarm_head_deadline(self) -> bool:
-        """Stop the deadline timer and report whether it fired first."""
-        with self._head_lock:
-            timer = self._head_timer
-            self._head_timer = None
-            expired = self._head_deadline_expired
+    def _deadline_has_expired(self) -> bool:
+        with self._deadline_lock:
+            return self._deadline_expired
+
+    def _disarm_deadline(self) -> None:
+        with self._deadline_lock:
+            self._cancel_deadline_locked()
+
+    def _cancel_deadline_locked(self) -> None:
+        timer = self._deadline_timer
+        self._deadline_timer = None
+        self._deadline_generation += 1
         if timer is not None:
             timer.cancel()
-        return expired
 
     def _finish_failed_request(self, status: HTTPStatus, error: str) -> None:
         self.close_connection = True
@@ -996,7 +1059,10 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
                 close_connection=close_on_reject,
             )
             return None
-        return self.rfile.read(int(significant))
+        body = self.rfile.read(int(significant))
+        if len(body) != int(significant) and self._deadline_has_expired():
+            raise TimeoutError
+        return body
 
     def _reject_body(
         self,
