@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import closing
 from http.client import HTTPConnection
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from health_bridge.contract.batch_v1 import MAX_BATCH_ENTRIES
 from health_bridge.receiver.batch_acceptance import BatchAcceptanceCore
 from health_bridge.receiver.server import MAX_BATCH_BYTES
 from health_bridge.receiver.tokens import create_receiver_token
@@ -103,3 +105,37 @@ def test_direct_http_preserves_exact_storage_failure_mapping(
         www_authenticate=None,
         body=b'{"error":"records could not be stored"}',
     )
+
+
+def test_direct_http_rejects_batch_over_documented_entry_maximum(
+    tmp_path: Path,
+) -> None:
+    # Given
+    db_path = tmp_path / "entry-cap.sqlite"
+    _ = create_receiver_token(db_path, label="entry-cap", token=LEGACY_TOKEN)
+    document = cast(
+        "dict[str, object]",
+        json.loads(FIXTURE_PATH.read_text(encoding="utf-8")),
+    )
+    samples = cast("list[object]", document["samples"])
+    document["samples"] = [samples[0]] * (MAX_BATCH_ENTRIES + 1)
+    oversized_body = json.dumps(document).encode("utf-8")
+
+    # When
+    with running_receiver(db_path) as port:
+        observation = post_raw_batch(port, LEGACY_TOKEN, oversized_body)
+
+    # Then
+    assert observation == HttpObservation(
+        status=422,
+        content_type="application/json",
+        content_length="64",
+        www_authenticate=None,
+        body=b'{"error":"payload does not match health_bridge.batch.v1 schema"}',
+    )
+    with closing(sqlite3.connect(db_path)) as connection:
+        stored = cast(
+            "tuple[int]",
+            connection.execute("select count(*) from samples").fetchone(),
+        )
+    assert stored == (0,)

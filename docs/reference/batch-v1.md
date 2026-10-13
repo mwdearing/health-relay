@@ -35,6 +35,10 @@ Optional fields (HealthRelay fork; additive under major version `1`):
 - `medication_dose_events`
 - `lab_results`
 
+Each top-level array holds at most 5,000 entries (`MAX_BATCH_ENTRIES`, also the
+`maxItems` in the JSON Schema). A batch over that count is rejected with 422 and
+nothing from it is stored. Split larger exports into several batches.
+
 All timestamps are UTC ISO 8601 strings ending in `Z`. Values are observations
 with source context, not interpretations.
 

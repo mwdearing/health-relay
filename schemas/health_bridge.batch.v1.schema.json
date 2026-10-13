@@ -27,40 +27,49 @@
     "export_window": { "$ref": "#/$defs/timeWindow" },
     "sources": {
       "type": "array",
+      "maxItems": 5000,
       "minItems": 1,
       "items": { "$ref": "#/$defs/source" }
     },
     "health_types": {
       "type": "array",
+      "maxItems": 5000,
       "minItems": 1,
       "items": { "$ref": "#/$defs/healthType" }
     },
     "samples": {
       "type": "array",
+      "maxItems": 5000,
       "items": { "$ref": "#/$defs/sample" }
     },
     "workouts": {
       "type": "array",
+      "maxItems": 5000,
       "items": { "$ref": "#/$defs/workout" }
     },
     "electrocardiograms": {
       "type": "array",
+      "maxItems": 5000,
       "items": { "$ref": "#/$defs/electrocardiogram" }
     },
     "medication_dose_events": {
       "type": "array",
+      "maxItems": 5000,
       "items": { "$ref": "#/$defs/medicationDoseEvent" }
     },
     "lab_results": {
       "type": "array",
+      "maxItems": 5000,
       "items": { "$ref": "#/$defs/labResult" }
     },
     "sleep_sessions": {
       "type": "array",
+      "maxItems": 5000,
       "items": { "$ref": "#/$defs/sleepSession" }
     },
     "deleted_records": {
       "type": "array",
+      "maxItems": 5000,
       "items": { "$ref": "#/$defs/deletedRecord" }
     },
     "sync": { "$ref": "#/$defs/syncContext" }

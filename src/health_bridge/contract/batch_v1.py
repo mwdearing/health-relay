@@ -413,20 +413,37 @@ class SyncContext(StrictModel):
     cursors: tuple[SyncCursor, ...]
 
 
+# Largest number of entries any one top-level array may hold in a batch. The
+# client sends 500 samples per request, so this is a ceiling, not a target.
+MAX_BATCH_ENTRIES: Final = 5_000
+
+
 class HealthBridgeBatchV1(StrictModel):
     schema_id: Literal["health_bridge.batch.v1"]
     schema_version: str
     generated_at: UtcTimestamp
     export_window: TimeWindow
-    sources: tuple[Source, ...] = Field(min_length=1)
-    health_types: tuple[HealthType, ...] = Field(min_length=1)
-    samples: tuple[Sample, ...]
-    workouts: tuple[Workout, ...]
-    electrocardiograms: tuple[Electrocardiogram, ...] = ()
-    medication_dose_events: tuple[MedicationDoseEvent, ...] = ()
-    lab_results: tuple[LabResult, ...] = ()
-    sleep_sessions: tuple[SleepSession, ...]
-    deleted_records: tuple[DeletedRecord, ...]
+    sources: tuple[Source, ...] = Field(min_length=1, max_length=MAX_BATCH_ENTRIES)
+    health_types: tuple[HealthType, ...] = Field(
+        min_length=1,
+        max_length=MAX_BATCH_ENTRIES,
+    )
+    samples: tuple[Sample, ...] = Field(max_length=MAX_BATCH_ENTRIES)
+    workouts: tuple[Workout, ...] = Field(max_length=MAX_BATCH_ENTRIES)
+    electrocardiograms: tuple[Electrocardiogram, ...] = Field(
+        default=(),
+        max_length=MAX_BATCH_ENTRIES,
+    )
+    medication_dose_events: tuple[MedicationDoseEvent, ...] = Field(
+        default=(),
+        max_length=MAX_BATCH_ENTRIES,
+    )
+    lab_results: tuple[LabResult, ...] = Field(
+        default=(),
+        max_length=MAX_BATCH_ENTRIES,
+    )
+    sleep_sessions: tuple[SleepSession, ...] = Field(max_length=MAX_BATCH_ENTRIES)
+    deleted_records: tuple[DeletedRecord, ...] = Field(max_length=MAX_BATCH_ENTRIES)
     sync: SyncContext
 
     @field_validator("schema_version")
