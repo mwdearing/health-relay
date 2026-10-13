@@ -697,7 +697,7 @@ def test_cli_ingest_fixture_fails_cleanly_when_fixture_is_malformed(
     assert row == ("failed", "Fixture JSON could not be decoded.")
 
 
-def test_cli_ingest_fixture_fails_cleanly_when_storage_write_fails(
+def test_cli_ingest_fixture_refuses_undeclared_source_without_sync_run(
     tmp_path: Path,
 ) -> None:
     # Given
@@ -742,5 +742,4 @@ def test_cli_ingest_fixture_fails_cleanly_when_storage_write_fails(
             ).fetchone(),
         )
 
-    assert row is not None
-    assert row == ("failed", "Fixture records could not be stored.")
+    assert row is None

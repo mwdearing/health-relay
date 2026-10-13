@@ -6,6 +6,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from health_bridge.contract import HealthBridgeBatchV1
+from health_bridge.storage.catalog import MISSING_SOURCE_ERROR
 from health_bridge.storage.database import connect_database, initialize_database
 from health_bridge.storage.models import (
     IngestResult,
@@ -17,6 +18,12 @@ from health_bridge.storage.sync_runs import insert_sync_run
 MALFORMED_JSON_SUMMARY = "Fixture JSON could not be decoded."
 SCHEMA_ERROR_SUMMARY = "Fixture did not match health_bridge.batch.v1 schema."
 STORAGE_ERROR_SUMMARY = "Fixture records could not be stored."
+UNDECLARED_REFERENCE_MESSAGE = "batch names an undeclared type or source"
+FOREIGN_KEY_FAILURE_MESSAGE = "FOREIGN KEY constraint failed"
+
+
+class UndeclaredReferenceError(Exception):
+    """A schema-valid batch names a type or source it never declared (RELAY-S13)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +79,12 @@ def ingest_batch_in_connection(
     source_name: str,
 ) -> TransactionalIngestResult:
     result = _successful_result(batch)
-    upsert_batch_records(connection, batch)
+    try:
+        upsert_batch_records(connection, batch)
+    except sqlite3.IntegrityError as exc:
+        if str(exc) in (MISSING_SOURCE_ERROR, FOREIGN_KEY_FAILURE_MESSAGE):
+            raise UndeclaredReferenceError(UNDECLARED_REFERENCE_MESSAGE) from exc
+        raise
     return TransactionalIngestResult(
         result=result,
         sync_run_id=insert_sync_run(connection, source_name, result, batch),

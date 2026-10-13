@@ -5,6 +5,7 @@ import sqlite3
 from typing import TYPE_CHECKING, assert_never, final
 
 from health_bridge.contract.delivery_v1 import DeliveryProtocolError, DeliveryReceiptV1
+from health_bridge.ingest import UndeclaredReferenceError
 from health_bridge.receiver._delivery_acceptance_crypto import (
     committed_receipt_record,
     envelope_claims,
@@ -121,8 +122,13 @@ class DeliveryAcceptanceService:
                 self._fault(fault_hook, DeliveryAcceptanceFaultPoint.BEFORE_COMMIT)
                 if self._before_commit_validator is not None:
                     self._before_commit_validator()
-        except DeliveryReceiptConflictError:
-            return self._terminal(claims, "duplicate_conflict")
+        except (DeliveryReceiptConflictError, UndeclaredReferenceError) as exc:
+            code: TerminalCode = (
+                "duplicate_conflict"
+                if isinstance(exc, DeliveryReceiptConflictError)
+                else "payload_invalid"
+            )
+            return self._terminal(claims, code)
         except (sqlite3.Error, OSError, StaleOrderedSleepBaselineResetError):
             return self._retryable(claims)
         self._fault(fault_hook, DeliveryAcceptanceFaultPoint.AFTER_COMMIT)
