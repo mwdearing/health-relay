@@ -280,18 +280,24 @@ class MailboxImporter:
             raise DeliveryProtocolError(code)
         _fault(fault_hook, MailboxImportFaultPoint.BEFORE_ACCEPT)
         directory.validate_attached()
-        result = DeliveryAcceptanceService(
-            self._config.db_path,
-            self._config.connection,
-            self._config.clock_ms,
-            before_commit_validator=directory.validate_attached,
-        ).accept(
-            DeliveryAcceptanceRequest(
-                envelope_bytes=snapshot.content,
-                device_principal=self._config.connection.device_principal,
-                opaque_binding=self._config.connection.opaque_binding,
+        try:
+            result = DeliveryAcceptanceService(
+                self._config.db_path,
+                self._config.connection,
+                self._config.clock_ms,
+                before_commit_validator=directory.validate_attached,
+            ).accept(
+                DeliveryAcceptanceRequest(
+                    envelope_bytes=snapshot.content,
+                    device_principal=self._config.connection.device_principal,
+                    opaque_binding=self._config.connection.opaque_binding,
+                )
             )
-        )
+        except (MailboxFileError, DeliveryProtocolError):
+            raise
+        except Exception:  # noqa: BLE001 -- one delivery must not end the worker.
+            # Quarantine this delivery only; no exception detail escapes.
+            raise MailboxFileError(code=MailboxFileErrorCode.DELIVERY_FAILED) from None
         _fault(fault_hook, MailboxImportFaultPoint.AFTER_ACCEPT)
         receipt_result = cast(
             "Literal['committed', 'retryable', 'terminal']",

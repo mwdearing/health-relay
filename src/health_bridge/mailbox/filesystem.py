@@ -41,6 +41,7 @@ class MailboxFileErrorCode(StrEnum):
     PATH_REPLACED = "path_replaced"
     OVERSIZE = "oversize"
     STORAGE_UNAVAILABLE = "storage_unavailable"
+    DELIVERY_FAILED = "delivery_failed"
 
 
 @dataclass(slots=True)
