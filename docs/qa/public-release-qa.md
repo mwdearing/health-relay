@@ -40,6 +40,18 @@ A new reader should be able to answer these from `README.md`, `docs/architecture
 
 The answer should not claim full Apple Health export, HealthKit write support, hosted cloud processing, App Store availability, medical use, or guaranteed background freshness.
 
+## Release operator pre-tag checks
+
+Before tagging a release, run the strict public-surface audit on a checkout that has the local denylist present (`.public-release-denylist.local`, gitignored; keep its values in private notes):
+
+```bash
+uv run python scripts/public-release-audit.py --strict
+```
+
+Strict mode fails when the local denylist is absent. CI runs the same command with `--allow-missing-local-denylist` because CI has no denylist; its summary prints `local_denylist_consulted=false`. That CI pass does not prove the private values were checked, so the operator run above is required before tagging.
+
+The fresh-device gate checks the candidate against the declared iOS version in `component-versions.json` (`ios_companion`): the marketing version must match, and the build must not be older than the declared build.
+
 ## Real-device smoke checklist
 
 Real-device QA should happen privately. Public notes should use aggregate, redacted wording only.

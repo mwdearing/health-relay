@@ -156,7 +156,7 @@ jobs:
         run: |
           uv run check-jsonschema --builtin-schema vendor.github-workflows .github/workflows/*.yml
           uv run check-jsonschema --builtin-schema custom.github-workflows-require-timeout .github/workflows/*.yml
-          uv run python scripts/public-release-audit.py --strict
+          uv run python scripts/public-release-audit.py --strict --allow-missing-local-denylist
           uv run ruff format --check .
           uv run ruff check .
           uv run basedpyright
