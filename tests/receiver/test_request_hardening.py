@@ -21,6 +21,7 @@ from health_bridge.receiver.server import (
     build_receiver_server,
     server_port,
 )
+from health_bridge.storage.database import initialize_database
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -390,3 +391,200 @@ def test_partial_request_line_timeout_answers_408(tmp_path: Path) -> None:
     assert status == 408
     assert body == {"error": "request_timeout"}
     assert b"connection: close" in headers
+
+
+def test_connection_cap_refuses_connections_over_the_limit(tmp_path: Path) -> None:
+    db = tmp_path / "r.sqlite"
+    initialize_database(db)
+    server = ReceiverHTTPServer(
+        host="127.0.0.1",
+        port=0,
+        db_path=db,
+        intake_context_enabled=True,
+        request_timeout_seconds=2,
+        max_connections=1,
+    )
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server_port(server)
+        # A silent client holds the only connection slot without sending anything.
+        holder = socket.create_connection(("127.0.0.1", port), timeout=2)
+        time.sleep(0.1)
+        try:
+            started = time.monotonic()
+            refused = socket_request(port, b"GET /health HTTP/1.1\r\nHost: x\r\n\r\n")
+            assert refused == b""
+            assert time.monotonic() - started < 1.5
+        finally:
+            holder.close()
+        time.sleep(0.1)
+        health = socket_request(port, b"GET /health HTTP/1.1\r\nHost: x\r\n\r\n")
+        assert response_parts(health)[0] == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_slow_header_drip_hits_absolute_deadline(tmp_path: Path) -> None:
+    db = tmp_path / "r.sqlite"
+    server = build_receiver_server(
+        db, "127.0.0.1", 0, intake_context_enabled=True, request_timeout_seconds=0.3
+    )
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server_port(server)
+        received = bytearray()
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+            sock.sendall(b"GET /health HTTP/1.1\r\nHost: x\r\n")
+            started = time.monotonic()
+            # One byte per 50 ms resets any per-read inactivity timer, forever.
+            while time.monotonic() - started < 2.0:
+                try:
+                    sock.sendall(b"X-Drip: 1\r\n")
+                except OSError:
+                    break
+                time.sleep(0.05)
+                sock.settimeout(0.01)
+                try:
+                    chunk = sock.recv(65536)
+                except TimeoutError:
+                    continue
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                received.extend(chunk)
+            elapsed = time.monotonic() - started
+            sock.settimeout(1)
+            try:
+                while chunk := sock.recv(65536):
+                    received.extend(chunk)
+            except OSError:
+                pass
+        assert elapsed < 1.5
+        status, headers, body = response_parts(bytes(received))
+        assert status == 408
+        assert body == {"error": "request_timeout"}
+        assert b"connection: close" in headers
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_per_client_cap_limits_one_address_and_spares_others(tmp_path: Path) -> None:
+    db = tmp_path / "r.sqlite"
+    initialize_database(db)
+    server = ReceiverHTTPServer(
+        host="127.0.0.1",
+        port=0,
+        db_path=db,
+        intake_context_enabled=True,
+        request_timeout_seconds=2,
+        max_connections=64,
+        max_connections_per_client=1,
+    )
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server_port(server)
+        health = b"GET /health HTTP/1.1\r\nHost: x\r\n\r\n"
+        # Loopback covers 127/8, so these are two synthetic client addresses.
+        holder = socket.create_connection(
+            ("127.0.0.1", port), timeout=2, source_address=("127.0.0.2", 0)
+        )
+        time.sleep(0.1)
+        try:
+            refused = socket_request_from(port, "127.0.0.2", health)
+            assert refused == b""
+            other = socket_request_from(port, "127.0.0.3", health)
+            assert response_parts(other)[0] == 200
+        finally:
+            holder.close()
+        time.sleep(0.1)
+        again = socket_request_from(port, "127.0.0.2", health)
+        assert response_parts(again)[0] == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def socket_request_from(port: int, source_ip: str, request: bytes) -> bytes:
+    with socket.create_connection(
+        ("127.0.0.1", port), timeout=2, source_address=(source_ip, 0)
+    ) as sock:
+        sock.sendall(request)
+        response = b""
+        while chunk := sock.recv(65536):
+            response += chunk
+    return response
+
+
+def test_trickled_body_hits_whole_request_deadline(tmp_path: Path) -> None:
+    db = tmp_path / "r.sqlite"
+    issued = create_intake_token(
+        db, owner_id="o", producer_id="nutrition-app", label="l"
+    )
+    initialize_database(db)
+    server = ReceiverHTTPServer(
+        host="127.0.0.1",
+        port=0,
+        db_path=db,
+        intake_context_enabled=True,
+        request_timeout_seconds=2,
+        request_deadline_seconds=0.5,
+    )
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server_port(server)
+        request = request_bytes(issued.token, length=str(len(WORKED)))
+        received = bytearray()
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+            # Headers arrive at once; the body then trickles a byte per 50 ms,
+            # which a per-read inactivity timeout alone would never cut off.
+            sock.sendall(request)
+            started = time.monotonic()
+            for index in range(len(WORKED)):
+                if time.monotonic() - started > 3.0:
+                    break
+                try:
+                    sock.sendall(WORKED[index : index + 1])
+                except OSError:
+                    break
+                time.sleep(0.05)
+                sock.settimeout(0.01)
+                try:
+                    chunk = sock.recv(65536)
+                except TimeoutError:
+                    continue
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                received.extend(chunk)
+            elapsed = time.monotonic() - started
+            sock.settimeout(1)
+            try:
+                while chunk := sock.recv(65536):
+                    received.extend(chunk)
+            except OSError:
+                pass
+        assert elapsed < 1.5
+        assert b"accepted" not in received
+        assert b" 200 " not in bytes(received).split(b"\r\n", 1)[0]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_default_request_deadline_is_generous_for_batch_uploads() -> None:
+    # A 5 MB batch over a slow phone link must still finish inside the budget.
+    assert server_module.DEFAULT_REQUEST_DEADLINE_SECONDS == 300.0
+    assert server_module.MAX_CONNECTIONS_PER_CLIENT == 8
+    assert server_module.MAX_CONCURRENT_CONNECTIONS == 64
