@@ -2678,7 +2678,8 @@ def start(  # noqa: PLR0913 -- Typer exposes independent receiver options.
             help=(
                 "Seconds a single socket read may block before the receiver "
                 "gives up on a stalled request. This is an inactivity timeout, "
-                "so a client that keeps sending bytes resets it. "
+                "so a client that keeps sending bytes resets it, but the whole request "
+                "head must arrive within this time too. "
                 "Greater than 0 and at most 300."
             ),
         ),

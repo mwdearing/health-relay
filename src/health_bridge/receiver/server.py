@@ -1,7 +1,9 @@
+import contextlib
 import json
 import logging
 import math
 import re
+import socket
 
 # noqa: RUF100 -- no-excuse marker "# noqa: SIZE_OK": cohesive HTTP framing and mappings.
 import sqlite3
@@ -13,9 +15,8 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Semaphore, Timer
 from typing import (
-    TYPE_CHECKING,
     ClassVar,
     Final,
     Self,
@@ -79,15 +80,17 @@ from health_bridge.storage.database import (
 )
 from health_bridge.storage.models import IngestResult
 
-if TYPE_CHECKING:
-    import socket
-
 _MAILBOX_SHUTDOWN_ERROR = "mailbox_runtime_shutdown_incomplete"
 _LOGGER = logging.getLogger(__name__)
 
 MAX_BATCH_BYTES: Final = 5_000_000
 _MAX_REQUEST_LINE_BYTES: Final = 65_536
+# Per-read inactivity timeout, and the absolute deadline for a whole request head.
 DEFAULT_REQUEST_TIMEOUT_SECONDS: Final = 30.0
+# Connections served at once, counted from accept until the handler finishes.
+# Extra connections are closed without a response so a silent client cannot
+# pin one thread and file descriptor each.
+MAX_CONCURRENT_CONNECTIONS: Final = 64
 MAX_PAIRING_REDEEM_BYTES: Final = 4_096
 INTAKE_CONTEXT_CAPABILITIES_PATH: Final = "/v1/intake-context/capabilities"
 INTAKE_CONTEXT_BATCHES_PATH: Final = "/v1/intake-context/batches"
@@ -255,6 +258,7 @@ _INTAKE_LIMITER_LOCK = Lock()
 
 class ReceiverHTTPServer(ThreadingHTTPServer):
     # Class-level defaults so a subclass that skips __init__ still works.
+    request_timeout_seconds = DEFAULT_REQUEST_TIMEOUT_SECONDS
     intake_rate_limit_count: int = INTAKE_RATE_LIMIT_COUNT
     intake_rate_limit_window_seconds: float = INTAKE_RATE_LIMIT_WINDOW_SECONDS
 
@@ -271,6 +275,7 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
         request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         intake_rate_limit_count: int = INTAKE_RATE_LIMIT_COUNT,
         intake_rate_limit_window_seconds: float = INTAKE_RATE_LIMIT_WINDOW_SECONDS,
+        max_connections: int = MAX_CONCURRENT_CONNECTIONS,
     ) -> None:
         self.db_path: Path = db_path
         self.intake_context_enabled: bool = intake_context_enabled
@@ -293,7 +298,55 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
             max_batches=INTAKE_CAPABILITIES_RATE_LIMIT_COUNT,
             window_seconds=INTAKE_CAPABILITIES_RATE_LIMIT_WINDOW_SECONDS,
         )
+        self.max_connections: int = max_connections
+        self._connection_slots: Semaphore = Semaphore(max_connections)
         super().__init__((host, port), ReceiverRequestHandler)
+
+    @override
+    def process_request(
+        self,
+        request: object,  # noqa: RUF100 -- stdlib override; no-excuse "# noqa: OBJECT_OK".
+        client_address: object,  # noqa: RUF100 -- stdlib override; no-excuse "# noqa: OBJECT_OK".
+    ) -> None:
+        """Start a handler thread only while a connection slot is free."""
+        slots = self.connection_slots
+        if not slots.acquire(blocking=False):
+            self.shutdown_request(cast("socket.socket", request))
+            return
+        try:
+            super().process_request(
+                cast("socket.socket", request), cast("tuple[str, int]", client_address)
+            )
+        except BaseException:
+            slots.release()
+            raise
+
+    @override
+    def process_request_thread(
+        self,
+        request: object,  # noqa: RUF100 -- stdlib override; no-excuse "# noqa: OBJECT_OK".
+        client_address: object,  # noqa: RUF100 -- stdlib override; no-excuse "# noqa: OBJECT_OK".
+    ) -> None:
+        try:
+            super().process_request_thread(
+                cast("socket.socket", request), cast("tuple[str, int]", client_address)
+            )
+        finally:
+            self.connection_slots.release()
+
+    @property
+    def connection_slots(self) -> Semaphore:
+        """The connection-cap semaphore, built on first use if __init__ was bypassed."""
+        slots = getattr(self, "_connection_slots", None)
+        if slots is None:
+            with _INTAKE_LIMITER_LOCK:
+                slots = getattr(self, "_connection_slots", None)
+                if slots is None:
+                    slots = Semaphore(
+                        getattr(self, "max_connections", MAX_CONCURRENT_CONNECTIONS)
+                    )
+                    self._connection_slots = slots
+        return slots
 
     @property
     def limiter(self) -> IntakeRateLimiter:
@@ -376,6 +429,10 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
     _response_started: bool = False
     _request_started: bool = False
     raw_requestline: bytes = b""
+    _head_timer: Timer | None = None
+    _head_deadline_expired: bool = False
+    # Shared by all handlers: the critical sections only flip flags and shut down.
+    _head_lock: ClassVar[Lock] = Lock()
 
     @override
     def setup(self) -> None:
@@ -410,23 +467,16 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
 
     def _read_and_dispatch_request(self) -> None:
         """Keep stdlib HTTP parsing and dispatch, with our error boundary outside."""
-        # Wait for the first byte separately: a timeout before it is an idle
-        # keep-alive connection, a timeout after it is a stalled request.
-        peek = cast("Callable[[int], bytes] | None", getattr(self.rfile, "peek", None))
-        if peek is not None:
-            if not peek(1):
-                self.close_connection = True
-                return
-            self._request_started = True
-        self.raw_requestline = self.rfile.readline(_MAX_REQUEST_LINE_BYTES + 1)
-        if len(self.raw_requestline) > _MAX_REQUEST_LINE_BYTES:
-            self.request_version = ""
-            self.send_error(HTTPStatus.REQUEST_URI_TOO_LONG)
+        self._arm_head_deadline()
+        try:
+            head_ready = self._read_request_head()
+        finally:
+            head_expired = self._disarm_head_deadline()
+        if head_expired:
+            # Never dispatch a head the deadline cut short; a silent peek is idle.
+            self._finish_failed_request(HTTPStatus.REQUEST_TIMEOUT, "request_timeout")
             return
-        if not self.raw_requestline:
-            self.close_connection = True
-            return
-        if not self.parse_request():
+        if not head_ready:
             return
         method_name = "do_" + self.command
         if not hasattr(self, method_name):
@@ -438,6 +488,58 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
         method = cast("Callable[[], None]", getattr(self, method_name))
         method()
         self.wfile.flush()
+
+    def _read_request_head(self) -> bool:
+        """Read and parse the request line and headers; True when a request is ready."""
+        # Wait for the first byte separately: a timeout before it is an idle
+        # keep-alive connection, a timeout after it is a stalled request.
+        peek = cast("Callable[[int], bytes] | None", getattr(self.rfile, "peek", None))
+        if peek is not None:
+            if not peek(1):
+                self.close_connection = True
+                return False
+            self._request_started = True
+        self.raw_requestline = self.rfile.readline(_MAX_REQUEST_LINE_BYTES + 1)
+        if len(self.raw_requestline) > _MAX_REQUEST_LINE_BYTES:
+            self.request_version = ""
+            self.send_error(HTTPStatus.REQUEST_URI_TOO_LONG)
+            return False
+        if not self.raw_requestline:
+            self.close_connection = True
+            return False
+        return self.parse_request()
+
+    def _arm_head_deadline(self) -> None:
+        """Bound the whole request head, not just each read, so drip-feeding fails."""
+        timer = Timer(
+            self.receiver_server.request_timeout_seconds, self._expire_head_deadline
+        )
+        timer.daemon = True
+        with self._head_lock:
+            self._head_deadline_expired = False
+            self._head_timer = timer
+        timer.start()
+
+    def _expire_head_deadline(self) -> None:
+        with self._head_lock:
+            if self._head_timer is None:
+                return
+            self._head_deadline_expired = True
+            connection = cast("socket.socket", self.connection)
+            # Shutting down only the read side wakes a blocked read with EOF,
+            # so the reply can still be written.
+            with contextlib.suppress(OSError):
+                connection.shutdown(socket.SHUT_RD)
+
+    def _disarm_head_deadline(self) -> bool:
+        """Stop the deadline timer and report whether it fired first."""
+        with self._head_lock:
+            timer = self._head_timer
+            self._head_timer = None
+            expired = self._head_deadline_expired
+        if timer is not None:
+            timer.cancel()
+        return expired
 
     def _finish_failed_request(self, status: HTTPStatus, error: str) -> None:
         self.close_connection = True
