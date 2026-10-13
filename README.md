@@ -280,6 +280,19 @@ uv run basedpyright
 
 Synthetic fixtures and smoke commands are contributor tools, not part of user onboarding. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+**Repository layout**
+
+- `assets/`: HealthRelay logo and app mark images, with the brand guide in `assets/brand/`.
+- `docs/`: setup, architecture, reference, maintainer and QA documentation.
+- `fixtures/`: small synthetic batch, delivery and compatibility fixtures used by tests and examples.
+- `ios/`: the iPhone companion app, with its Xcode project, Swift sources and tests.
+- `macos/`: the macOS helper that publishes mailbox acknowledgements, with its Xcode project.
+- `schemas/`: JSON Schema files for the batch, delivery, mailbox report and intake-context formats.
+- `scripts/`: device, build, release-audit and validation helper scripts.
+- `src/`: the `health_bridge` Python package for the receiver, CLI, MCP server and storage.
+- `tests/`: the pytest suite covering the receiver, contracts, CLI, MCP server and guardrails.
+- `tools/`: a developer script that generates the HealthRelay app icon.
+
 ---
 
 <sub>Upstream project (attribution, not HealthRelay support): [Website](https://healthbridge.chanhyo.dev/) · [Privacy](https://healthbridge.chanhyo.dev/privacy) · [Support](https://healthbridge.chanhyo.dev/support). Those pages describe the upstream Health Bridge for AI product; HealthRelay issues go to this repository.</sub>
