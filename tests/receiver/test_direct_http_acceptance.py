@@ -4,6 +4,7 @@ import json
 import sqlite3
 from contextlib import closing
 from http.client import HTTPConnection
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from health_bridge.contract.batch_v1 import MAX_BATCH_ENTRIES
@@ -18,9 +19,11 @@ from tests.receiver.test_legacy_http_contract import (
     running_receiver,
 )
 
-if TYPE_CHECKING:
-    from pathlib import Path
+MEDICATION_FIXTURE_PATH = Path(
+    "fixtures/health_bridge_batch_v1.medication.synthetic.json"
+)
 
+if TYPE_CHECKING:
     import pytest
 
     from health_bridge.receiver.batch_acceptance import PreparedBatch
@@ -139,3 +142,37 @@ def test_direct_http_rejects_batch_over_documented_entry_maximum(
             connection.execute("select count(*) from samples").fetchone(),
         )
     assert stored == (0,)
+
+
+def test_direct_http_refuses_out_of_range_integer_as_payload_error(
+    tmp_path: Path,
+) -> None:
+    # Given
+    db_path = tmp_path / "int64.sqlite"
+    _ = create_receiver_token(db_path, label="int64", token=LEGACY_TOKEN)
+    payload = cast(
+        "dict[str, object]",
+        json.loads(MEDICATION_FIXTURE_PATH.read_text(encoding="utf-8")),
+    )
+    events = cast("list[dict[str, object]]", payload["medication_dose_events"])
+    events[0]["status_raw"] = 2**63
+    body = json.dumps(payload).encode("utf-8")
+
+    # When
+    with running_receiver(db_path) as port:
+        observed = post_raw_batch(port, LEGACY_TOKEN, body)
+
+    # Then
+    assert observed == HttpObservation(
+        status=422,
+        content_type="application/json",
+        content_length="64",
+        www_authenticate=None,
+        body=b'{"error":"payload does not match health_bridge.batch.v1 schema"}',
+    )
+    with sqlite3.connect(db_path) as connection:
+        sync_runs = cast(
+            "tuple[int]",
+            connection.execute("select count(*) from sync_runs").fetchone(),
+        )
+        assert sync_runs == (0,)

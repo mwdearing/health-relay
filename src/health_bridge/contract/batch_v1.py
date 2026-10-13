@@ -78,6 +78,11 @@ TypeCode: TypeAlias = Annotated[str, StringConstraints(pattern=TYPE_CODE_PATTERN
 NonEmptyString: TypeAlias = Annotated[str, StringConstraints(min_length=1)]
 NonNegativeFloat: TypeAlias = Annotated[float, Field(ge=0)]
 NonNegativeInt: TypeAlias = Annotated[int, Field(ge=0)]
+# SQLite INTEGER columns hold signed 64-bit values only (RELAY-S10).
+INT64_MIN: Final = -(2**63)
+INT64_MAX: Final = 2**63 - 1
+Int64: TypeAlias = Annotated[int, Field(ge=INT64_MIN, le=INT64_MAX)]
+NonNegativeInt64: TypeAlias = Annotated[int, Field(ge=0, le=INT64_MAX)]
 FiniteFloat: TypeAlias = Annotated[float, Field(allow_inf_nan=False)]
 JsonNumber: TypeAlias = int | float
 
@@ -277,7 +282,7 @@ class Electrocardiogram(StrictModel):
     symptoms_status: EcgSymptomsStatus
     average_heart_rate_bpm: OmittableNonNegativeFloat = None
     sampling_frequency_hz: OmittableNonNegativeFloat = None
-    voltage_count: NonNegativeInt
+    voltage_count: NonNegativeInt64
     voltages_microvolts: tuple[FiniteFloat, ...] = ()
 
     @model_validator(mode="after")
@@ -315,7 +320,7 @@ class MedicationDoseEvent(StrictModel):
     medication_name: NonEmptyString
     medication_concept_key: OmittableString = None
     status: MedicationDoseStatus
-    status_raw: int
+    status_raw: Int64
     start_time: UtcTimestamp
     scheduled_time: OmittableString = None
     dose: OmittableNonNegativeFloat = None
