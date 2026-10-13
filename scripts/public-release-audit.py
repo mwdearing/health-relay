@@ -722,6 +722,17 @@ def scan_strict_blockers(paths: Iterable[Path]) -> list[str]:
     return blockers
 
 
+def strict_audit_blockers(paths: list[Path]) -> list[str]:
+    if not any(path.exists() for path in LOCAL_DENYLIST_FILES):
+        # Fail closed: without the operator's values a strict run proves nothing
+        # about them, so it must not report the same PASS as a checked run.
+        names = ", ".join(path.as_posix() for path in LOCAL_DENYLIST_FILES)
+        return [
+            f"local-denylist missing: {names}; strict private values were not checked"
+        ]
+    return scan_strict_blockers(paths)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -749,7 +760,7 @@ def main() -> int:
         and not is_intentional_visual_asset(path)
     ]
     marker_hits = scan_markers(paths)
-    strict_blockers = scan_strict_blockers(paths) if args.strict else []
+    strict_blockers = strict_audit_blockers(paths) if args.strict else []
 
     print("Public release tracked-file audit")
     print(f"tracked_files={len(paths)}")
@@ -785,7 +796,11 @@ def main() -> int:
         "release."
     )
     if args.strict:
-        print("PASS: no strict public-surface blockers found.")
+        denylist_count = len(local_strict_patterns())
+        print(
+            "PASS: no strict public-surface blockers found "
+            f"({denylist_count} local denylist patterns)."
+        )
     return 0
 
 
