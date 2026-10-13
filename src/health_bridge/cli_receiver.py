@@ -97,6 +97,9 @@ from health_bridge.storage._database_locks import (
     DATABASE_ACCESS_LOCK_SUFFIX,
     DATABASE_LIFECYCLE_LOCK_SUFFIX,
 )
+from health_bridge.storage._migration_backup_files import (
+    DELIVERY_RECEIPT_MIGRATION_ID,
+)
 from health_bridge.storage.database import (
     connect_database,
     connect_readonly_database,
@@ -303,7 +306,16 @@ SMOKE_RESPONSE_ADAPTER: Final[TypeAdapter[SmokeResponse]] = TypeAdapter(SmokeRes
 INTAKE_JSON_OBJECT_ADAPTER: Final[TypeAdapter[dict[str, object]]] = TypeAdapter(
     dict[str, object]
 )
-PURGE_SIDECAR_SUFFIXES: Final = ("", "-journal", "-wal", "-shm")
+# The pre-migration copy and its guard exist only so the store can roll back
+# migration 008; purge must remove them with the database they came from.
+PURGE_SIDECAR_SUFFIXES: Final = (
+    "",
+    "-journal",
+    "-wal",
+    "-shm",
+    f".pre-{DELIVERY_RECEIPT_MIGRATION_ID}.sqlite",
+    f".pre-{DELIVERY_RECEIPT_MIGRATION_ID}.sha256",
+)
 PURGE_WARNING: Final = (
     "Stop the receiver before confirming. This removes only the local HealthRelay "
     "SQLite database and its sidecars; it does not delete Apple Health data."

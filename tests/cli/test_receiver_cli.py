@@ -23,6 +23,12 @@ from health_bridge.receiver.pairing import (
     pairing_invitation_from_deep_link,
 )
 from health_bridge.receiver.tokens import authenticate_receiver_token
+from health_bridge.storage._migration_backup_files import (
+    delivery_receipt_backup_path,
+    delivery_receipt_rollback_guard_path,
+    finalize_delivery_receipt_rollback_guard,
+    prepare_delivery_receipt_backup,
+)
 from health_bridge.storage.database import connect_database
 
 
@@ -1447,3 +1453,66 @@ def test_receiver_create_pairing_cli_setup_page_requires_output_path(
     # Then
     assert result.returncode == 1
     assert "--setup-page is required" in result.stderr
+
+
+def test_receiver_purge_removes_pre_migration_copy_and_guard(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    marker = b"SYNTHETIC-PRE-MIGRATION-MARKER"
+    db_path = tmp_path / "receiver.sqlite"
+    with connect_database(db_path) as connection:
+        _ = connection.execute("create table synthetic_private_data (value blob)")
+        _ = connection.execute(
+            "insert into synthetic_private_data (value) values (?)",
+            (marker.decode("ascii"),),
+        )
+    backup_path = delivery_receipt_backup_path(db_path)
+    guard_path = delivery_receipt_rollback_guard_path(db_path)
+    prepare_delivery_receipt_backup(db_path)
+    finalize_delivery_receipt_rollback_guard(db_path)
+    assert backup_path.is_file()
+    assert guard_path.is_file()
+
+    receiver_cli_module.purge_receiver_store(db=db_path, confirm=True)
+
+    output = ReceiverPurgeCliOutput.model_validate_json(capsys.readouterr().out)
+    assert output.status == "purged"
+    assert str(backup_path) in output.paths
+    assert str(guard_path) in output.paths
+    assert not backup_path.exists()
+    assert not guard_path.exists()
+    for leftover in tmp_path.rglob("*"):
+        if leftover.is_file():
+            assert marker not in leftover.read_bytes(), leftover
+
+
+def test_receiver_purge_dry_run_lists_pre_migration_copy_and_guard(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_path = tmp_path / "receiver.sqlite"
+    with connect_database(db_path) as connection:
+        _ = connection.execute("create table synthetic_private_data (value text)")
+    prepare_delivery_receipt_backup(db_path)
+    finalize_delivery_receipt_rollback_guard(db_path)
+
+    receiver_cli_module.purge_receiver_store(db=db_path, confirm=False)
+
+    output = ReceiverPurgeCliOutput.model_validate_json(capsys.readouterr().out)
+    assert output.status == "dry-run"
+    assert str(delivery_receipt_backup_path(db_path)) in output.paths
+    assert str(delivery_receipt_rollback_guard_path(db_path)) in output.paths
+
+
+def test_secret_output_refuses_pre_migration_copy_and_guard(tmp_path: Path) -> None:
+    db_path = tmp_path / "receiver.sqlite"
+    for destination in (
+        delivery_receipt_backup_path(db_path),
+        delivery_receipt_rollback_guard_path(db_path),
+    ):
+        with pytest.raises(receiver_cli_module.ReceiverDatabaseOutputError):
+            receiver_cli_module._refuse_receiver_database_destination(  # noqa: SLF001
+                destination,
+                db=db_path,
+            )
