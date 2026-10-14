@@ -5,7 +5,15 @@ from typing import Final, TypeAlias
 from pydantic import TypeAdapter
 
 from health_bridge.contract import HealthBridgeBatchV1
-from health_bridge.storage.catalog import source_id, upsert_catalog
+from health_bridge.contract.batch_v1 import Sample
+from health_bridge.storage.catalog import (
+    KNOWN_SOURCE_KEYS_SQL,
+    KNOWN_TYPE_CODES_SQL,
+    known_keys,
+    refuse_undeclared_references,
+    source_id,
+    upsert_catalog,
+)
 from health_bridge.storage.sleep import (
     plan_sleep_baseline_resets,
     upsert_sleep_sessions,
@@ -105,6 +113,7 @@ def upsert_batch_records(
     batch: HealthBridgeBatchV1,
 ) -> None:
     upsert_catalog(connection, batch)
+    validate_batch_references(connection, batch)
     sleep_reset_plan = plan_sleep_baseline_resets(connection, batch)
     _upsert_samples(connection, batch)
     _upsert_workouts(connection, batch)
@@ -116,6 +125,63 @@ def upsert_batch_records(
         connection,
         batch,
         stale_sleep_reset_source_keys=sleep_reset_plan.stale_source_keys,
+    )
+
+
+def validate_batch_references(
+    connection: sqlite3.Connection,
+    batch: HealthBridgeBatchV1,
+) -> None:
+    """Refuse every source or type reference no declaration or stored row backs.
+
+    A reference is valid when the batch declares it (its catalog rows are upserted
+    just before this check) or an earlier accepted batch stored it. Runs before any
+    row is written, so a refused batch leaves nothing behind.
+    """
+    source_keys = {
+        *(sample.source_key for sample in batch.samples),
+        *(workout.source_key for workout in batch.workouts),
+        *(ecg.source_key for ecg in batch.electrocardiograms),
+        *(event.source_key for event in batch.medication_dose_events),
+        *(lab.source_key for lab in batch.lab_results),
+        *(session.source_key for session in batch.sleep_sessions),
+        *(deleted.source_key for deleted in batch.deleted_records),
+        *(cursor.source_key for cursor in batch.sync.cursors),
+    }
+    unknown_sources = source_keys - known_keys(
+        connection, KNOWN_SOURCE_KEYS_SQL, source_keys
+    )
+    if unknown_sources:
+        refuse_undeclared_references("source", unknown_sources)
+    canonical_types = {
+        canonical_sample_type_code(sample.type_code) for sample in batch.samples
+    }
+    unknown_canonical = canonical_types - known_keys(
+        connection, KNOWN_TYPE_CODES_SQL, canonical_types
+    )
+    # A sample whose type is unknown is still skipped without a write when an earlier
+    # batch tombstoned it, and the accepted-today rule keeps that case valid.
+    unknown_types = {
+        sample.type_code
+        for sample in batch.samples
+        if canonical_sample_type_code(sample.type_code) in unknown_canonical
+        and not _sample_is_tombstoned_for(connection, sample)
+    }
+    if unknown_types:
+        refuse_undeclared_references("type", unknown_types)
+
+
+def _sample_is_tombstoned_for(
+    connection: sqlite3.Connection,
+    sample: Sample,
+) -> bool:
+    return _sample_is_tombstoned(
+        connection,
+        source_id_value=source_id(connection, sample.source_key),
+        canonical_client_record_id=canonical_sample_client_record_id(
+            sample.type_code,
+            sample.client_record_id,
+        ),
     )
 
 

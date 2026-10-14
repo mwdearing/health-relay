@@ -4,7 +4,6 @@ import sqlite3
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias, assert_never, final
 
-from health_bridge.ingest import UndeclaredReferenceError
 from health_bridge.receiver.batch_acceptance import (
     BatchAcceptanceCore,
     BatchAcceptanceInput,
@@ -12,6 +11,7 @@ from health_bridge.receiver.batch_acceptance import (
     BatchPrincipalMismatch,
     PreparedBatch,
 )
+from health_bridge.storage.catalog import UndeclaredReferenceError
 from health_bridge.storage.sleep import StaleOrderedSleepBaselineResetError
 
 if TYPE_CHECKING:
