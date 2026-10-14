@@ -12,6 +12,18 @@ from pathlib import Path
 
 FULL_UPSTREAM_NAMES = re.compile(r"Apple Health AI Bridge|\bHealth Bridge\b")
 
+UPSTREAM_RELEASE_STEMS = (
+    "README",
+    "app-review-notes-template",
+    "criteria",
+    r"notes-receiver-v1\.1\.[01]",
+    r"notes-v1\.0\.[01]",
+    "[a-z]+-checklist",
+)
+UPSTREAM_RELEASE_FILES = (
+    r"re:\.github/release/(" + "|".join(UPSTREAM_RELEASE_STEMS) + r")\.md"
+)
+
 # (path, line-regex, reason). The line-regex is searched in the line text.
 ALLOWLIST: list[tuple[str, str, str]] = [
     # README attribution and fork relationship.
@@ -147,7 +159,8 @@ ALLOWLIST: list[tuple[str, str, str]] = [
     ),
     # Files that are upstream's own history, kept verbatim and labelled as such.
     (
-        r"re:\.github/release/.*\.md",
+        # Upstream's own files only, by name; HealthRelay's release notes are checked.
+        UPSTREAM_RELEASE_FILES,
         r"Apple Health AI Bridge|\bHealth Bridge\b",
         "upstream release notes and checklists kept as history",
     ),
@@ -224,3 +237,8 @@ def test_allowlist_entries_still_match_a_line() -> None:
 def test_allowlisted_line_still_catches_an_added_upstream_name() -> None:
     line = "HealthRelay is a fork of Apple Health AI Bridge. Install Health Bridge."
     assert FULL_UPSTREAM_NAMES.search(_unexplained_remainder("README.md", line))
+
+
+def test_fork_release_notes_are_not_exempt() -> None:
+    path = ".github/release/notes-healthrelay-receiver-2099.01.01.md"
+    assert FULL_UPSTREAM_NAMES.search(_unexplained_remainder(path, "Health Bridge fix"))
