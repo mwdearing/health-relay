@@ -12,8 +12,9 @@ ROOT = Path(__file__).parents[2]
 
 # Built from pieces so this file does not trip its own guard.
 PERSON_NAME = "Mich" + "ael"
-# Case-insensitive: a lower- or upper-case spelling is the same name.
-NAME_PATTERN = re.compile(r"\b" + PERSON_NAME + r"\b", re.IGNORECASE)
+# Case-insensitive and matched anywhere in a word, so account-style identifiers
+# (an underscore or a following capital) are caught too.
+NAME_PATTERN = re.compile(PERSON_NAME, re.IGNORECASE)
 
 # (path, exact-line regex) pairs for legitimate attribution. Nothing else is exempt.
 ALLOWLIST: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -60,12 +61,21 @@ def _tracked_files() -> list[str]:
     return [item for item in result.stdout.decode("utf-8").split("\0") if item]
 
 
+UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
+
+
 def _decode_text(path: str) -> str | None:
-    data = (ROOT / path).read_bytes()
-    if b"\0" in data:
+    return decode_tracked_bytes((ROOT / path).read_bytes())
+
+
+def decode_tracked_bytes(data: bytes) -> str | None:
+    """Decode a tracked file as text, or return None for binary content."""
+    # UTF-16 text has NUL bytes but is still text: decode it rather than skip it.
+    encoding = "utf-16" if data.startswith(UTF16_BOMS) else "utf-8"
+    if encoding == "utf-8" and b"\0" in data:
         return None
     try:
-        return data.decode("utf-8")
+        return data.decode(encoding)
     except UnicodeDecodeError:
         return None
 
@@ -79,8 +89,10 @@ def test_public_repository_names_no_private_feedback_source() -> None:
         text = _decode_text(path)
         if text is None:
             continue
-        for number, line in find_offending_lines(path, text):
-            offenders.append(f"{path}:{number}: {line.strip()}")
+        # Report locations only: the offending line may carry the private text itself.
+        offenders.extend(
+            f"{path}:{number}" for number, _line in find_offending_lines(path, text)
+        )
 
     # Then
     assert offenders == []
@@ -97,6 +109,8 @@ def test_guard_flags_private_feedback_shapes_and_allows_attribution() -> None:
         f"Thanks, {PERSON_NAME}, for the example",
         f"// {PERSON_NAME.lower()}: synthetic remark in lower case",
         f"// {PERSON_NAME.upper()}: synthetic remark in upper case",
+        f"// reported by @{PERSON_NAME.lower()}_example",
+        f"// reported by {PERSON_NAME}Example",
     )
 
     # When / Then every shape is flagged
@@ -111,4 +125,19 @@ def test_guard_flags_private_feedback_shapes_and_allows_attribution() -> None:
     assert find_offending_lines("docs/other.md", notice_line) == [(1, notice_line)]
     assert find_offending_lines("NOTICE", "Written by " + PERSON_NAME) == [
         (1, "Written by " + PERSON_NAME)
+    ]
+
+
+def test_guard_decodes_utf16_text(tmp_path: Path) -> None:
+    # Given a UTF-16 file naming the person
+    sample = tmp_path / "utf16.txt"
+    _ = sample.write_bytes(("// " + PERSON_NAME + ": synthetic\n").encode("utf-16"))
+
+    # When it is decoded the way the repository scan does
+    text = decode_tracked_bytes(sample.read_bytes())
+    assert text is not None
+
+    # Then its line is flagged rather than skipped as binary
+    assert find_offending_lines("docs/utf16.txt", text) == [
+        (1, "// " + PERSON_NAME + ": synthetic")
     ]
