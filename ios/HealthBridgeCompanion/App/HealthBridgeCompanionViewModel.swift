@@ -423,6 +423,19 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             && terminalRequestLifecycleSnapshot.admitsPayloadAction
     }
     @Published private(set) var backgroundSyncRequestedEnabled: Bool
+    private let syncConsentStore: SyncConsentStore
+    /// Loaded once from local storage. Nil until the user accepts the current disclosure.
+    @Published private(set) var syncConsentRecord: SyncConsentRecord?
+    /// Drives the first-run cover only. Withdrawing in Settings never sets it, so Settings stays usable.
+    @Published var syncConsentPromptIsPresented: Bool
+    /// The single "may send" check. Every send entry point below returns before any request.
+    var syncConsentAdmitsSend: Bool {
+        SyncConsentPolicy.maySend(record: syncConsentRecord)
+    }
+    /// Re-checked before every send and after every await, because withdrawal can land mid-run.
+    private func requireSyncConsent() throws {
+        guard syncConsentAdmitsSend else { throw SyncConsentRefusal() }
+    }
     private var outboxIdentityMigrationReady: Bool
     private var privateStorageAdmissionReady = false
     private let directOutboxTransferGate = AsyncExclusiveAccessGate()
@@ -518,7 +531,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             await BackgroundURLSessionOutboxUploader.shared.cancelInheritedLegacyUploads()
         },
         terminalBackgroundPayloadDrain: (@MainActor () async -> Bool)? = nil,
-        terminalRecoveryDrainTimeoutNanoseconds: UInt64 = 5_000_000_000
+        terminalRecoveryDrainTimeoutNanoseconds: UInt64 = 5_000_000_000,
+        syncConsentStore: SyncConsentStore = SyncConsentStore()
     ) {
         let pendingPairingMayExist: Bool
         do {
@@ -526,6 +540,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         } catch {
             pendingPairingMayExist = true
         }
+        self.syncConsentStore = syncConsentStore
+        self.syncConsentRecord = syncConsentStore.record
+        self.syncConsentPromptIsPresented = !SyncConsentPolicy.maySend(record: syncConsentStore.record)
         self.receiverClient = receiverClient
         self.settingsStore = settingsStore
         self.pairingStateStore = pairingStateStore
@@ -934,6 +951,38 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         statusMessage = "Saved Apple Health history window: \(HealthHistoryDepthPresentation.summary(selected: healthHistoryDepth))"
     }
 
+    func acceptSyncConsent() {
+        syncConsentStore.accept()
+        syncConsentRecord = syncConsentStore.record
+        statusIsError = false
+        statusMessage = "Thanks. HealthRelay can now send the data you allow to your receiver."
+        syncConsentPromptIsPresented = false
+        automaticSyncRuntime?.noteSyncConsentAccepted()
+        schedulePendingBackgroundOutboxUploadsIfAllowed()
+    }
+
+    /// "Not Now" on the first-run cover: sends stay gated and the cover does not return this launch.
+    func declineSyncConsentForNow() {
+        syncConsentPromptIsPresented = false
+    }
+
+    func withdrawSyncConsent() async {
+        syncConsentStore.withdraw()
+        syncConsentRecord = nil
+        // Close continuation admission so a background wake cannot chain new uploads.
+        #if os(iOS)
+        BackgroundURLSessionOutboxUploader.shared.setAutomaticContinuationAdmissionOpen(false)
+        #endif
+        cancelBackgroundUploadsForConsent()
+        // Stop work already under way: in-flight manual runs, then the automatic engine's run.
+        for task in trackedSyncTasks.values {
+            task.cancel()
+        }
+        await automaticSyncRuntime?.cancelAndWait()
+        statusIsError = false
+        statusMessage = "Consent withdrawn. HealthRelay will not send health data until you accept again."
+    }
+
     func saveReceiverSettings() async {
         guard terminalUserActionAdmissionIsOpen else { return }
         defer { activateAutomaticSyncIfReady() }
@@ -1146,6 +1195,11 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     }
 
     func checkConnection() async {
+        guard syncConsentAdmitsSend else {
+            statusIsError = true
+            statusMessage = "Accept the data-sharing disclosure in Settings before testing the connection."
+            return
+        }
         guard terminalPayloadActionAdmissionIsOpen else { return }
         let taskID = UUID()
         let task = Task { @MainActor [weak self] in
@@ -1215,6 +1269,11 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     }
 
     func syncAllNow() async {
+        guard syncConsentAdmitsSend else {
+            statusIsError = true
+            statusMessage = "Accept the data-sharing disclosure in Settings before syncing."
+            return
+        }
         guard terminalPayloadActionAdmissionIsOpen else { return }
         guard let automaticSyncRuntime else {
             statusIsError = true
@@ -1294,6 +1353,11 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     }
 
     private func flushPendingOutbox() async -> Bool {
+        guard syncConsentAdmitsSend else {
+            statusIsError = true
+            statusMessage = "Queued uploads stay on this iPhone until you accept the data-sharing disclosure."
+            return false
+        }
         guard !hasPendingPairing, !Task.isCancelled else {
             statusIsError = true
             statusMessage = "Queued upload retry is paused while pairing recovery is in progress."
@@ -1714,6 +1778,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     }
 
     private func performBootstrap() async {
+        if !syncConsentAdmitsSend {
+            cancelBackgroundUploadsForConsent()
+        }
         #if os(iOS)
         let inheritedUploadCancellation = await cancelInheritedLegacyUploads()
         if !inheritedUploadCancellation.fullyFinalized {
@@ -3129,7 +3196,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     }
 
     func schedulePendingBackgroundOutboxUploadsIfAllowed() {
-        guard terminalPayloadActionAdmissionIsOpen,
+        guard syncConsentAdmitsSend,
+              terminalPayloadActionAdmissionIsOpen,
               automaticSyncReady,
               directOutboxTransferRequestCount == 0 else { return }
         #if os(iOS)
@@ -3138,7 +3206,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     }
 
     private func schedulePendingBackgroundOutboxUploadsAndWaitIfAllowed() async {
-        guard terminalPayloadActionAdmissionIsOpen,
+        guard syncConsentAdmitsSend,
+              terminalPayloadActionAdmissionIsOpen,
               automaticSyncReady,
               directOutboxTransferRequestCount == 0 else { return }
         #if os(iOS)
@@ -3149,6 +3218,16 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
 
     func cancelPendingBackgroundOutboxUploads() {
         guard terminalUserActionAdmissionIsOpen else { return }
+        runBackgroundOutboxCancellation()
+    }
+
+    /// Consent withdrawal and a not-admitted bootstrap use this. It has no user-action admission
+    /// guard: a guarded cancel would silently leave queued uploads running during a transition.
+    func cancelBackgroundUploadsForConsent() {
+        runBackgroundOutboxCancellation()
+    }
+
+    private func runBackgroundOutboxCancellation() {
         #if os(iOS)
         Task { @MainActor in
             await cancelBackgroundOutboxSchedulingIfNeeded()
@@ -3248,7 +3327,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     private func schedulePendingBackgroundOutboxUploadsNow(
         expectedGeneration: String
     ) async {
-        guard terminalPayloadActionAdmissionIsOpen,
+        guard syncConsentAdmitsSend,
+              terminalPayloadActionAdmissionIsOpen,
               automaticSyncReady,
               directOutboxTransferRequestCount == 0,
               settingsStore.receiverSettingsGenerationToken == expectedGeneration,
@@ -3258,6 +3338,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         if appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox {
             do {
                 try requireCurrentConnectionGeneration(expectedGeneration)
+                try requireSyncConsent()
                 let summary = try await makeProductionMailboxDelivery()
                     .publishPendingFIFOHead()
                 try requireCurrentConnectionGeneration(expectedGeneration)
@@ -3391,6 +3472,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         foregroundMailboxSceneIsActive = true
         guard
             !Task.isCancelled,
+            syncConsentAdmitsSend,
             terminalPayloadActionAdmissionIsOpen,
             automaticSyncEnablePrerequisitesReady,
             backgroundSyncRequestedEnabled,
@@ -3455,6 +3537,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     private func reconcileMailboxDeliveryIfNeeded(
         at point: AutomaticSyncMailboxReconciliationPoint
     ) async -> AutomaticSyncMailboxReconciliationResult {
+        guard syncConsentAdmitsSend else {
+            return .completed(pendingCount: pendingOutboxCount)
+        }
         guard let requestedPhase = AutomaticSyncBackgroundOpportunityPolicy.deliveryPhase(
             usesMailboxTransport: appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox,
             at: point
@@ -3465,6 +3550,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         do {
             try Task.checkCancellation()
             try requireCurrentConnectionGeneration(expectedGeneration)
+            try requireSyncConsent()
             let delivery = try makeProductionMailboxDelivery()
             let summary: ProductionMailboxBackgroundDeliverySummary
             switch requestedPhase {
@@ -4304,6 +4390,11 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     }
 
     func sendConnectionTestBatch() async {
+        guard syncConsentAdmitsSend else {
+            statusIsError = true
+            statusMessage = "Accept the data-sharing disclosure in Settings before testing the connection."
+            return
+        }
         do {
             try await runWithExclusiveDirectOutboxTransfer {
                 await self.performSendConnectionTestBatch()
@@ -6527,11 +6618,14 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         summary: FileOutboxFlushSummary,
         lastDirectUploadResult: ReceiverUploadResult?
     ) {
+        try requireSyncConsent()
         try requireCurrentConnectionGeneration(expectedGeneration)
         if appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox {
             do {
+                try requireSyncConsent()
                 let summary = try await makeProductionMailboxDelivery().deliverPending()
                 try requireCurrentConnectionGeneration(expectedGeneration)
+                try requireSyncConsent()
                 let flushSummary = FileOutboxFlushSummary(
                     attemptedCount: summary.attemptedCount,
                     uploadedCount: summary.finalizedCount,
@@ -6579,6 +6673,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         var lastDirectUploadResult: ReceiverUploadResult?
         for item in pendingItems {
             try requireCurrentConnectionGeneration(expectedGeneration)
+            try requireSyncConsent()
             try outbox.requireUploadAdmission()
             attemptedCount += 1
             do {
@@ -6589,6 +6684,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                     bearerToken: uploadBearerToken
                 )
                 try requireCurrentConnectionGeneration(expectedGeneration)
+                try requireSyncConsent()
                 _ = try cursorFinalizer.recordDirectReceiverAcceptance(
                     itemID: item.id,
                     receiverBindingID: receiverIdentity

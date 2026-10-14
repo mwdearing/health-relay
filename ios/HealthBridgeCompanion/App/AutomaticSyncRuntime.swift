@@ -69,7 +69,8 @@ final class AutomaticSyncRuntime {
     }
 
     func prepareForBackgroundLaunch() {
-        guard viewModel.automaticSyncLaunchPreparationIsAllowed else { return }
+        guard viewModel.automaticSyncLaunchPreparationIsAllowed,
+              viewModel.syncConsentAdmitsSend else { return }
         #if os(iOS)
         BackgroundURLSessionOutboxUploader.shared
             .setAutomaticContinuationAdmissionOpen(true)
@@ -78,8 +79,20 @@ final class AutomaticSyncRuntime {
         BackgroundRefreshScheduler.scheduleNextRefreshIfNeeded(viewModel: viewModel)
     }
 
+    /// Called after the user accepts consent. Reopens continuation admission that withdrawal
+    /// closed, then starts the same work a ready launch would.
+    func noteSyncConsentAccepted() {
+        guard viewModel.automaticSyncRuntimeIsReady, viewModel.syncConsentAdmitsSend else { return }
+        // Explicit reopen: activateIfReady returns early once it has run, and withdrawal closed admission.
+        #if os(iOS)
+        BackgroundURLSessionOutboxUploader.shared.setAutomaticContinuationAdmissionOpen(true)
+        #endif
+        activateIfReady(scheduleOutbox: false)
+    }
+
     func activateIfReady(scheduleOutbox: Bool = true) {
-        guard viewModel.automaticSyncRuntimeIsReady else { return }
+        // Consent gate: admission and observers open only once the current disclosure is accepted.
+        guard viewModel.automaticSyncRuntimeIsReady, viewModel.syncConsentAdmitsSend else { return }
         #if os(iOS)
         BackgroundURLSessionOutboxUploader.shared
             .setAutomaticContinuationAdmissionOpen(true)
@@ -122,6 +135,8 @@ final class AutomaticSyncRuntime {
     }
 
     func runForegroundCatchUpIfNeeded() {
+        // Consent gate: leave the catch-up unconsumed so it can run once the user accepts.
+        guard viewModel.syncConsentAdmitsSend else { return }
         let opportunityWasConsumed = foregroundOpportunityConsumed
         guard !opportunityWasConsumed else { return }
         foregroundOpportunityConsumed = true
@@ -182,10 +197,13 @@ final class AutomaticSyncRuntime {
     func handleBackgroundRefresh() async {
         BackgroundRefreshScheduler.noteRequestConsumed()
         reconcileRegistrations()
-        try? await engine.requestRun(
-            reason: .scheduledRefresh,
-            bootstrapBeforeRun: true
-        )
+        // Consent gate: no run is enqueued until the current disclosure is accepted.
+        if viewModel.syncConsentAdmitsSend {
+            try? await engine.requestRun(
+                reason: .scheduledRefresh,
+                bootstrapBeforeRun: true
+            )
+        }
         BackgroundRefreshScheduler.scheduleNextRefreshIfNeeded(viewModel: viewModel)
     }
 
@@ -193,6 +211,7 @@ final class AutomaticSyncRuntime {
         reason: AutomaticSyncReason,
         diagnosticRunID: UUID = UUID()
     ) async {
+        guard viewModel.syncConsentAdmitsSend else { return }
         try? await engine.requestRun(
             reason: reason,
             diagnosticRunID: diagnosticRunID
@@ -200,6 +219,7 @@ final class AutomaticSyncRuntime {
     }
 
     func runManualSync() async {
+        guard viewModel.syncConsentAdmitsSend else { return }
         await engine.cancelAndWait()
         guard !Task.isCancelled else { return }
         try? await engine.requestRun(reason: .manualSync)
@@ -291,6 +311,8 @@ final class AutomaticSyncRuntime {
                 )
             }
         ) { [weak self] typeCode, diagnosticRunID in
+            // Consent gate: an observer wake-up enqueues nothing while consent is withdrawn.
+            guard self?.viewModel.syncConsentAdmitsSend == true else { return nil }
             self?.engine.requestRunWithoutWaiting(
                 reason: .observer(typeCode: typeCode),
                 diagnosticRunID: diagnosticRunID
