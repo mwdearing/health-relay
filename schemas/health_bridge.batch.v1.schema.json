@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/roian6/apple-health-ai-bridge/main/schemas/health_bridge.batch.v1.schema.json",
   "title": "health_bridge.batch.v1",
+  "description": "Every source_key and type_code a row names must be declared in this batch (sources, health_types) or already known to the receiver from an earlier batch; JSON Schema cannot enforce this, so the receiver refuses an undeclared reference with a payload error before writing any row.",
   "type": "object",
   "additionalProperties": false,
   "required": [

@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from health_bridge.contract.batch_v1 import MAX_BATCH_ENTRIES
-from health_bridge.ingest import UNDECLARED_REFERENCE_MESSAGE, UndeclaredReferenceError
+from health_bridge.ingest import UNDECLARED_REFERENCE_MESSAGE
 from health_bridge.receiver.batch_acceptance import BatchAcceptanceCore
 from health_bridge.receiver.server import MAX_BATCH_BYTES
 from health_bridge.receiver.tokens import create_receiver_token
+from health_bridge.storage.catalog import UndeclaredReferenceError
 from tests.receiver.test_legacy_http_contract import (
     FIXTURE_PATH,
     LEGACY_TOKEN,

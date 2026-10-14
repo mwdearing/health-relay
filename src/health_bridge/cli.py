@@ -35,10 +35,11 @@ from health_bridge.dev_validation import (
     anchored_step_validation_json,
     read_anchored_step_validation_snapshot,
 )
-from health_bridge.ingest import MALFORMED_JSON_SUMMARY, UndeclaredReferenceError
+from health_bridge.ingest import MALFORMED_JSON_SUMMARY
 from health_bridge.ingest import ingest_fixture as ingest_fixture_batch
 from health_bridge.status import read_status, read_status_markdown, read_status_snapshot
 from health_bridge.storage import initialize_database
+from health_bridge.storage.catalog import UndeclaredReferenceError
 
 app = typer.Typer(
     add_completion=False,
