@@ -181,17 +181,22 @@ def test_expired_head_deadline_increments_deadline_expired(
 
 # Its own loopback address: on a shared host another local process probing
 # 127.0.0.1 ports (seen as stray "GET /" requests) would otherwise be counted.
+# This end-to-end check depends on timer order; the deterministic regression
+# guard for an idle connection is the handler-level test further down.
 IDLE_TEST_HOST = "127.0.0.77"
 
 
 def test_plain_idle_timeout_is_not_counted_as_deadline(tmp_path: Path) -> None:
-    server = build_receiver_server(
-        tmp_path / "r.sqlite",
-        IDLE_TEST_HOST,
-        0,
-        intake_context_enabled=True,
-        request_timeout_seconds=0.2,
-    )
+    try:
+        server = build_receiver_server(
+            tmp_path / "r.sqlite",
+            IDLE_TEST_HOST,
+            0,
+            intake_context_enabled=True,
+            request_timeout_seconds=0.2,
+        )
+    except OSError:
+        pytest.skip(f"{IDLE_TEST_HOST} is not a local address here (stock macOS)")
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
