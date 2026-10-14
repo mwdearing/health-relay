@@ -1,7 +1,5 @@
 # HealthRelay Support
 
-> DRAFT. Not published. Pending Michael's decisions on the domain ({{SITE_URL}}) and the public support channel (D4). Must be published at a stable HTTPS address before App Store submission.
-
 ## Setup guide
 
 The step-by-step setup guide for the receiver and the app is at https://github.com/mwdearing/health-relay/blob/main/docs/setup.md. The pairing notes are at https://github.com/mwdearing/health-relay/blob/main/docs/pairing.md.
@@ -21,7 +19,7 @@ The receiver is where your records are stored. You set it up and you own it. Wit
 No. The camera scans the setup QR code only. Camera images are not stored or sent.
 
 **How do I stop sharing?**
-Revoke access in the Health app (profile picture, Privacy, Apps, HealthRelay), and disconnect the receiver inside HealthRelay. See the privacy policy at {{SITE_URL}}/privacy.
+Revoke access in the Health app (profile picture, Privacy, Apps, HealthRelay), and disconnect the receiver inside HealthRelay. See the privacy policy at https://github.com/mwdearing/health-relay/blob/main/docs/hosted/privacy-policy.md.
 
 **Does HealthRelay give medical advice?**
 No. HealthRelay relays records. Consult a qualified clinician about your health.
@@ -31,7 +29,7 @@ Check that the data type is allowed in the Health app, and that the receiver is 
 
 ## How to contact us
 
-- Setup and product questions: {{SUPPORT_EMAIL}} (Placeholder: the public support mailbox is Michael's decision under D4. Not the project's AgentMail inbox.)
+- Setup and product questions: health-relay-support@technology.mozmail.com
 - Bug reports and feature requests: use the forms at https://github.com/mwdearing/health-relay/issues/new/choose with synthetic data only.
 - Beta access: open a Beta access request at https://github.com/mwdearing/health-relay/issues/new?template=beta_access.yml. Do not put your email address or any health data in the issue.
 

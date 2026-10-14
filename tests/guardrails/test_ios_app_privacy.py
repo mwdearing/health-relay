@@ -719,10 +719,9 @@ def test_ios_companion_exposes_public_privacy_and_support_links() -> None:
     # Then
     assert 'Link("Privacy Policy"' in content_view
     assert 'Link("Support"' in content_view
-    assert (
-        "https://github.com/mwdearing/health-relay/blob/main/PRIVACY.md" in content_view
-    )
-    assert "https://github.com/mwdearing/health-relay/issues" in content_view
+    hosted = "https://github.com/mwdearing/health-relay/blob/main/docs/hosted"
+    assert f"{hosted}/privacy-policy.md" in content_view
+    assert f"{hosted}/support.md" in content_view
     assert "chanhyo.dev" not in content_view
 
 

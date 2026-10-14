@@ -853,8 +853,8 @@ private struct ReceiverSettingsView: View {
 private struct AppDetailsView: View {
     @ObservedObject var viewModel: HealthBridgeCompanionViewModel
 
-    private static let privacyPolicyURL = URL(string: "https://github.com/mwdearing/health-relay/blob/main/PRIVACY.md")!
-    private static let supportURL = URL(string: "https://github.com/mwdearing/health-relay/issues")!
+    private static let privacyPolicyURL = URL(string: "https://github.com/mwdearing/health-relay/blob/main/docs/hosted/privacy-policy.md")!
+    private static let supportURL = URL(string: "https://github.com/mwdearing/health-relay/blob/main/docs/hosted/support.md")!
 
     var body: some View {
         List {
