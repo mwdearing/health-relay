@@ -91,6 +91,58 @@ final class ReceiverClientTests: XCTestCase {
         XCTAssertEqual(result.statusCode, 202)
     }
 
+    func testHealthCheckBodyOverTheCapThrowsInsteadOfBuffering() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let client = ReceiverClient(session: URLSession(configuration: configuration))
+
+        MockURLProtocol.requestHandler = { request in
+            MockURLProtocolResponse(
+                response: HTTPURLResponse(
+                    url: try XCTUnwrap(request.url),
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!,
+                body: Data(repeating: 0x41, count: ReceiverClient.maximumResponseBodyBytes + 1)
+            )
+        }
+
+        do {
+            _ = try await client.healthCheck(
+                forBatchURL: try XCTUnwrap(URL(string: "https://health.example.test/v1/batches"))
+            )
+            XCTFail("an over-limit response body must not be returned")
+        } catch {
+            XCTAssertEqual(error as? ReceiverClientError, .responseBodyTooLarge)
+        }
+    }
+
+    func testHealthCheckBodyExactlyAtTheCapStillSucceeds() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let client = ReceiverClient(session: URLSession(configuration: configuration))
+
+        MockURLProtocol.requestHandler = { request in
+            MockURLProtocolResponse(
+                response: HTTPURLResponse(
+                    url: try XCTUnwrap(request.url),
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!,
+                body: Data(repeating: 0x41, count: ReceiverClient.maximumResponseBodyBytes)
+            )
+        }
+
+        let result = try await client.healthCheck(
+            forBatchURL: try XCTUnwrap(URL(string: "https://health.example.test/v1/batches"))
+        )
+
+        XCTAssertEqual(result.statusCode, 200)
+        XCTAssertEqual(result.responseBody.count, ReceiverClient.maximumResponseBodyBytes)
+    }
+
     func testHealthURLUsesReceiverOriginAndDropsBatchPathQueryAndFragment() throws {
         let batchURL = try XCTUnwrap(URL(string: "https://health.tailnet.example:8766/v1/batches?debug=true#section"))
 

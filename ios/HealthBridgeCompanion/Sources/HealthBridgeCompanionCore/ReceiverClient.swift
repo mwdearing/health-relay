@@ -19,6 +19,8 @@ public enum ReceiverClientError: Error, Equatable, LocalizedError {
     case nonHTTPResponse
     case sleepBaselineResetEpochConflict(minimumResetEpoch: UInt64)
     case unsuccessfulStatusCode(statusCode: Int, responseBody: Data)
+    /// The response body is longer than the foreground client reads (`maximumResponseBodyBytes`).
+    case responseBodyTooLarge
 
     public var errorDescription: String? {
         switch self {
@@ -30,6 +32,8 @@ public enum ReceiverClientError: Error, Equatable, LocalizedError {
             "Receiver requires a Sleep reset epoch above \(minimumResetEpoch)."
         case .unsuccessfulStatusCode(let statusCode, _):
             "Receiver returned HTTP \(statusCode)."
+        case .responseBodyTooLarge:
+            "Receiver response is larger than the app will read."
         }
     }
 }
@@ -78,9 +82,13 @@ public enum ReceiverPairingRedeemError: Error, Equatable, LocalizedError {
     case invalidResponse
     case mismatchedReceiverURL
     case emptyBearerToken
+    /// The redeem response body is longer than the client reads (`maximumResponseBodyBytes`).
+    case responseBodyTooLarge
 
     public var errorDescription: String? {
         switch self {
+        case .responseBodyTooLarge:
+            return "Pairing server response is larger than the app will read."
         case .nonHTTPResponse:
             return "Pairing server returned a non-HTTP response."
         case .invitationInvalid:
@@ -98,6 +106,8 @@ public enum ReceiverPairingRedeemError: Error, Equatable, LocalizedError {
 
     public var diagnosticCode: String {
         switch self {
+        case .responseBodyTooLarge:
+            "pairing_redeem_response_too_large"
         case .nonHTTPResponse:
             "pairing_redeem_non_http_response"
         case .invitationInvalid:
@@ -282,6 +292,10 @@ private final class ReceiverURLSessionRedirectDelegate: NSObject, URLSessionTask
 }
 
 public final class ReceiverClient: @unchecked Sendable {
+    /// Mirrors `BackgroundURLSessionOutboxUploader.maximumResponseBodyBytes` (in the app
+    /// target, which this module cannot import). The foreground client only surfaces status
+    /// codes and short error bodies, so bytes past this bound are never needed.
+    static let maximumResponseBodyBytes = 65_536
     private static let healthCheckTimeout: TimeInterval = 5
     private static let pairingRedeemTimeout: TimeInterval = 15
     private static let uploadStallTimeout: TimeInterval = 120
@@ -316,13 +330,45 @@ public final class ReceiverClient: @unchecked Sendable {
         return components.url ?? batchURL
     }
 
+    /// Reads a response body with a hard cap of `maximumResponseBodyBytes`. A declared
+    /// Content-Length above the cap is refused before any body byte is read. The header can
+    /// lie or be absent, so the streamed count is enforced too: the byte that would exceed
+    /// the cap throws `overflowError` and stops the transfer. Callers start the request
+    /// themselves, so each network call stays where its consent check is.
+    private static func boundedBody(
+        _ bytes: URLSession.AsyncBytes,
+        response: URLResponse,
+        overflowError: Error
+    ) async throws -> Data {
+        // Cancel the transfer before refusing, so the rest of an oversized body is not
+        // downloaded in the background after the error is thrown.
+        if response.expectedContentLength > Int64(maximumResponseBodyBytes) {
+            bytes.task.cancel()
+            throw overflowError
+        }
+        var body = Data()
+        for try await byte in bytes {
+            guard body.count < maximumResponseBodyBytes else {
+                bytes.task.cancel()
+                throw overflowError
+            }
+            body.append(byte)
+        }
+        return body
+    }
+
     public func healthCheck(forBatchURL batchURL: URL) async throws -> ReceiverUploadResult {
         let healthURL = Self.healthURL(forBatchURL: batchURL)
         var request = URLRequest(url: healthURL)
         request.timeoutInterval = Self.healthCheckTimeout
         request.httpMethod = "GET"
 
-        let (data, response) = try await session.data(for: request)
+        let (bytes, response) = try await session.bytes(for: request)
+        let data = try await Self.boundedBody(
+            bytes,
+            response: response,
+            overflowError: ReceiverClientError.responseBodyTooLarge
+        )
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ReceiverClientError.nonHTTPResponse
         }
@@ -374,7 +420,12 @@ public final class ReceiverClient: @unchecked Sendable {
         request.httpBody = body
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let (data, response) = try await session.data(for: request)
+        let (bytes, response) = try await session.bytes(for: request)
+        let data = try await Self.boundedBody(
+            bytes,
+            response: response,
+            overflowError: ReceiverPairingRedeemError.responseBodyTooLarge
+        )
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ReceiverPairingRedeemError.nonHTTPResponse
         }
@@ -517,7 +568,12 @@ public final class ReceiverClient: @unchecked Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         try requirePersistedSyncConsent(consentStore)
-        let (data, response) = try await session.data(for: request)
+        let (bytes, response) = try await session.bytes(for: request)
+        let data = try await Self.boundedBody(
+            bytes,
+            response: response,
+            overflowError: ReceiverClientError.responseBodyTooLarge
+        )
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ReceiverClientError.nonHTTPResponse
         }

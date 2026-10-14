@@ -14,9 +14,27 @@ public enum AppleHealthExportLabImporter {
     /// traceable to a manual export rather than a live sync.
     public static let sourceKey = "apple_health.export"
 
+    /// Largest number of clinical-record members one import reads. A real export holds a few
+    /// thousand small JSON files; 20_000 leaves room for growth while bounding the work that
+    /// an archive full of tiny members can cause.
+    static let maximumClinicalRecordMembers = 20_000
+
+    /// Largest total over the clinical-record members one import reads, charging each member
+    /// the larger of its declared compressed and uncompressed sizes (both are read or
+    /// allocated, and a member can declare either one small). Real records are kilobytes
+    /// each, so 256 MiB is far above any real export while still bounding the total work.
+    static let maximumClinicalRecordTotalBytes = 256 * 1024 * 1024
+
+    static let memberLimitMessage = "The export holds more clinical record files than this app will read."
+    static let totalLimitMessage = "The export's clinical record files add up to more data than this app will read."
+    static let entryLimitMessage = "A clinical record file in the export is larger than this app will read."
+
     public enum ImportError: Error, Equatable {
         /// `reason` is the plain-language description of what is wrong with the archive.
         case cannotOpenArchive(reason: String)
+        /// The archive is readable but exceeds a size or count cap, so the import stops
+        /// before reading further members and nothing from this archive is returned.
+        case archiveLimitExceeded(reason: String)
     }
 
     public struct Summary: Equatable, Sendable {
@@ -71,6 +89,20 @@ public enum AppleHealthExportLabImporter {
     }
 
     public static func importLabResults(fromZipAt url: URL) throws -> Summary {
+        try importLabResults(
+            fromZipAt: url,
+            maximumMembers: maximumClinicalRecordMembers,
+            maximumTotalBytes: maximumClinicalRecordTotalBytes
+        )
+    }
+
+    /// The caps are parameters only so tests can exercise them with a few small members;
+    /// production code reaches this through the public overload above.
+    static func importLabResults(
+        fromZipAt url: URL,
+        maximumMembers: Int,
+        maximumTotalBytes: Int
+    ) throws -> Summary {
         let entries: [MinimalZipReader.Entry]
         do {
             entries = try MinimalZipReader.listEntries(at: url)
@@ -82,6 +114,8 @@ public enum AppleHealthExportLabImporter {
         var observationCount = 0
         var skippedCount = 0
         var unreadableEntryCount = 0
+        var clinicalMemberCount = 0
+        var clinicalTotalBytes = 0
 
         for entry in entries {
             // A real export.zip nests everything under a top-level folder (typically
@@ -95,6 +129,26 @@ public enum AppleHealthExportLabImporter {
             else {
                 continue
             }
+
+            // Every cap failure ends the import: none of these is counted as an unreadable
+            // entry, so an oversized archive cannot silently produce a partial result.
+            clinicalMemberCount += 1
+            guard clinicalMemberCount <= maximumMembers else {
+                throw ImportError.archiveLimitExceeded(reason: memberLimitMessage)
+            }
+            do {
+                try MinimalZipReader.checkDeclaredSizes(entry)
+            } catch {
+                throw ImportError.archiveLimitExceeded(reason: entryLimitMessage)
+            }
+            // Compare against the remaining budget instead of adding first, so the running
+            // total never exceeds the cap and cannot overflow.
+            // Both sizes passed checkDeclaredSizes above, so they are within 0...16 MiB.
+            let memberBytes = max(entry.compressedSize, entry.uncompressedSize)
+            guard memberBytes <= maximumTotalBytes - clinicalTotalBytes else {
+                throw ImportError.archiveLimitExceeded(reason: totalLimitMessage)
+            }
+            clinicalTotalBytes += memberBytes
 
             try Task.checkCancellation()
 
@@ -305,6 +359,8 @@ extension AppleHealthExportLabImporter.ImportError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case let .cannotOpenArchive(reason):
+            return reason
+        case let .archiveLimitExceeded(reason):
             return reason
         }
     }

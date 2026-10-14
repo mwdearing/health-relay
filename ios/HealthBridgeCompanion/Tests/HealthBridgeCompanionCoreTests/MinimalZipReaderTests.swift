@@ -133,4 +133,186 @@ final class MinimalZipReaderTests: XCTestCase {
             XCTAssertEqual(error as? MinimalZipReader.ZipError, .invalidZip64Structure)
         }
     }
+
+    // MARK: - Declared sizes are refused before any read or allocation
+
+    private func writeSyntheticArchive(_ members: [SyntheticZipFixture.Member]) throws -> URL {
+        try writeZip(SyntheticZipFixture.bytes(for: members).base64EncodedString())
+    }
+
+    func testDeclaredUncompressedSizeOverCapIsRefusedBeforeReading() throws {
+        let cap = UInt64(MinimalZipReader.maximumEntryUncompressedBytes)
+        let url = try writeSyntheticArchive([
+            .init(path: "clinical-records/big.json", declaredUncompressedSize: cap + 1),
+        ])
+        let entries = try MinimalZipReader.listEntries(at: url)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertThrowsError(try MinimalZipReader.readEntryData(entries[0], from: url)) { error in
+            XCTAssertEqual(error as? MinimalZipReader.ZipError, .entryTooLarge)
+        }
+    }
+
+    func testDeclaredCompressedSizeOverCapIsRefusedBeforeReading() throws {
+        let cap = UInt64(MinimalZipReader.maximumEntryCompressedBytes)
+        let url = try writeSyntheticArchive([
+            .init(path: "clinical-records/big.json", declaredCompressedSize: cap + 1, declaredUncompressedSize: 2),
+        ])
+        let entries = try MinimalZipReader.listEntries(at: url)
+        XCTAssertThrowsError(try MinimalZipReader.readEntryData(entries[0], from: url)) { error in
+            XCTAssertEqual(error as? MinimalZipReader.ZipError, .entryTooLarge)
+        }
+    }
+
+    func testDeclaredSizesNearUInt32MaxAreRefusedWithoutTrapping() throws {
+        let nearMax = UInt64(UInt32.max) - 1
+        let members: [SyntheticZipFixture.Member] = [
+            .init(path: "clinical-records/a.json", declaredUncompressedSize: nearMax),
+            .init(path: "clinical-records/b.json", declaredCompressedSize: nearMax),
+        ]
+        for member in members {
+            let url = try writeSyntheticArchive([member])
+            let entries = try MinimalZipReader.listEntries(at: url)
+            XCTAssertThrowsError(try MinimalZipReader.readEntryData(entries[0], from: url)) { error in
+                XCTAssertEqual(error as? MinimalZipReader.ZipError, .entryTooLarge)
+            }
+        }
+    }
+
+    func testDeclaredSizesNearUInt64MaxFailWithoutTrapping() throws {
+        // ZIP64 values above Int.max cannot be represented as an entry size; the listing fails
+        // with the existing ZIP64 error instead of converting them unchecked.
+        let members: [SyntheticZipFixture.Member] = [
+            .init(path: "clinical-records/a.json", declaredUncompressedSize: UInt64.max),
+            .init(path: "clinical-records/b.json", declaredCompressedSize: UInt64.max),
+        ]
+        for member in members {
+            let url = try writeSyntheticArchive([member])
+            XCTAssertThrowsError(try MinimalZipReader.listEntries(at: url)) { error in
+                XCTAssertEqual(error as? MinimalZipReader.ZipError, .invalidZip64Structure)
+            }
+        }
+    }
+
+    func testLocalHeaderOffsetNearIntMaxFailsWithoutTrapping() throws {
+        // A declared offset this large is only reachable through a hand-built Entry; the
+        // seek or the offset arithmetic must fail cleanly rather than trap on overflow.
+        let url = try writeZip(Self.normalBase64)
+        let hostile = MinimalZipReader.Entry(
+            path: "clinical-records/hostile.json",
+            compressionMethod: 0,
+            compressedSize: 0,
+            uncompressedSize: 0,
+            localHeaderOffset: Int.max
+        )
+        XCTAssertThrowsError(try MinimalZipReader.readEntryData(hostile, from: url)) { error in
+            XCTAssertEqual(error as? MinimalZipReader.ZipError, .invalidLocalHeader)
+        }
+    }
+
+    func testSyntheticStoredMemberWithinCapsStillReadsItsBytes() throws {
+        let payload = Array("{}".utf8)
+        let url = try writeSyntheticArchive([
+            .init(
+                path: "clinical-records/ok.json",
+                declaredCompressedSize: UInt64(payload.count),
+                declaredUncompressedSize: UInt64(payload.count),
+                payload: payload
+            ),
+        ])
+        let entries = try MinimalZipReader.listEntries(at: url)
+        let data = try MinimalZipReader.readEntryData(entries[0], from: url)
+        XCTAssertEqual(data, Data(payload))
+    }
+}
+
+/// Builds classic zip archives in memory from declared sizes, so tests can state sizes that the
+/// reader must refuse without writing gigabytes. Sizes of 0xFFFF_FFFF or more are written as the
+/// ZIP64 sentinel, with the real values in a 0x0001 extra field, as the zip format specifies.
+enum SyntheticZipFixture {
+    struct Member {
+        let path: String
+        var method: UInt16 = 0
+        var declaredCompressedSize: UInt64 = 0
+        var declaredUncompressedSize: UInt64 = 0
+        var payload: [UInt8] = []
+    }
+
+    static func bytes(for members: [Member]) -> Data {
+        var local: [UInt8] = []
+        var central: [UInt8] = []
+        for member in members {
+            let name = Array(member.path.utf8)
+            let localHeaderOffset = UInt64(local.count)
+            let compressedIsZip64 = member.declaredCompressedSize >= 0xFFFF_FFFF
+            let uncompressedIsZip64 = member.declaredUncompressedSize >= 0xFFFF_FFFF
+
+            var zip64Values: [UInt64] = []
+            if uncompressedIsZip64 {
+                zip64Values.append(member.declaredUncompressedSize)
+            }
+            if compressedIsZip64 {
+                zip64Values.append(member.declaredCompressedSize)
+            }
+            var extra: [UInt8] = []
+            if !zip64Values.isEmpty {
+                appendLittleEndian(0x0001, byteCount: 2, to: &extra)
+                appendLittleEndian(UInt64(zip64Values.count * 8), byteCount: 2, to: &extra)
+                for value in zip64Values {
+                    appendLittleEndian(value, byteCount: 8, to: &extra)
+                }
+            }
+
+            // Local file header (30 fixed bytes, then name, then data).
+            appendLittleEndian(0x0403_4B50, byteCount: 4, to: &local)
+            appendLittleEndian(20, byteCount: 2, to: &local)
+            appendLittleEndian(0, byteCount: 2, to: &local)
+            appendLittleEndian(UInt64(member.method), byteCount: 2, to: &local)
+            appendLittleEndian(0, byteCount: 8, to: &local) // time, date, crc
+            appendLittleEndian(UInt64(member.payload.count), byteCount: 4, to: &local)
+            appendLittleEndian(UInt64(member.payload.count), byteCount: 4, to: &local)
+            appendLittleEndian(UInt64(name.count), byteCount: 2, to: &local)
+            appendLittleEndian(0, byteCount: 2, to: &local)
+            local += name
+            local += member.payload
+
+            // Central directory header (46 fixed bytes, then name, extra field).
+            appendLittleEndian(0x0201_4B50, byteCount: 4, to: &central)
+            appendLittleEndian(20, byteCount: 2, to: &central)
+            appendLittleEndian(20, byteCount: 2, to: &central)
+            appendLittleEndian(0, byteCount: 2, to: &central)
+            appendLittleEndian(UInt64(member.method), byteCount: 2, to: &central)
+            appendLittleEndian(0, byteCount: 8, to: &central) // time, date, crc
+            appendLittleEndian(compressedIsZip64 ? 0xFFFF_FFFF : member.declaredCompressedSize, byteCount: 4, to: &central)
+            appendLittleEndian(uncompressedIsZip64 ? 0xFFFF_FFFF : member.declaredUncompressedSize, byteCount: 4, to: &central)
+            appendLittleEndian(UInt64(name.count), byteCount: 2, to: &central)
+            appendLittleEndian(UInt64(extra.count), byteCount: 2, to: &central)
+            appendLittleEndian(0, byteCount: 2, to: &central) // comment length
+            appendLittleEndian(0, byteCount: 2, to: &central) // disk number
+            appendLittleEndian(0, byteCount: 2, to: &central) // internal attributes
+            appendLittleEndian(0, byteCount: 4, to: &central) // external attributes
+            appendLittleEndian(localHeaderOffset, byteCount: 4, to: &central)
+            central += name
+            central += extra
+        }
+
+        let centralDirectoryOffset = UInt64(local.count)
+        let centralDirectorySize = UInt64(central.count)
+        var archive = local + central
+        // End of central directory record (22 bytes, no comment).
+        appendLittleEndian(0x0605_4B50, byteCount: 4, to: &archive)
+        appendLittleEndian(0, byteCount: 2, to: &archive)
+        appendLittleEndian(0, byteCount: 2, to: &archive)
+        appendLittleEndian(UInt64(members.count), byteCount: 2, to: &archive)
+        appendLittleEndian(UInt64(members.count), byteCount: 2, to: &archive)
+        appendLittleEndian(centralDirectorySize, byteCount: 4, to: &archive)
+        appendLittleEndian(centralDirectoryOffset, byteCount: 4, to: &archive)
+        appendLittleEndian(0, byteCount: 2, to: &archive)
+        return Data(archive)
+    }
+
+    private static func appendLittleEndian(_ value: UInt64, byteCount: Int, to output: inout [UInt8]) {
+        for index in 0..<byteCount {
+            output.append(UInt8(truncatingIfNeeded: value >> UInt64(8 * index)))
+        }
+    }
 }

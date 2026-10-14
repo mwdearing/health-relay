@@ -7079,6 +7079,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 return "Connection key is missing. | domain=ReceiverClientError | code=missing_key"
             case .nonHTTPResponse:
                 return "Your server returned a non-HTTP response. | domain=ReceiverClientError | code=non_http_response"
+            case .responseBodyTooLarge:
+                return "Your server's response was too large for the app to read. | domain=ReceiverClientError | code=response_too_large"
             case .sleepBaselineResetEpochConflict(let minimumResetEpoch):
                 return "Your server requires a Sleep reset epoch above \(minimumResetEpoch). | domain=ReceiverClientError | code=sleep_epoch_conflict"
             case .unsuccessfulStatusCode(let statusCode, _):

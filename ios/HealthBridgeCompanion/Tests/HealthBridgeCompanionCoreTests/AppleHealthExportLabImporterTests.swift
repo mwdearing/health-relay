@@ -295,4 +295,136 @@ final class AppleHealthExportLabImporterTests: XCTestCase {
         let sawCancellation = await task.value
         XCTAssertTrue(sawCancellation)
     }
+
+    // MARK: - Import caps (declared sizes and counts, checked before any member is read)
+
+    private func writeArchive(_ members: [SyntheticZipFixture.Member]) throws -> URL {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: tempDirectory) }
+        let zipURL = tempDirectory.appendingPathComponent("capped-export.zip")
+        try SyntheticZipFixture.bytes(for: members).write(to: zipURL)
+        return zipURL
+    }
+
+    func testMemberCountOverCapFailsTheWholeImport() throws {
+        let zipURL = try writeArchive((0..<3).map { index -> SyntheticZipFixture.Member in
+            SyntheticZipFixture.Member(
+                path: "apple_health_export/clinical-records/record-\(index).json",
+                declaredCompressedSize: 2,
+                declaredUncompressedSize: 2,
+                payload: Array("{}".utf8)
+            )
+        })
+
+        XCTAssertThrowsError(
+            try AppleHealthExportLabImporter.importLabResults(
+                fromZipAt: zipURL,
+                maximumMembers: 2,
+                maximumTotalBytes: 1_000_000
+            )
+        ) { error in
+            guard case let AppleHealthExportLabImporter.ImportError.archiveLimitExceeded(reason) = error else {
+                return XCTFail("unexpected error \(error)")
+            }
+            XCTAssertEqual(reason, AppleHealthExportLabImporter.memberLimitMessage)
+        }
+    }
+
+    func testCumulativeDeclaredBytesOverCapFailsTheWholeImport() throws {
+        let zipURL = try writeArchive((0..<2).map { index -> SyntheticZipFixture.Member in
+            SyntheticZipFixture.Member(
+                path: "apple_health_export/clinical-records/record-\(index).json",
+                declaredCompressedSize: 30,
+                declaredUncompressedSize: 30,
+                payload: [UInt8](repeating: 0x20, count: 30)
+            )
+        })
+
+        XCTAssertThrowsError(
+            try AppleHealthExportLabImporter.importLabResults(
+                fromZipAt: zipURL,
+                maximumMembers: 10,
+                maximumTotalBytes: 40
+            )
+        ) { error in
+            guard case let AppleHealthExportLabImporter.ImportError.archiveLimitExceeded(reason) = error else {
+                return XCTFail("unexpected error \(error)")
+            }
+            XCTAssertEqual(reason, AppleHealthExportLabImporter.totalLimitMessage)
+        }
+    }
+
+    func testCumulativeCapChargesCompressedBytesWhenUncompressedIsDeclaredSmall() throws {
+        let zipURL = try writeArchive((0..<2).map { index -> SyntheticZipFixture.Member in
+            SyntheticZipFixture.Member(
+                path: "apple_health_export/clinical-records/record-\(index).json",
+                declaredCompressedSize: 30,
+                declaredUncompressedSize: 0,
+                payload: [UInt8](repeating: 0x20, count: 30)
+            )
+        })
+
+        XCTAssertThrowsError(
+            try AppleHealthExportLabImporter.importLabResults(
+                fromZipAt: zipURL,
+                maximumMembers: 10,
+                maximumTotalBytes: 40
+            )
+        ) { error in
+            guard case let AppleHealthExportLabImporter.ImportError.archiveLimitExceeded(reason) = error else {
+                return XCTFail("unexpected error \(error)")
+            }
+            XCTAssertEqual(reason, AppleHealthExportLabImporter.totalLimitMessage)
+        }
+    }
+
+    func testCentralDirectoryOverCapIsRefusedBeforeItIsLoaded() throws {
+        let zipURL = try writeArchive([
+            SyntheticZipFixture.Member(
+                path: "apple_health_export/clinical-records/record.json",
+                declaredCompressedSize: 2,
+                declaredUncompressedSize: 2,
+                payload: Array("{}".utf8)
+            ),
+        ])
+
+        XCTAssertNoThrow(try MinimalZipReader.listEntries(at: zipURL))
+        XCTAssertThrowsError(
+            try MinimalZipReader.listEntries(at: zipURL, maximumCentralDirectoryBytes: 8)
+        ) { error in
+            XCTAssertEqual(error as? MinimalZipReader.ZipError, .centralDirectoryTooLarge)
+        }
+    }
+
+    func testEntryCountOverCapIsRefusedWhileParsingTheDirectory() throws {
+        let zipURL = try writeArchive((0..<3).map { index -> SyntheticZipFixture.Member in
+            SyntheticZipFixture.Member(
+                path: "apple_health_export/workout-routes/route-\(index).gpx",
+                declaredCompressedSize: 2,
+                declaredUncompressedSize: 2,
+                payload: Array("{}".utf8)
+            )
+        })
+
+        XCTAssertEqual(try MinimalZipReader.listEntries(at: zipURL, maximumEntryCount: 3).count, 3)
+        XCTAssertThrowsError(try MinimalZipReader.listEntries(at: zipURL, maximumEntryCount: 2)) { error in
+            XCTAssertEqual(error as? MinimalZipReader.ZipError, .tooManyEntries)
+        }
+    }
+
+    func testOversizedClinicalMemberFailsTheWholeImportNotJustThatMember() throws {
+        let cap = UInt64(MinimalZipReader.maximumEntryUncompressedBytes)
+        let zipURL = try writeArchive([
+            .init(path: "apple_health_export/clinical-records/huge.json", declaredUncompressedSize: cap + 1),
+        ])
+
+        XCTAssertThrowsError(try AppleHealthExportLabImporter.importLabResults(fromZipAt: zipURL)) { error in
+            guard case let AppleHealthExportLabImporter.ImportError.archiveLimitExceeded(reason) = error else {
+                return XCTFail("unexpected error \(error)")
+            }
+            XCTAssertEqual(reason, AppleHealthExportLabImporter.entryLimitMessage)
+        }
+    }
 }
