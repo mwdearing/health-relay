@@ -1,5 +1,8 @@
 import re
 from pathlib import Path
+from typing import cast
+
+import yaml
 
 PYTHON_WORKFLOW = Path(".github/workflows/python.yml")
 IOS_WORKFLOW = Path(".github/workflows/ios.yml")
@@ -73,7 +76,6 @@ RETIRED_RELEASE_WORKFLOWS = (
 
 
 WORKFLOWS_DIR = Path(".github/workflows")
-WRITE_SCOPE = re.compile(r"^\s*(?P<scope>[a-z-]+):\s*write\b", re.MULTILINE)
 SECRET_REF = re.compile(r"secrets\.(?P<name>[A-Za-z0-9_]+)")
 # Every write scope a workflow token may hold. Writing a GitHub Release needs
 # `contents: write`, which only the signed receiver release pipeline has, so no
@@ -114,25 +116,77 @@ def test_unsigned_ipa_release_workflows_stay_retired() -> None:
         assert not path.exists(), path
 
 
+def _permission_blocks(workflow: dict[object, object]) -> list[object]:
+    blocks: list[object] = []
+    if "permissions" in workflow:
+        blocks.append(workflow["permissions"])
+    jobs = cast("dict[object, object]", workflow.get("jobs") or {})
+    job_maps = [
+        cast("dict[object, object]", job)
+        for job in jobs.values()
+        if isinstance(job, dict)
+    ]
+    blocks.extend(job["permissions"] for job in job_maps if "permissions" in job)
+    return blocks
+
+
+def _write_scopes(block: object, name: str) -> set[str]:
+    """Scopes a permissions value grants write on; anything unrecognised fails."""
+    if block is None:
+        return set()
+    if isinstance(block, str):
+        assert block.strip().lower() == "read-all", f"{name}: permissions {block!r}"
+        return set()
+    assert isinstance(block, dict), f"{name}: permissions {block!r}"
+    scopes: set[str] = set()
+    for scope, value in cast("dict[object, object]", block).items():
+        level = str(value).strip().strip("'\"").lower()
+        assert level in {"read", "write", "none"}, f"{name}: {scope}: {value!r}"
+        if level == "write":
+            scopes.add(str(scope).strip().lower())
+    return scopes
+
+
 def test_only_the_receiver_release_pipeline_can_write_releases() -> None:
     for path in _workflow_files():
         text = path.read_text(encoding="utf-8")
         name = path.name
+        loaded = cast("object", yaml.safe_load(text))
+        assert isinstance(loaded, dict), name
+        workflow = cast("dict[object, object]", loaded)
         # A workflow without top-level permissions gets the repository default.
-        assert re.search(r"^permissions:", text, re.MULTILINE), name
-        assert "write-all" not in text, name
-        scopes = {match["scope"] for match in WRITE_SCOPE.finditer(text)}
+        assert "permissions" in workflow, name
+        assert "write-all" not in text.lower(), name
+        scopes: set[str] = set()
+        for block in _permission_blocks(workflow):
+            scopes |= _write_scopes(block, name)
         allowed = ALLOWED_WRITE_SCOPES.get(name, frozenset())
         assert scopes <= allowed, f"{name} write scopes {sorted(scopes - allowed)}"
-        secrets = {match["name"] for match in SECRET_REF.finditer(text)}
+        # Inside expressions, secrets only by plain name and only allowlisted ones.
+        expressions = " ".join(re.findall(r"\$\{\{(.*?)\}\}", text, re.DOTALL))
+        assert len(re.findall(r"\bsecrets\b", expressions)) == len(
+            SECRET_REF.findall(expressions)
+        ), f"{name} uses secrets other than secrets.<NAME>"
+        secrets = {match["name"] for match in SECRET_REF.finditer(expressions)}
         allowed_secrets = ALLOWED_SECRETS.get(name, frozenset())
         assert secrets <= allowed_secrets, (
             f"{name} secrets {sorted(secrets - allowed_secrets)}"
         )
         if name in RELEASE_WRITERS:
-            assert "ipa" not in re.findall(r"\.(\w+)\b", text.lower()), (
-                f"{name} can write releases and handles an IPA"
+            assert not re.search(r"\bipa\b", text, re.IGNORECASE), (
+                f"{name} can write releases and mentions an IPA"
             )
+
+
+def test_write_scope_parser_recognises_yaml_variants() -> None:
+    for text in (
+        "permissions: {contents: write}",
+        "permissions:\n  contents: 'write'",
+        'permissions:\n  "contents": write',
+        "permissions:\n  contents : WRITE",
+    ):
+        loaded = cast("dict[str, object]", yaml.safe_load(text))
+        assert _write_scopes(loaded["permissions"], "probe") == {"contents"}, text
 
 
 def test_build_ipa_workflow_stays_manual_and_read_only() -> None:
