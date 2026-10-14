@@ -24,6 +24,13 @@ struct ContentView: View {
 
                     if viewModel.setupState == .unpaired {
                         pairingCard
+                        NavigationLink {
+                            SampleReviewView()
+                        } label: {
+                            Text("Try with sample data")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
                     } else if !viewModel.healthPermissionsRequested {
                         healthAccessCard
                     } else {
