@@ -106,8 +106,8 @@
       "additionalProperties": false,
       "required": ["type_code", "display_name", "category", "default_unit", "sensitivity", "aliases"],
       "properties": {
-        "type_code": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
-        "display_name": { "type": "string", "minLength": 1 },
+        "type_code": { "type": "string", "maxLength": 64, "pattern": "^[a-z][a-z0-9_]*$" },
+        "display_name": { "type": "string", "minLength": 1, "maxLength": 128 },
         "category": {
           "enum": [
             "activity",
@@ -122,11 +122,12 @@
             "workout"
           ]
         },
-        "default_unit": { "type": "string", "minLength": 1 },
+        "default_unit": { "type": "string", "minLength": 1, "maxLength": 32 },
         "sensitivity": { "enum": ["low", "moderate", "high"] },
         "aliases": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
+          "maxItems": 16,
+          "items": { "type": "string", "minLength": 1, "maxLength": 128 },
           "uniqueItems": true
         }
       }
