@@ -99,7 +99,9 @@ def test_activate_opens_continuation_admission_only_with_consent() -> None:
 
 def test_upload_and_connection_test_check_consent_before_any_request() -> None:
     source = VIEW_MODEL.read_text(encoding="utf-8")
-    assert CHECK in _function_body(source, "private func uploadPendingOutbox(", 700)
+    assert "requireSyncConsent()" in _function_body(
+        source, "private func uploadPendingOutbox(", 700
+    )
     assert CHECK in _function_body(source, "func sendConnectionTestBatch()", 300)
 
 
@@ -110,3 +112,62 @@ def test_consent_prompt_can_be_declined_without_locking_out_settings() -> None:
     assert "get: { !viewModel.syncConsentAdmitsSend }" not in content
     assert "onNotNow" in view
     assert "Not Now" in view
+
+
+def test_consent_cancel_is_not_gated_by_user_action_admission() -> None:
+    source = VIEW_MODEL.read_text(encoding="utf-8")
+    consent_cancel = _function_body(
+        source, "func cancelBackgroundUploadsForConsent(", 900
+    )
+    assert "terminalUserActionAdmissionIsOpen" not in consent_cancel
+    assert (
+        "BackgroundURLSessionOutboxUploader.shared.cancelPendingUploads()"
+        in consent_cancel
+    )
+    withdraw = _function_body(source, "func withdrawSyncConsent()", 1400)
+    assert "cancelBackgroundUploadsForConsent()" in withdraw
+    bootstrap = _function_body(source, "private func performBootstrap()", 200)
+    assert "cancelBackgroundUploadsForConsent()" in bootstrap
+
+
+def _between(source: str, start_marker: str, end_marker: str) -> str:
+    start = source.index(start_marker)
+    end = source.index(end_marker, start + len(start_marker))
+    return source[start:end]
+
+
+def test_upload_loop_rechecks_consent_before_each_send_and_after_each_await() -> None:
+    source = VIEW_MODEL.read_text(encoding="utf-8")
+    upload = _between(
+        source,
+        "private func uploadPendingOutbox(",
+        "private func makeProductionMailboxDelivery()",
+    )
+    assert upload.count("requireSyncConsent()") >= 4
+    loop = upload[upload.index("for item in pendingItems") :]
+    send = loop.index("receiverClient.upload(")
+    assert "requireSyncConsent()" in loop[:send]
+    assert "requireSyncConsent()" in loop[send:]
+    mailbox = upload[: upload.index("guard let receiverIdentity")]
+    assert mailbox.index("requireSyncConsent()") < mailbox.index("deliverPending()")
+
+
+def test_mailbox_reconciliation_and_foreground_retry_check_consent() -> None:
+    source = VIEW_MODEL.read_text(encoding="utf-8")
+    foreground = _between(
+        source,
+        "func runForegroundMailboxReconciliationIfNeeded()",
+        "func noteSceneLeftActive()",
+    )
+    assert CHECK in foreground[:600]
+    reconcile = _between(
+        source, "private func reconcileMailboxDeliveryIfNeeded(", "private func "
+    )
+    assert "syncConsentAdmitsSend" in reconcile[:800]
+    assert "requireSyncConsent()" in reconcile
+    scheduled = _between(
+        source,
+        "private func schedulePendingBackgroundOutboxUploadsNow(",
+        "private func ",
+    )
+    assert "requireSyncConsent()" in scheduled

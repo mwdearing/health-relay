@@ -420,6 +420,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     var syncConsentAdmitsSend: Bool {
         SyncConsentPolicy.maySend(record: syncConsentRecord)
     }
+    /// Re-checked before every send and after every await, because withdrawal can land mid-run.
+    private func requireSyncConsent() throws {
+        guard syncConsentAdmitsSend else { throw SyncConsentRefusal() }
+    }
     private var outboxIdentityMigrationReady: Bool
     private var privateStorageAdmissionReady = false
     private let directOutboxTransferGate = AsyncExclusiveAccessGate()
@@ -957,7 +961,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         #if os(iOS)
         BackgroundURLSessionOutboxUploader.shared.setAutomaticContinuationAdmissionOpen(false)
         #endif
-        cancelPendingBackgroundOutboxUploads()
+        cancelBackgroundUploadsForConsent()
         // Stop work already under way: in-flight manual runs, then the automatic engine's run.
         for task in trackedSyncTasks.values {
             task.cancel()
@@ -1763,7 +1767,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
 
     private func performBootstrap() async {
         if !syncConsentAdmitsSend {
-            cancelPendingBackgroundOutboxUploads()
+            cancelBackgroundUploadsForConsent()
         }
         #if os(iOS)
         let inheritedUploadCancellation = await cancelInheritedLegacyUploads()
@@ -3202,6 +3206,16 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
 
     func cancelPendingBackgroundOutboxUploads() {
         guard terminalUserActionAdmissionIsOpen else { return }
+        runBackgroundOutboxCancellation()
+    }
+
+    /// Consent withdrawal and a not-admitted bootstrap use this. It has no user-action admission
+    /// guard: a guarded cancel would silently leave queued uploads running during a transition.
+    func cancelBackgroundUploadsForConsent() {
+        runBackgroundOutboxCancellation()
+    }
+
+    private func runBackgroundOutboxCancellation() {
         #if os(iOS)
         Task { @MainActor in
             await cancelBackgroundOutboxSchedulingIfNeeded()
@@ -3312,6 +3326,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         if settingsStore.activeTransport == .mailbox {
             do {
                 try requireCurrentConnectionGeneration(expectedGeneration)
+                try requireSyncConsent()
                 let summary = try await makeProductionMailboxDelivery()
                     .publishPendingFIFOHead()
                 try requireCurrentConnectionGeneration(expectedGeneration)
@@ -3445,6 +3460,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         foregroundMailboxSceneIsActive = true
         guard
             !Task.isCancelled,
+            syncConsentAdmitsSend,
             terminalPayloadActionAdmissionIsOpen,
             automaticSyncEnablePrerequisitesReady,
             backgroundSyncRequestedEnabled,
@@ -3509,6 +3525,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     private func reconcileMailboxDeliveryIfNeeded(
         at point: AutomaticSyncMailboxReconciliationPoint
     ) async -> AutomaticSyncMailboxReconciliationResult {
+        guard syncConsentAdmitsSend else {
+            return .completed(pendingCount: pendingOutboxCount)
+        }
         guard let requestedPhase = AutomaticSyncBackgroundOpportunityPolicy.deliveryPhase(
             usesMailboxTransport: settingsStore.activeTransport == .mailbox,
             at: point
@@ -3519,6 +3538,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         do {
             try Task.checkCancellation()
             try requireCurrentConnectionGeneration(expectedGeneration)
+            try requireSyncConsent()
             let delivery = try makeProductionMailboxDelivery()
             let summary: ProductionMailboxBackgroundDeliverySummary
             switch requestedPhase {
@@ -6586,12 +6606,14 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         summary: FileOutboxFlushSummary,
         lastDirectUploadResult: ReceiverUploadResult?
     ) {
-        guard syncConsentAdmitsSend else { throw SyncConsentRefusal() }
+        try requireSyncConsent()
         try requireCurrentConnectionGeneration(expectedGeneration)
         if settingsStore.activeTransport == .mailbox {
             do {
+                try requireSyncConsent()
                 let summary = try await makeProductionMailboxDelivery().deliverPending()
                 try requireCurrentConnectionGeneration(expectedGeneration)
+                try requireSyncConsent()
                 let flushSummary = FileOutboxFlushSummary(
                     attemptedCount: summary.attemptedCount,
                     uploadedCount: summary.finalizedCount,
@@ -6639,6 +6661,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         var lastDirectUploadResult: ReceiverUploadResult?
         for item in pendingItems {
             try requireCurrentConnectionGeneration(expectedGeneration)
+            try requireSyncConsent()
             try outbox.requireUploadAdmission()
             attemptedCount += 1
             do {
@@ -6649,6 +6672,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                     bearerToken: uploadBearerToken
                 )
                 try requireCurrentConnectionGeneration(expectedGeneration)
+                try requireSyncConsent()
                 _ = try cursorFinalizer.recordDirectReceiverAcceptance(
                     itemID: item.id,
                     receiverBindingID: receiverIdentity
