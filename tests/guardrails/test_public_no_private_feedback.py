@@ -12,22 +12,26 @@ ROOT = Path(__file__).parents[2]
 
 # Built from pieces so this file does not trip its own guard.
 PERSON_NAME = "Mich" + "ael"
+SURNAME = "Dear" + "ing"
 # Case-insensitive and matched anywhere in a word, so account-style identifiers
 # (an underscore or a following capital) are caught too.
-NAME_PATTERN = re.compile(PERSON_NAME, re.IGNORECASE)
+# The surname is matched at a word start, so `M. <surname>` and `<surname>:` are
+# caught; the public GitHub handle that ends in it (in every repository URL, by
+# design) is account identity, not attribution, and is not matched.
+NAME_PATTERN = re.compile(PERSON_NAME + r"|\b" + SURNAME, re.IGNORECASE)
 
 # (path, exact-line regex) pairs for legitimate attribution. Nothing else is exempt.
 ALLOWLIST: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         # Copyright holder line of the project NOTICE file, required by Apache-2.0.
         "NOTICE",
-        re.compile(r"^Copyright \(c\) 2026 " + PERSON_NAME + r" Dearing$"),
+        re.compile(r"^Copyright \(c\) 2026 " + PERSON_NAME + r" " + SURNAME + r"$"),
     ),
     (
         # Mirror of the NOTICE copyright line in the About screen text; a guardrail
         # test requires the two to stay identical.
         "ios/HealthBridgeCompanion/App/ContentView.swift",
-        re.compile(r"^\s*Copyright \(c\) 2026 " + PERSON_NAME + r" Dearing$"),
+        re.compile(r"^\s*Copyright \(c\) 2026 " + PERSON_NAME + r" " + SURNAME + r"$"),
     ),
 )
 
@@ -111,6 +115,8 @@ def test_guard_flags_private_feedback_shapes_and_allows_attribution() -> None:
         f"// {PERSON_NAME.upper()}: synthetic remark in upper case",
         f"// reported by @{PERSON_NAME.lower()}_example",
         f"// reported by {PERSON_NAME}Example",
+        f"// {SURNAME}: synthetic remark",
+        f"// (M. {SURNAME}, 2000-01-01)",
     )
 
     # When / Then every shape is flagged
@@ -118,8 +124,12 @@ def test_guard_flags_private_feedback_shapes_and_allows_attribution() -> None:
         assert find_offending_lines("src/example.py", line) == [(1, line)], line
 
     # The allowlisted NOTICE copyright line is not flagged ...
-    notice_line = "Copyright (c) 2026 " + PERSON_NAME + " Dearing"
+    notice_line = "Copyright (c) 2026 " + PERSON_NAME + " " + SURNAME
     assert find_offending_lines("NOTICE", notice_line) == []
+
+    # The public GitHub handle in repository URLs is not attribution.
+    handle_line = "https://github.com/mw" + SURNAME.lower() + "/health-relay"
+    assert find_offending_lines("pyproject.toml", handle_line) == []
 
     # ... but the same line in any other file, or another line in NOTICE, is.
     assert find_offending_lines("docs/other.md", notice_line) == [(1, notice_line)]
