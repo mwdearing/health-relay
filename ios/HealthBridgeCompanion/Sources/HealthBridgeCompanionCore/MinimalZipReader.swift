@@ -54,7 +54,25 @@ enum MinimalZipReader {
         case encryptedEntry
         case multiDiskArchive
         case invalidZip64Structure
+        /// A member declares a compressed or uncompressed size above the per-member cap.
+        case entryTooLarge
+        /// The central directory itself is larger than the reader will load into memory.
+        case centralDirectoryTooLarge
     }
+
+    /// Largest central directory `listEntries` loads. The whole directory is read into one
+    /// buffer before parsing, and its size comes from the archive. A full Apple Health export
+    /// with tens of thousands of members needs a few megabytes; 64 MiB bounds the buffer.
+    static let maximumCentralDirectoryBytes = 64 * 1024 * 1024
+
+    /// Largest compressed size accepted for one member, checked against the central
+    /// directory before any seek or read. A real Apple Health clinical-record file is a few
+    /// kilobytes; 16 MiB leaves a wide margin while bounding the buffer one member can cost.
+    static let maximumEntryCompressedBytes = 16 * 1024 * 1024
+
+    /// Largest uncompressed size accepted for one member, checked before the output buffer
+    /// is allocated. Same reasoning as `maximumEntryCompressedBytes`.
+    static let maximumEntryUncompressedBytes = 16 * 1024 * 1024
 
     private static let endOfCentralDirectorySignature: [UInt8] = [0x50, 0x4B, 0x05, 0x06]
     private static let centralDirectorySignature: [UInt8] = [0x50, 0x4B, 0x01, 0x02]
@@ -67,7 +85,10 @@ enum MinimalZipReader {
     /// Lists every entry in the zip's central directory (path, sizes, compression method,
     /// and where its local header lives -- everything needed to later read just that one
     /// entry with `readEntryData`). Does not read any entry's data.
-    static func listEntries(at url: URL) throws -> [Entry] {
+    static func listEntries(
+        at url: URL,
+        maximumCentralDirectoryBytes: Int = MinimalZipReader.maximumCentralDirectoryBytes
+    ) throws -> [Entry] {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
 
@@ -80,6 +101,9 @@ enum MinimalZipReader {
               centralDirectorySize <= fileSize - centralDirectoryOffset
         else {
             throw ZipError.truncatedCentralDirectory
+        }
+        guard centralDirectorySize <= maximumCentralDirectoryBytes else {
+            throw ZipError.centralDirectoryTooLarge
         }
 
         try handle.seek(toOffset: UInt64(centralDirectoryOffset))
@@ -95,15 +119,18 @@ enum MinimalZipReader {
     /// Reads and decompresses one entry's data, given the `Entry` `listEntries` returned
     /// for it. Only that entry's bytes are read from disk.
     static func readEntryData(_ entry: Entry, from url: URL) throws -> Data {
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-
         if entry.isEncrypted {
             throw ZipError.encryptedEntry
         }
         guard entry.compressionMethod == 0 || entry.compressionMethod == 8 else {
             throw ZipError.unsupportedCompressionMethod(entry.compressionMethod)
         }
+        // Declared sizes are refused before the file is opened, sought or allocated.
+        try checkDeclaredSizes(entry)
+
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
         try handle.seek(toOffset: UInt64(entry.localHeaderOffset))
         guard let localHeader = try handle.read(upToCount: 30), localHeader.count == 30,
               Array(localHeader.prefix(4)) == localFileHeaderSignature
@@ -112,7 +139,12 @@ enum MinimalZipReader {
         }
         let nameLength = Int(readUInt16(localHeader, at: 26))
         let extraLength = Int(readUInt16(localHeader, at: 28))
-        try handle.seek(toOffset: UInt64(entry.localHeaderOffset + 30 + nameLength + extraLength))
+        // The lengths are at most 65_535 each, so only the declared offset can overflow here.
+        let (dataOffset, overflowed) = entry.localHeaderOffset.addingReportingOverflow(30 + nameLength + extraLength)
+        guard !overflowed else {
+            throw ZipError.invalidLocalHeader
+        }
+        try handle.seek(toOffset: UInt64(dataOffset))
 
         guard let compressed = try handle.read(upToCount: entry.compressedSize),
               compressed.count == entry.compressedSize
@@ -127,6 +159,17 @@ enum MinimalZipReader {
             return try inflateRawDeflate(compressed, expectedSize: entry.uncompressedSize)
         default:
             throw ZipError.unsupportedCompressionMethod(entry.compressionMethod)
+        }
+    }
+
+    /// Refuses an entry whose declared sizes are outside the per-member caps. The sizes are
+    /// already exact `Int` values (`parseCentralDirectory` converts with `Int(exactly:)`), so
+    /// this is a plain comparison that runs before any seek, read or allocation.
+    static func checkDeclaredSizes(_ entry: Entry) throws {
+        guard (0...maximumEntryCompressedBytes).contains(entry.compressedSize),
+              (0...maximumEntryUncompressedBytes).contains(entry.uncompressedSize)
+        else {
+            throw ZipError.entryTooLarge
         }
     }
 
@@ -424,6 +467,10 @@ extension MinimalZipReader.ZipError: LocalizedError {
             return "The ZIP archive is split across multiple disks or volumes, which this reader does not support."
         case .invalidZip64Structure:
             return "The ZIP archive's large-file (ZIP64) information is missing or inconsistent; the archive may be damaged."
+        case .entryTooLarge:
+            return "An entry in the ZIP archive is larger than this app will read."
+        case .centralDirectoryTooLarge:
+            return "The ZIP archive lists more entries than this app will read."
         }
     }
 }
