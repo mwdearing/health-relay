@@ -140,9 +140,24 @@ class Source(StrictModel):
     device_model: OmittableString = None
 
 
+# Declared health types are written to the global health_types and
+# health_type_aliases tables and kept permanently, so each field is bounded.
+# The longest values the iOS catalog and repository fixtures send are 33
+# characters for type codes and display names, 18 for units and 58 for a
+# HealthKit alias; the limits leave room above those.
+MAX_TYPE_CODE_LENGTH: Final = 64
+MAX_DISPLAY_NAME_LENGTH: Final = 128
+MAX_DEFAULT_UNIT_LENGTH: Final = 32
+MAX_ALIAS_LENGTH: Final = 128
+MAX_ALIASES_PER_TYPE: Final = 16
+
+
 class HealthType(StrictModel):
-    type_code: TypeCode
-    display_name: NonEmptyString
+    type_code: Annotated[TypeCode, StringConstraints(max_length=MAX_TYPE_CODE_LENGTH)]
+    display_name: Annotated[
+        str,
+        StringConstraints(min_length=1, max_length=MAX_DISPLAY_NAME_LENGTH),
+    ]
     category: Literal[
         "activity",
         "blood_respiratory",
@@ -155,9 +170,18 @@ class HealthType(StrictModel):
         "sleep",
         "workout",
     ]
-    default_unit: NonEmptyString
+    default_unit: Annotated[
+        str,
+        StringConstraints(min_length=1, max_length=MAX_DEFAULT_UNIT_LENGTH),
+    ]
     sensitivity: Literal["low", "moderate", "high"]
-    aliases: tuple[NonEmptyString, ...]
+    aliases: tuple[
+        Annotated[
+            str,
+            StringConstraints(min_length=1, max_length=MAX_ALIAS_LENGTH),
+        ],
+        ...,
+    ] = Field(max_length=MAX_ALIASES_PER_TYPE)
 
     @field_validator("aliases")
     @classmethod

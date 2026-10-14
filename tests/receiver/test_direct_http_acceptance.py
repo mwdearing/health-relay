@@ -7,7 +7,14 @@ from http.client import HTTPConnection
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from health_bridge.contract.batch_v1 import MAX_BATCH_ENTRIES
+import pytest
+
+from health_bridge.contract.batch_v1 import (
+    MAX_BATCH_ENTRIES,
+    MAX_DEFAULT_UNIT_LENGTH,
+    MAX_DISPLAY_NAME_LENGTH,
+    MAX_TYPE_CODE_LENGTH,
+)
 from health_bridge.ingest import UNDECLARED_REFERENCE_MESSAGE
 from health_bridge.receiver.batch_acceptance import BatchAcceptanceCore
 from health_bridge.receiver.server import MAX_BATCH_BYTES
@@ -26,8 +33,6 @@ MEDICATION_FIXTURE_PATH = Path(
 )
 
 if TYPE_CHECKING:
-    import pytest
-
     from health_bridge.receiver.batch_acceptance import PreparedBatch
     from health_bridge.storage.models import IngestResult
 
@@ -209,3 +214,67 @@ def test_direct_http_answers_undeclared_reference_as_payload_error(
         www_authenticate=None,
         body=b'{"error":"payload does not match health_bridge.batch.v1 schema"}',
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "over_limit"),
+    [
+        ("type_code", "a" * (MAX_TYPE_CODE_LENGTH + 1)),
+        ("display_name", "d" * (MAX_DISPLAY_NAME_LENGTH + 1)),
+        ("default_unit", "u" * (MAX_DEFAULT_UNIT_LENGTH + 1)),
+        (
+            "aliases",
+            [f"HKQuantityTypeIdentifierSynthetic{i}" for i in range(17)],
+        ),
+    ],
+)
+def test_direct_http_rejects_health_type_field_over_its_limit_without_writing(
+    tmp_path: Path,
+    field: str,
+    over_limit: object,
+) -> None:
+    # Given
+    db_path = tmp_path / "health-type-cap.sqlite"
+    _ = create_receiver_token(db_path, label="health-type-cap", token=LEGACY_TOKEN)
+    document = cast(
+        "dict[str, object]",
+        json.loads(FIXTURE_PATH.read_text(encoding="utf-8")),
+    )
+    health_types = cast("list[dict[str, object]]", document["health_types"])
+    health_types[0][field] = over_limit
+    oversized_body = json.dumps(document).encode("utf-8")
+
+    # When
+    with running_receiver(db_path) as port:
+        before = _catalog_row_counts(db_path)
+        observation = post_raw_batch(port, LEGACY_TOKEN, oversized_body)
+        after = _catalog_row_counts(db_path)
+
+    # Then
+    assert observation == HttpObservation(
+        status=422,
+        content_type="application/json",
+        content_length="64",
+        www_authenticate=None,
+        body=b'{"error":"payload does not match health_bridge.batch.v1 schema"}',
+    )
+    assert after == before
+    with closing(sqlite3.connect(db_path)) as connection:
+        sync_runs = cast(
+            "tuple[int]",
+            connection.execute("select count(*) from sync_runs").fetchone(),
+        )
+    assert sync_runs == (0,)
+
+
+def _catalog_row_counts(db_path: Path) -> tuple[int, int, int]:
+    counts = (
+        "(select count(*) from health_types),"
+        " (select count(*) from health_type_aliases),"
+        " (select count(*) from sync_runs)"
+    )
+    with closing(sqlite3.connect(db_path)) as connection:
+        return cast(
+            "tuple[int, int, int]",
+            connection.execute(f"select {counts}").fetchone(),
+        )

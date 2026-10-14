@@ -6,7 +6,14 @@ import pytest
 from pydantic import ValidationError
 
 from health_bridge.contract import HealthBridgeBatchV1
-from health_bridge.contract.batch_v1 import MAX_BATCH_ENTRIES
+from health_bridge.contract.batch_v1 import (
+    MAX_ALIAS_LENGTH,
+    MAX_ALIASES_PER_TYPE,
+    MAX_BATCH_ENTRIES,
+    MAX_DEFAULT_UNIT_LENGTH,
+    MAX_DISPLAY_NAME_LENGTH,
+    MAX_TYPE_CODE_LENGTH,
+)
 from health_bridge.mcp.types import (
     JsonObject,
     JsonValue,
@@ -329,3 +336,98 @@ def test_public_schema_declares_the_documented_maximum_entry_count() -> None:
     )
     for array_name in BATCH_ENTRY_ARRAYS:
         assert schema["properties"][array_name]["maxItems"] == MAX_BATCH_ENTRIES
+
+
+def _health_type_payload(**overrides: JsonValue) -> JsonObject:
+    payload = _fixture_object()
+    health_types = required_list(payload["health_types"])
+    entry = required_object(health_types[0])
+    entry.update(overrides)
+    return payload
+
+
+def _alias_list(count: int) -> list[JsonValue]:
+    return [f"HKQuantityTypeIdentifierSynthetic{index}" for index in range(count)]
+
+
+def _long_alias_list(length: int) -> list[JsonValue]:
+    return ["h" * length]
+
+
+HEALTH_TYPE_LIMIT_CASES: Final[tuple[tuple[str, JsonValue], ...]] = (
+    ("type_code", "a" * MAX_TYPE_CODE_LENGTH),
+    ("display_name", "d" * MAX_DISPLAY_NAME_LENGTH),
+    ("default_unit", "u" * MAX_DEFAULT_UNIT_LENGTH),
+    ("aliases", _alias_list(MAX_ALIASES_PER_TYPE)),
+    ("aliases", _long_alias_list(MAX_ALIAS_LENGTH)),
+)
+
+
+@pytest.mark.parametrize(("field", "at_limit"), HEALTH_TYPE_LIMIT_CASES)
+def test_batch_accepts_health_type_field_at_its_limit(
+    field: str,
+    at_limit: JsonValue,
+) -> None:
+    # Given
+    payload = _health_type_payload(**{field: at_limit})
+
+    # When
+    batch = HealthBridgeBatchV1.model_validate_json(json.dumps(payload))
+
+    # Then
+    declared = batch.health_types[0]
+    if field == "aliases":
+        assert list(declared.aliases) == at_limit
+    else:
+        assert getattr(declared, field) == at_limit
+
+
+OVER_LIMIT_CASES: Final[tuple[tuple[str, JsonValue], ...]] = (
+    ("type_code", "a" * (MAX_TYPE_CODE_LENGTH + 1)),
+    ("display_name", "d" * (MAX_DISPLAY_NAME_LENGTH + 1)),
+    ("default_unit", "u" * (MAX_DEFAULT_UNIT_LENGTH + 1)),
+    ("aliases", _alias_list(MAX_ALIASES_PER_TYPE + 1)),
+    ("aliases", _long_alias_list(MAX_ALIAS_LENGTH + 1)),
+)
+
+
+@pytest.mark.parametrize(("field", "over_limit"), OVER_LIMIT_CASES)
+def test_batch_rejects_health_type_field_one_past_its_limit(
+    field: str,
+    over_limit: JsonValue,
+) -> None:
+    # Given
+    payload = _health_type_payload(**{field: over_limit})
+
+    # When / Then
+    with pytest.raises(ValidationError):
+        _ = HealthBridgeBatchV1.model_validate_json(json.dumps(payload))
+
+
+def test_every_repository_fixture_batch_still_validates() -> None:
+    fixture_paths = sorted(Path("fixtures").glob("health_bridge_batch_v1*.json"))
+    assert fixture_paths
+    for fixture_path in fixture_paths:
+        _ = HealthBridgeBatchV1.model_validate_json(
+            fixture_path.read_text(encoding="utf-8")
+        )
+
+
+def test_public_schema_declares_health_type_field_bounds() -> None:
+    schema = cast(
+        "dict[str, dict[str, dict[str, object]]]",
+        json.loads(
+            Path("schemas/health_bridge.batch.v1.schema.json").read_text(
+                encoding="utf-8"
+            )
+        ),
+    )
+    health_type = schema["$defs"]["healthType"]
+    properties = cast("dict[str, dict[str, object]]", health_type["properties"])
+    assert properties["type_code"]["maxLength"] == MAX_TYPE_CODE_LENGTH
+    assert properties["display_name"]["maxLength"] == MAX_DISPLAY_NAME_LENGTH
+    assert properties["default_unit"]["maxLength"] == MAX_DEFAULT_UNIT_LENGTH
+    aliases = properties["aliases"]
+    assert aliases["maxItems"] == MAX_ALIASES_PER_TYPE
+    items = cast("dict[str, object]", aliases["items"])
+    assert items["maxLength"] == MAX_ALIAS_LENGTH
