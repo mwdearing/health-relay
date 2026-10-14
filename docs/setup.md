@@ -1,4 +1,4 @@
-# Set up Health Bridge for AI
+# Set up HealthRelay
 
 The normal path is: install the iPhone companion, prepare a receiver on the computer that will store your data, establish a private route that the iPhone can reach away from home, pair once, and leave Automatic Sync enabled.
 
@@ -47,7 +47,7 @@ tailscale status
 tailscale serve status
 ```
 
-If HTTPS port `8443` already has a handler, stop and have the installer preserve the existing service instead of replacing it. Port `8443` is used here to keep Health Bridge separate from a common HTTPS `443` handler.
+If HTTPS port `8443` already has a handler, stop and have the installer preserve the existing service instead of replacing it. Port `8443` is used here to keep HealthRelay separate from a common HTTPS `443` handler.
 
 When port `8443` is available, configure an explicit private HTTPS listener that proxies to the receiver's loopback backend:
 
@@ -58,14 +58,14 @@ tailscale serve status
 
 The final status must show the HTTPS `8443` handler proxying to `http://127.0.0.1:8765`. Use Serve, not Funnel. Funnel publishes a service to the public internet; this path is intended to stay inside your tailnet. If Tailscale asks an administrator to enable HTTPS or Serve, follow the official Tailscale prompt and then rerun the command.
 
-To remove only this Health Bridge listener later, coordinate so no other administrator changes Serve during rollback. Immediately before removal, run `tailscale serve status` and confirm the HTTPS `8443` handler still points to `http://127.0.0.1:8765`. If it has changed or the result is ambiguous, stop and preserve the newer configuration. If it still matches, use the same listener flag with `off`:
+To remove only this HealthRelay listener later, coordinate so no other administrator changes Serve during rollback. Immediately before removal, run `tailscale serve status` and confirm the HTTPS `8443` handler still points to `http://127.0.0.1:8765`. If it has changed or the result is ambiguous, stop and preserve the newer configuration. If it still matches, use the same listener flag with `off`:
 
 ```bash
 tailscale serve --https=8443 off
 tailscale serve status
 ```
 
-The final status must show only that the Health Bridge handler is gone. This rollback targets HTTPS `8443` with `off` and never invokes the whole-configuration `reset` command; do not substitute `reset`.
+The final status must show only that the HealthRelay handler is gone. This rollback targets HTTPS `8443` with `off` and never invokes the whole-configuration `reset` command; do not substitute `reset`.
 
 Build the exact batch URL from the current node's Tailscale DNS name. This route-preparation step only sets the URL; continue with the common setup sequence below:
 
@@ -88,7 +88,7 @@ Ask the setup agent to follow this provider-neutral ingress checklist:
 
 1. **Discover without changing the host.** Inspect the OS, existing private-network clients, DNS and HTTPS ingress or tunnel services, reverse proxies, firewall, service manager, and whether port `8765` is already in use. Do not install a provider, change DNS, open a firewall port, publish a service, or run `health-bridge setup` during discovery.
 2. **Return a reviewable plan.** Show the proposed topology, provider or account prerequisites, exact DNS/ingress/firewall/service changes, whether the route is private or publicly reachable, rollback steps, and privacy/exposure trade-offs. Wait for explicit approval before applying the plan.
-3. **Keep the receiver private.** Bind Health Bridge to `127.0.0.1:8765`; terminate phone-facing TLS at the approved proxy or tunnel. Do not expose port `8765`, use plain HTTP toward the phone, use a self-signed certificate, treat an unguessable hostname as security, enable Tailscale Funnel, or add a browser-login layer that the iOS app cannot satisfy.
+3. **Keep the receiver private.** Bind HealthRelay to `127.0.0.1:8765`; terminate phone-facing TLS at the approved proxy or tunnel. Do not expose port `8765`, use plain HTTP toward the phone, use a self-signed certificate, treat an unguessable hostname as security, enable Tailscale Funnel, or add a browser-login layer that the iOS app cannot satisfy.
 4. **Proxy only the phone protocol.** On one HTTPS origin, allow `GET /health`, `POST /v1/batches`, and `POST /v1/pairing/redeem`. Preserve the `Authorization` header and request bodies. Permit batches up to `5,000,000` bytes and pairing redemption bodies up to `4,096` bytes. Disable request-body and authorization-header logging. Supervise the receiver process and TLS certificate renewal.
 5. **Stop at a public-only design.** If the only workable route is publicly reachable, do not silently publish it. Explain that it needs a deployment-specific hardening review outside this private-ingress guide.
 6. **Prepare the common handoff.** After the approved route exists, set `HEALTH_BRIDGE_RECEIVER_URL` to the exact origin plus `/v1/batches`. Do not claim phone reachability yet; continue with common setup, receiver start, and physical-iPhone verification below.
@@ -166,7 +166,7 @@ Core setup:
 - creates owner-only private state and a single-use pairing page;
 - prepares a receiver launch command;
 - creates a client-neutral local stdio MCP access descriptor;
-- runs a same-host Health Bridge MCP self-test;
+- runs a same-host HealthRelay MCP self-test;
 - detects known client adapters without modifying them.
 
 It does **not** configure any AI or MCP client by default. Adding a client creates a new process that can read the private health database, so that action requires an explicit choice.
@@ -217,7 +217,7 @@ Pair only after the receiver and phone route are ready:
 
 1. On the receiver computer, open the generated pairing HTML file on a trusted screen. If the receiver is headless, securely copy that one file to a trusted local screen; do not publish it or place it on a web server.
 2. Scan the displayed QR with iPhone Camera and open the setup link. As a fallback, open the securely transferred HTML on the iPhone and tap its pairing button.
-3. Confirm the receiver connection in Health Bridge for AI.
+3. Confirm the receiver connection in HealthRelay.
 4. Tap **Allow Health Access**.
 5. Review Apple’s native HealthKit authorization sheet.
 6. Enable **Automatic Sync**.
@@ -247,7 +247,7 @@ For another same-host stdio MCP client, render `access_descriptors` into that cl
 - Keep SQLite on the receiver host. Do not share it over a network mount.
 - A same-host stdio MCP descriptor does not create remote MCP access.
 - Container/NAS deployment is not yet first-class; supervision, persistent paths, private HTTPS routing, and pairing handoff remain operator responsibilities.
-- Health Bridge does not silently downgrade HTTPS to HTTP or discover and trust endpoints automatically.
+- HealthRelay does not silently downgrade HTTPS to HTTP or discover and trust endpoints automatically.
 - A public reverse proxy is not automatically private or hardened merely because it uses TLS.
 - Do not expose port 8765 directly to the public internet.
 
@@ -281,7 +281,7 @@ This is the safe default. Use `--configure-client hermes` or `--configure-client
 
 ### Health types are missing
 
-Open iOS Settings and review Health permissions for Health Bridge. The app requests every implemented type available on the current runtime, but Apple may withhold types that are unavailable, restricted, or denied.
+Open iOS Settings and review Health permissions for HealthRelay. The app requests every implemented type available on the current runtime, but Apple may withhold types that are unavailable, restricted, or denied.
 
 ### Pairing material was exposed
 

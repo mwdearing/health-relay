@@ -227,13 +227,11 @@ def test_package_metadata_connects_distribution_to_public_surfaces() -> None:
         "mcp",
     ]
     assert project["urls"] == {
-        "Homepage": "https://healthbridge.chanhyo.dev/",
-        "Documentation": (
-            "https://github.com/roian6/apple-health-ai-bridge/tree/main/docs"
-        ),
-        "Source": "https://github.com/roian6/apple-health-ai-bridge",
-        "Issues": "https://github.com/roian6/apple-health-ai-bridge/issues",
-        "Releases": "https://github.com/roian6/apple-health-ai-bridge/releases",
+        "Homepage": "https://github.com/mwdearing/health-relay",
+        "Documentation": "https://github.com/mwdearing/health-relay/tree/main/docs",
+        "Source": "https://github.com/mwdearing/health-relay",
+        "Issues": "https://github.com/mwdearing/health-relay/issues",
+        "Releases": "https://github.com/mwdearing/health-relay/releases",
     }
     server = Path("src/health_bridge/mcp/server.py").read_text(encoding="utf-8")
     assert '"serverInfo": {"name": "health-bridge"' in server

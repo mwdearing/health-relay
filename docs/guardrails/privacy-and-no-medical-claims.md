@@ -1,6 +1,6 @@
 # Privacy and Claims Guardrails
 
-Apple Health AI Bridge is a local-first data bridge. It should preserve source,
+HealthRelay is a local-first data bridge. It should preserve source,
 time range, unit, and sync context without turning observations into clinical
 interpretation.
 

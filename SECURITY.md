@@ -90,7 +90,8 @@ Out of scope:
 - Secret scanning with push protection.
 - Dependabot alerts and security updates.
 - CodeQL code scanning.
-- Required CI on `main`.
+- Required CI on `main`: required pull-request status checks. `python.yml` and `ios.yml` run on pull
+  requests targeting `main`; neither runs on a push to `main`.
 
 ## Sensitive data
 

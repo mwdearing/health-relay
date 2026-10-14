@@ -1,6 +1,6 @@
 # Architecture and trust boundaries
 
-Health Bridge for AI is a local bridge between HealthKit and agent-readable tools. It is not a hosted health service.
+HealthRelay is a local bridge between HealthKit and agent-readable tools. It is not a hosted health service.
 
 ## Data path
 
