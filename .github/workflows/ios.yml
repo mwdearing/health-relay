@@ -6,6 +6,8 @@ on:
   pull_request:
     branches:
       - main
+    # Draft pull requests do not take a shared macOS runner; marking one ready runs the build.
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   push:
     tags:
       - "ios-v*"
@@ -64,7 +66,7 @@ jobs:
   build-and-test:
     name: Swift tests and unsigned app builds
     needs: changes
-    if: needs.changes.outputs.ios == 'true'
+    if: needs.changes.outputs.ios == 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: macos-26
     timeout-minutes: 30
     defaults:
