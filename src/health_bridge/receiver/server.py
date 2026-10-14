@@ -533,7 +533,9 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
         try:
             self._read_and_dispatch_request()
         except TimeoutError:
-            if self._deadline_has_expired():
+            # Only a request the client actually started can miss its deadline; an
+            # idle keep-alive connection timing out is not a rejection.
+            if self._deadline_has_expired() and self._request_was_started():
                 self.receiver_server.rejection_counter.record("deadline_expired")
             self._finish_failed_request(HTTPStatus.REQUEST_TIMEOUT, "request_timeout")
         except Exception as exc:  # noqa: BLE001 -- privacy-safe request boundary.
@@ -550,7 +552,7 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
             head_ready = self._read_request_head()
             if self._deadline_has_expired():
                 # Never dispatch a head the deadline cut short; a silent peek is idle.
-                if head_ready or self._request_started:
+                if head_ready or self._request_was_started():
                     self.receiver_server.rejection_counter.record("deadline_expired")
                     self._finish_failed_request(
                         HTTPStatus.REQUEST_TIMEOUT, "request_timeout"
@@ -635,11 +637,12 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
         if timer is not None:
             timer.cancel()
 
+    def _request_was_started(self) -> bool:
+        return bool(self.raw_requestline) or self._request_started
+
     def _finish_failed_request(self, status: HTTPStatus, error: str) -> None:
         self.close_connection = True
-        if self._response_started or not (
-            self.raw_requestline or self._request_started
-        ):
+        if self._response_started or not self._request_was_started():
             return
         if self.request_version == "HTTP/0.9":
             # The request line was never parsed; answer with a real status line.
