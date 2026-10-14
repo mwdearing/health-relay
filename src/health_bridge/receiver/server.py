@@ -68,6 +68,7 @@ from health_bridge.receiver.mailbox_pairing import (
     provision_mailbox_connection,
 )
 from health_bridge.receiver.mailbox_runtime import MailboxRuntimeWorker
+from health_bridge.receiver.rejection_counter import RejectionCounter
 from health_bridge.receiver.tokens import (
     ReceiverTokenPrincipal,
     authenticate_receiver_token_principal,
@@ -285,6 +286,7 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
         max_connections: int = MAX_CONCURRENT_CONNECTIONS,
         max_connections_per_client: int = MAX_CONNECTIONS_PER_CLIENT,
         request_deadline_seconds: float = DEFAULT_REQUEST_DEADLINE_SECONDS,
+        rejection_counter: RejectionCounter | None = None,
     ) -> None:
         self.db_path: Path = db_path
         self.intake_context_enabled: bool = intake_context_enabled
@@ -312,6 +314,9 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
         self.request_deadline_seconds: float = request_deadline_seconds
         self._client_connections: dict[str, int] = {}
         self._connection_slots: Semaphore = Semaphore(max_connections)
+        self._rejection_counter: RejectionCounter = (
+            RejectionCounter() if rejection_counter is None else rejection_counter
+        )
         super().__init__((host, port), ReceiverRequestHandler)
 
     @override
@@ -324,10 +329,12 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
         address = cast("tuple[str, int]", client_address)[0]
         slots = self.connection_slots
         if not slots.acquire(blocking=False):
+            self.rejection_counter.record("connection_refused")
             self.shutdown_request(cast("socket.socket", request))
             return
         if not self._admit_client(address):
             slots.release()
+            self.rejection_counter.record("connection_refused")
             self.shutdown_request(cast("socket.socket", request))
             return
         try:
@@ -379,6 +386,26 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
             counts = {}
             self._client_connections = counts
         return counts
+
+    @override
+    def server_close(self) -> None:
+        # Report rejections still waiting in an open window before going away. Flushed
+        # after the listener closes so no new connection can add to it; a daemon handler
+        # still mid-request at exit may record after this, and is best effort.
+        super().server_close()
+        self.rejection_counter.flush_if_due(force=True)
+
+    @property
+    def rejection_counter(self) -> RejectionCounter:
+        """The rejection counter, built on first use if __init__ was bypassed."""
+        counter: RejectionCounter | None = getattr(self, "_rejection_counter", None)
+        if counter is None:
+            with _INTAKE_LIMITER_LOCK:
+                counter = getattr(self, "_rejection_counter", None)
+                if counter is None:
+                    counter = RejectionCounter()
+                    self._rejection_counter = counter
+        return counter
 
     @property
     def connection_slots(self) -> Semaphore:
@@ -502,9 +529,12 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
         self.command: str = ""
         self.raw_requestline = b""
         self.close_connection: bool = True
+        self.receiver_server.rejection_counter.flush_if_due()
         try:
             self._read_and_dispatch_request()
         except TimeoutError:
+            if self._deadline_has_expired():
+                self.receiver_server.rejection_counter.record("deadline_expired")
             self._finish_failed_request(HTTPStatus.REQUEST_TIMEOUT, "request_timeout")
         except Exception as exc:  # noqa: BLE001 -- privacy-safe request boundary.
             _LOGGER.error("%s", type(exc).__name__)  # noqa: TRY400 -- no traceback.
@@ -521,6 +551,7 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
             if self._deadline_has_expired():
                 # Never dispatch a head the deadline cut short; a silent peek is idle.
                 if head_ready or self._request_started:
+                    self.receiver_server.rejection_counter.record("deadline_expired")
                     self._finish_failed_request(
                         HTTPStatus.REQUEST_TIMEOUT, "request_timeout"
                     )
@@ -837,6 +868,7 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
         return token
 
     def _send_unauthorized(self) -> None:
+        self.receiver_server.rejection_counter.record("unauthenticated")
         self._send_json(
             HTTPStatus.UNAUTHORIZED,
             {"error": "unauthorized"},
@@ -865,6 +897,7 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
         if principal is not None:
             return principal
         if is_batch_token:
+            self.receiver_server.rejection_counter.record("unauthenticated")
             self._send_json(HTTPStatus.FORBIDDEN, {"error": "wrong_token_type"})
         else:
             self._send_unauthorized()
@@ -988,13 +1021,10 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
         if principal is not None:
             return principal
         if is_intake_token:
+            self.receiver_server.rejection_counter.record("unauthenticated")
             self._send_json(HTTPStatus.FORBIDDEN, {"error": "wrong_token_type"})
             return None
-        self._send_json(
-            HTTPStatus.UNAUTHORIZED,
-            {"error": "unauthorized"},
-            extra_headers={"WWW-Authenticate": "Bearer"},
-        )
+        self._send_unauthorized()
         return None
 
     def _is_intake_token(self) -> bool:
