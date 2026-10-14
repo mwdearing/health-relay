@@ -35,7 +35,7 @@ def test_icloud_capability_is_bundle_and_team_neutral() -> None:
     assert project.count(container_setting) == 2
     assert (
         project.count("PRODUCT_BUNDLE_IDENTIFIER = com.example.HealthBridgeCompanion;")
-        == 2
+        == 3  # Debug, Release and AppStore (R1)
     )
     assert not re.search(r"[A-Z0-9]{10}\.com\.example", project)
 

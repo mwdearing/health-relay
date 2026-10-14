@@ -24,6 +24,13 @@ struct ContentView: View {
 
                     if viewModel.setupState == .unpaired {
                         pairingCard
+                        NavigationLink {
+                            SampleReviewView()
+                        } label: {
+                            Text("Try with sample data")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
                     } else if !viewModel.healthPermissionsRequested {
                         healthAccessCard
                     } else {
@@ -102,6 +109,12 @@ struct ContentView: View {
                     onContinue: { Task { await viewModel.confirmPairingReview() } }
                 )
             }
+        }
+        .fullScreenCover(isPresented: $viewModel.syncConsentPromptIsPresented) {
+            SyncConsentView(
+                onAccept: { viewModel.acceptSyncConsent() },
+                onNotNow: { viewModel.declineSyncConsentForNow() }
+            )
         }
     }
 
@@ -184,7 +197,9 @@ struct ContentView: View {
             DisclosureGroup("How connections work") {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Direct / Tailscale-compatible (the default): this iPhone sends data straight to your receiver over your home network, Tailscale or your own HTTPS address. Custom HTTPS is still a Direct connection. Recommended on Linux and Mac.")
+#if !HEALTHRELAY_APPSTORE
                     Text("Encrypted iCloud Mailbox (Beta): Mac only. No VPN required. Data is encrypted and left in an iCloud folder that your Mac picks up. Best-effort, eventual delivery, so it can be delayed.")
+#endif
                     Text("Advanced / Limited: a receiver that works only on the same Wi-Fi network. Syncing waits until this iPhone is back on that network.")
                 }
                 .font(.footnote)
@@ -219,12 +234,18 @@ struct ContentView: View {
         .cardStyle()
     }
 
+    /// True only while the mailbox transport is in use. The App Store build maps mailbox to
+    /// direct delivery, so the mailbox-key branch is never taken there.
+    private var mailboxKeyBlocksSync: Bool {
+        viewModel.usesMailboxTransport && viewModel.mailboxKeyDiagnosticState == .lost
+    }
+
     private var pairingRecoveryCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Pairing Recovery Pending", systemImage: "exclamationmark.shield.fill")
                 .font(.headline)
             Text(
-                viewModel.mailboxKeyDiagnosticState == .lost
+                mailboxKeyBlocksSync
                     ? "Automatic sync is paused because the mailbox connection key is lost. Clear this pending pairing before using the dedicated key recovery action."
                     : "Automatic sync is paused. Retry the saved attempt after fixing the route, or clear it before opening a different setup link."
             )
@@ -237,7 +258,7 @@ struct ContentView: View {
                     tint: .relayWaitingInk
                 )
             }
-            if viewModel.mailboxKeyDiagnosticState != .lost {
+            if !mailboxKeyBlocksSync {
                 Button("Retry Pairing") {
                     Task {
                         await viewModel.retryPendingPairing()
@@ -682,6 +703,7 @@ private struct ReceiverSettingsView: View {
 
             Divider()
 
+#if !HEALTHRELAY_APPSTORE
             LabeledContent("Mailbox connection key") {
                 Text(viewModel.mailboxKeyLifecycleLabel)
                     .foregroundStyle(
@@ -703,6 +725,7 @@ private struct ReceiverSettingsView: View {
                 .controlSize(.large)
                 .disabled(!viewModel.canResetLostMailboxConnectionKey)
             }
+#endif
 
             PrimaryButton(
                 title: viewModel.usesMailboxTransport ? "Check Mailbox Folder" : "Check Connection",
@@ -830,8 +853,8 @@ private struct ReceiverSettingsView: View {
 private struct AppDetailsView: View {
     @ObservedObject var viewModel: HealthBridgeCompanionViewModel
 
-    private static let privacyPolicyURL = URL(string: "https://github.com/mwdearing/health-relay/blob/main/PRIVACY.md")!
-    private static let supportURL = URL(string: "https://github.com/mwdearing/health-relay/issues")!
+    private static let privacyPolicyURL = URL(string: "https://github.com/mwdearing/health-relay/blob/main/docs/hosted/privacy-policy.md")!
+    private static let supportURL = URL(string: "https://github.com/mwdearing/health-relay/blob/main/docs/hosted/support.md")!
 
     var body: some View {
         List {
@@ -851,6 +874,14 @@ private struct AppDetailsView: View {
                     Task { await viewModel.requestHealthPermissions() }
                 }
                 .disabled(viewModel.isRequestingHealthPermissions)
+            }
+
+            Section("Data Sharing") {
+                NavigationLink {
+                    SyncConsentReviewView(viewModel: viewModel)
+                } label: {
+                    Label("Consent and Withdrawal", systemImage: "hand.raised")
+                }
             }
 
             Section("Automatic Sync") {
@@ -1167,10 +1198,14 @@ private struct PairingDestinationReviewView: View {
                         .accessibilityHint("Canonical server host and non-default port")
                 }
                 Label(
-                    destination.transport == .mailbox ? "Mailbox delivery" : "Direct delivery",
-                    systemImage: destination.transport == .mailbox ? "envelope" : "arrow.up.right"
+                    appBuildShowsMailboxPairing(destination.transport) ? "Mailbox delivery" : "Direct delivery",
+                    systemImage: appBuildShowsMailboxPairing(destination.transport) ? "envelope" : "arrow.up.right"
                 )
-                Text(destination.privacySummary)
+                Text(
+                    destination.transport == .direct || appBuildShowsMailboxPairing(destination.transport)
+                        ? destination.privacySummary
+                        : "Direct delivery is used in this build. Check the receiver address above before you continue."
+                )
                     .font(.subheadline)
                     .foregroundStyle(.relaySecondaryText)
                 Spacer()

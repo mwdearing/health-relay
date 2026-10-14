@@ -110,6 +110,16 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build
 
+      - name: Build unsigned App Store configuration
+        run: |
+          xcodebuild -project HealthBridgeCompanion.xcodeproj \
+            -target HealthBridgeCompanion \
+            -sdk iphoneos \
+            -configuration AppStore \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
       - name: Build unsigned Public Documents QA simulator app
         run: |
           xcodebuild -project HealthBridgeCompanion.xcodeproj \

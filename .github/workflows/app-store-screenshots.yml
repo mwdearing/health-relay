@@ -1,0 +1,170 @@
+name: App Store screenshots
+
+# Manual only. Captures the sample-data scenes of the companion app on a 6.9-inch
+# simulator. Never runs on push or pull_request. No signing, no secrets.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  screenshots:
+    name: Capture App Store simulator screenshots
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      # Same flags as the simulator build in ios.yml (build-and-test job).
+      - name: Build unsigned iPhone simulator app
+        working-directory: ios/HealthBridgeCompanion
+        run: |
+          xcodebuild -project HealthBridgeCompanion.xcodeproj \
+            -target HealthBridgeCompanion \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Locate built app and read its bundle identifier
+        working-directory: ios/HealthBridgeCompanion
+        run: |
+          app=$(find build -type d -name HealthBridgeCompanion.app -path '*Debug-iphonesimulator*' -print -quit)
+          if [ -z "$app" ]; then
+            echo "::error::built simulator app not found under build/"
+            exit 1
+          fi
+          app_path="$PWD/$app"
+          bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_path/Info.plist")
+          echo "APP_PATH=$app_path" >> "$GITHUB_ENV"
+          echo "BUNDLE_ID=$bundle_id" >> "$GITHUB_ENV"
+          echo "App: $app_path"
+          echo "Bundle identifier: $bundle_id"
+
+      # Prefers iPhone 16 Pro Max (6.9-inch). Otherwise the largest available iPhone:
+      # Pro Max before Plus before Pro, then the newest iOS runtime. simctl does not
+      # report screen size, so the sizes printed at the end are the real check.
+      - name: Boot a 6.9-inch iPhone simulator
+        run: |
+          choice=$(python3 - <<'PY'
+          import json
+          import re
+          import subprocess
+          import sys
+
+          data = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "-j"]))
+
+
+          def runtime_version(runtime):
+              match = re.search(r"iOS-(\d+)-(\d+)", runtime)
+              return tuple(int(part) for part in match.groups()) if match else (0, 0)
+
+
+          def rank(name):
+              if name == "iPhone 16 Pro Max":
+                  return 4
+              if "Pro Max" in name:
+                  return 3
+              if "Plus" in name:
+                  return 2
+              if "Pro" in name:
+                  return 1
+              return 0
+
+
+          candidates = []
+          for runtime, devices in data["devices"].items():
+              if "iOS" not in runtime:
+                  continue
+              for device in devices:
+                  name = device.get("name", "")
+                  if device.get("isAvailable") and name.startswith("iPhone"):
+                      candidates.append((rank(name), runtime_version(runtime), name, runtime, device["udid"]))
+
+          if not candidates:
+              sys.exit("no available iPhone simulator found")
+
+          best = max(candidates, key=lambda item: (item[0], item[1]))
+          _, _, name, runtime, udid = best
+          print(f"{udid}|{name}|{runtime}")
+          PY
+          )
+          echo "Selected simulator: $choice"
+          udid=${choice%%|*}
+          rest=${choice#*|}
+          name=${rest%%|*}
+          runtime=${rest#*|}
+          echo "Using $name ($runtime)"
+          if ! xcrun simctl boot "$udid"; then
+            echo "Boot returned non-zero; continuing if the device is already booted."
+          fi
+          xcrun simctl bootstatus "$udid" -b
+          echo "DEVICE_NAME=$name" >> "$GITHUB_ENV"
+
+      - name: Set status bar and dark appearance
+        run: |
+          xcrun simctl status_bar booted override --time 9:41 --batteryState charged --batteryLevel 100 --cellularBars 4 --wifiBars 3
+          xcrun simctl ui booted appearance dark
+
+      - name: Install app on the simulator
+        run: xcrun simctl install booted "$APP_PATH"
+
+      # A missing scene logs a warning and the job continues. The sample-scene
+      # launch argument is read by the app; if the built binary does not contain
+      # it, the captures show the default launch screen and the warning says so.
+      - name: Capture scene screenshots
+        env:
+          SHOT_DIR: ${{ github.workspace }}/screenshots
+        run: |
+          mkdir -p "$SHOT_DIR"
+          if ! grep -aq 'HealthRelaySampleScene' "$APP_PATH/Info.plist" "$APP_PATH"/HealthBridgeCompanion 2>/dev/null; then
+            echo "::warning::built app does not contain the HealthRelaySampleScene launch argument; captures will show the default launch screen"
+          fi
+          n=0
+          for scene in overview sync ecg labs; do
+            n=$((n + 1))
+            file="$SHOT_DIR/$(printf '%02d' "$n")-$scene.png"
+            xcrun simctl terminate booted "$BUNDLE_ID" >/dev/null 2>&1 || true
+            if ! xcrun simctl launch booted "$BUNDLE_ID" -HealthRelaySampleScene "$scene" >/dev/null; then
+              echo "::warning::scene '$scene' missing: app did not launch; no screenshot taken"
+              continue
+            fi
+            sleep 4
+            if xcrun simctl io booted screenshot "$file"; then
+              echo "Captured $(basename "$file")"
+            else
+              echo "::warning::scene '$scene' missing: screenshot failed; logged, job continues"
+            fi
+          done
+
+      - name: Print screenshot pixel sizes
+        run: |
+          count=0
+          for f in screenshots/*.png; do
+            [ -e "$f" ] || continue
+            count=$((count + 1))
+            echo "== $f"
+            sips -g pixelWidth -g pixelHeight "$f"
+          done
+          if [ "$count" -eq 0 ]; then
+            echo "::warning::no screenshots were captured"
+          fi
+          echo "Captured $count screenshot(s) on ${DEVICE_NAME:-unknown device}."
+          echo "App Store 6.9-inch portrait is 1320x2868; 6.7-inch 1290x2796 is also accepted."
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: app-store-screenshots
+          path: screenshots/
+          retention-days: 7
+          if-no-files-found: warn

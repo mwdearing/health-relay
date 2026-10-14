@@ -92,6 +92,7 @@ QA_SOURCE_MEMBERS: Final = frozenset(
         "OutboxDeliveryCoordinatorAck.swift",
         "OutboxDeliveryFinalizers.swift",
         "OutboxDeliveryModels.swift",
+        "SyncConsentStore.swift",
     }
 )
 

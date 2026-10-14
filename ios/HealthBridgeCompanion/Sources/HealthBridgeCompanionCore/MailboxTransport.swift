@@ -15,6 +15,7 @@ public final class MailboxTransport: DeliveryTransport {
     private let nowMilliseconds: () -> Int64
     private let isCancelled: () -> Bool
     private let observe: Observe
+    private let consentStore: SyncConsentStore
 
     public init(
         outbox: FileOutbox,
@@ -33,6 +34,7 @@ public final class MailboxTransport: DeliveryTransport {
             withUnsafeCurrentTask { task in task?.isCancelled ?? false }
         }
         observe = { _, _ in false }
+        consentStore = SyncConsentStore()
     }
 
     init(
@@ -44,8 +46,10 @@ public final class MailboxTransport: DeliveryTransport {
         envelopeID: @escaping () -> Data,
         nowMilliseconds: @escaping () -> Int64,
         isCancelled: @escaping () -> Bool,
-        observe: @escaping Observe
+        observe: @escaping Observe,
+        consentStore: SyncConsentStore = SyncConsentStore()
     ) {
+        self.consentStore = consentStore
         self.outbox = outbox
         self.context = context
         self.sealer = sealer
@@ -188,6 +192,7 @@ public final class MailboxTransport: DeliveryTransport {
     }
 
     private func publish(_ finalized: FinalizedEnvelope) throws -> MailboxPublishedEnvelope? {
+        try requirePersistedSyncConsent(consentStore)
         try checkCancellation()
         guard let locator = try resolvedLocator() else { return nil }
         try outbox.requireUploadAdmission()
