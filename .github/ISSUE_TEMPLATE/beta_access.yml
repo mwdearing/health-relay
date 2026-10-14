@@ -2,6 +2,7 @@ name: Beta access request
 description: Ask for access to the signed HealthRelay beta builds (no e-mail address or health data here)
 title: "[Beta access]: "
 labels: ["beta-access"]
+assignees: ["mwdearing"]
 body:
   - type: markdown
     attributes:
