@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import io
 import socket
 import time
 from threading import Thread
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, final
 
 import pytest
 
-from health_bridge.receiver.rejection_counter import RejectionCounter
+from health_bridge.receiver.rejection_counter import RejectionCounter, RejectionKind
 from health_bridge.receiver.server import (
     ReceiverHTTPServer,
+    ReceiverRequestHandler,
     build_receiver_server,
     server_port,
 )
@@ -176,10 +179,15 @@ def test_expired_head_deadline_increments_deadline_expired(
     assert server.rejection_counter.totals()["deadline_expired"] == 1
 
 
+# Its own loopback address: on a shared host another local process probing
+# 127.0.0.1 ports (seen as stray "GET /" requests) would otherwise be counted.
+IDLE_TEST_HOST = "127.0.0.77"
+
+
 def test_plain_idle_timeout_is_not_counted_as_deadline(tmp_path: Path) -> None:
     server = build_receiver_server(
         tmp_path / "r.sqlite",
-        "127.0.0.1",
+        IDLE_TEST_HOST,
         0,
         intake_context_enabled=True,
         request_timeout_seconds=0.2,
@@ -187,7 +195,7 @@ def test_plain_idle_timeout_is_not_counted_as_deadline(tmp_path: Path) -> None:
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        with socket.create_connection(("127.0.0.1", server_port(server)), timeout=2):
+        with socket.create_connection((IDLE_TEST_HOST, server_port(server)), timeout=2):
             time.sleep(0.5)
         assert server.rejection_counter.totals() == {
             "unauthenticated": 0,
@@ -198,3 +206,62 @@ def test_plain_idle_timeout_is_not_counted_as_deadline(tmp_path: Path) -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+@final
+class _TimingOutReader:
+    """A request stream whose first read waits out the inactivity timeout."""
+
+    def __init__(self, first_byte: bytes) -> None:
+        self.first_byte = first_byte
+
+    def peek(self, _size: int) -> bytes:
+        if not self.first_byte:
+            raise TimeoutError
+        return self.first_byte
+
+    def readline(self, _limit: int) -> bytes:
+        raise TimeoutError
+
+
+def _timed_out_handler(
+    first_byte: bytes,
+) -> tuple[ReceiverRequestHandler, list[str], io.BytesIO]:
+    counted: list[str] = []
+    counter = RejectionCounter(emit=lambda _line: None)
+    counter_record = counter.record
+
+    def record(kind: RejectionKind) -> None:
+        counted.append(kind)
+        counter_record(kind)
+
+    wfile = io.BytesIO()
+    handler = ReceiverRequestHandler.__new__(ReceiverRequestHandler)
+    # Instance attributes only: no socket, no timers. The wall-clock deadline has
+    # already won the race against the socket's inactivity timeout.
+    vars(handler).update(
+        server=SimpleNamespace(
+            rejection_counter=SimpleNamespace(
+                record=record, flush_if_due=counter.flush_if_due
+            ),
+            request_timeout_seconds=30.0,
+            request_deadline_seconds=30.0,
+        ),
+        rfile=_TimingOutReader(first_byte),
+        wfile=wfile,
+        _deadline_has_expired=lambda: True,
+    )
+    return handler, counted, wfile
+
+
+def test_idle_timeout_after_the_deadline_expired_is_not_counted() -> None:
+    handler, counted, wfile = _timed_out_handler(b"")
+    handler.handle_one_request()
+    assert counted == []
+    assert wfile.getvalue() == b""
+
+
+def test_started_request_timing_out_after_the_deadline_is_counted() -> None:
+    handler, counted, _wfile = _timed_out_handler(b"G")
+    handler.handle_one_request()
+    assert counted == ["deadline_expired"]
