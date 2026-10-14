@@ -28,7 +28,9 @@ def test_zip_reader_checks_declared_sizes_before_reading_or_inflating() -> None:
     source = _text(ZIP_READER)
     assert "static let maximumEntryCompressedBytes" in source
     assert "static let maximumEntryUncompressedBytes" in source
-    body = source.split("static func readEntryData", 1)[1].split("// MARK: - End of central directory", 1)[0]
+    body = source.split("static func readEntryData", 1)[1].split(
+        "// MARK: - End of central directory", 1
+    )[0]
     check = body.find("checkDeclaredSizes(entry)")
     assert check != -1, "readEntryData must call checkDeclaredSizes"
     assert check < body.find("handle.read(upToCount: entry.compressedSize)")
@@ -40,5 +42,7 @@ def test_importer_caps_members_and_cumulative_bytes_and_checks_each_member() -> 
     assert "static let maximumClinicalRecordMembers" in source
     assert "static let maximumClinicalRecordTotalBytes" in source
     loop = source.split("for entry in entries {", 1)[1]
-    assert loop.find("checkDeclaredSizes(entry)") < loop.find("readEntryData(entry, from: url)")
+    assert loop.find("checkDeclaredSizes(entry)") < loop.find(
+        "readEntryData(entry, from: url)"
+    )
     assert "archiveLimitExceeded" in source
