@@ -47,9 +47,9 @@ public enum SampleReviewLaunch {
 
 /// Source rows on the overview. Titles and units live in the view; only quantities are here.
 public enum SampleSourceKind: CaseIterable, Equatable, Sendable {
-    case energy
-    case water
-    case creatine
+    case steps
+    case sleep
+    case medication
 }
 
 public enum SampleReviewData {
@@ -60,9 +60,9 @@ public enum SampleReviewData {
 
     public static func sourceQuantity(_ kind: SampleSourceKind) -> Double {
         switch kind {
-        case .energy: 320
-        case .water: 0.5
-        case .creatine: 1.0
+        case .steps: 1
+        case .sleep: 1
+        case .medication: 2
         }
     }
 

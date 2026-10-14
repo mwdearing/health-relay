@@ -16,7 +16,9 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: HealthBridgeSpacing.section) {
                     intro
                     statusCard
-                    firstRunProgress
+                    if !viewModel.onboardingIsComplete {
+                        firstRunProgress
+                    }
 
                     if viewModel.hasPendingPairing {
                         pairingRecoveryCard

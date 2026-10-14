@@ -200,21 +200,23 @@ def test_sample_overview_carries_the_mockup_copy_and_palette() -> None:
         "Manage connection",
         "Your local ledger works on its own.",
         "Apple Health",
-        "Supported nutrients",
-        "Creatine & other compounds",
-        "Optional direct connection",
+        "Data types you allow",
+        "Your receiver",
+        "Runs on your own computer",
         "Paired receiver",
         "Saved locally when offline",
         "Source details",
-        "Energy",
-        "Food & drinks",
-        "Water",
-        "Drink log",
-        "Creatine",
-        "Supplement log",
-        "One drink. One calorie entry.",
+        "Steps",
+        "Sleep",
+        "Medication",
+        "Read-only. Sent only to your receiver.",
     ):
         assert text in source, text
+    # HealthRelay relays Health data: no nutrition-app copy, and no white tile
+    # with a heart that could read as Apple's Health app icon.
+    absent_terms = ("nutrient", "calorie", "Creatine", "kcal", "heart.fill", "FCFCFC")
+    for absent in absent_terms:
+        assert absent not in source, absent
     # Mockup colours, defined locally in the sample view (asset colours unchanged).
     for hex_value in (
         "03141A",
@@ -229,7 +231,6 @@ def test_sample_overview_carries_the_mockup_copy_and_palette() -> None:
         "052D2E",
         "0B5C55",
         "74F1E2",
-        "FCFCFC",
         "3A4B52",
         "CFF6F8",
     ):

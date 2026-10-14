@@ -810,6 +810,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         ))
     }
 
+    var onboardingIsComplete: Bool {
+        CompanionOnboardingPresentation.setupIsComplete(onboardingSteps)
+    }
+
     var canResetLostMailboxConnectionKey: Bool {
         guard mailboxKeyDiagnosticState == .lost,
               terminalUserActionAdmissionIsOpen,

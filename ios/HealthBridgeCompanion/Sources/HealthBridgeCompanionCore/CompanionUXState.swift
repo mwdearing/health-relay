@@ -101,6 +101,14 @@ public enum CompanionOnboardingPresentation {
     }
 }
 
+public extension CompanionOnboardingPresentation {
+    /// True once every required step is complete. Optional steps never hold the getting-started card open,
+    /// and a step that needs attention keeps it visible.
+    static func setupIsComplete(_ steps: [CompanionOnboardingStepPresentation]) -> Bool {
+        !steps.isEmpty && steps.allSatisfy { $0.state == .complete || $0.state == .optional }
+    }
+}
+
 public enum CompanionSyncProgressPresentation {
     private static let allowedLanes: Set<String> = ["Steps", "Daily activity", "Workouts", "Sleep", "ECG", "Medications", "Other metrics"]
 
