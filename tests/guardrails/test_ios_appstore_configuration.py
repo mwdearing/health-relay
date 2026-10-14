@@ -158,3 +158,13 @@ def test_icloud_mailbox_copy_is_compiled_out_of_the_appstore_build() -> None:
     bodies = [part.split("#endif", 1)[0] for part in source.split(marker)[1:]]
     assert any("Encrypted iCloud Mailbox (Beta)" in body for body in bodies)
     assert any("Mailbox connection key" in body for body in bodies)
+
+
+def test_ios_ci_builds_the_app_store_configuration_unsigned() -> None:
+    workflow = Path(".github/workflows/ios.yml").read_text()
+    step = workflow.split("- name: Build unsigned App Store configuration", 1)
+    assert len(step) == 2
+    body = step[1].split("- name:", 1)[0]
+    assert "-configuration AppStore" in body
+    assert "-sdk iphoneos" in body
+    assert "CODE_SIGNING_ALLOWED=NO" in body

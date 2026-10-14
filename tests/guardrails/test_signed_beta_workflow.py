@@ -159,7 +159,10 @@ def test_the_bundle_id_is_a_secret_not_an_input_and_no_identity_is_in_the_file()
         "dict[str, object]",
         cast("dict[str, object]", _load()["on"])["workflow_dispatch"],
     )
-    assert set(cast("dict[str, object]", inputs["inputs"])) == {"marketing_version"}
+    assert set(cast("dict[str, object]", inputs["inputs"])) == {
+        "marketing_version",
+        "configuration",
+    }
     assert "inputs.bundle_id" not in text
     assert "com.mwdearing" not in text
     assert not re.search(
@@ -302,3 +305,28 @@ def test_the_stored_bundle_is_rewrapped_in_the_form_the_keychain_reads() -> None
     cleanup = str(_steps()[-1]["run"])
     assert "signing-keychain.p12" in cleanup
     assert "signing.pem" in cleanup
+
+
+def test_the_build_configuration_is_a_fixed_choice_validated_before_the_archive() -> (
+    None
+):
+    dispatch = cast(
+        "dict[str, object]",
+        cast("dict[str, object]", _load()["on"])["workflow_dispatch"],
+    )
+    inputs = cast("dict[str, dict[str, object]]", dispatch["inputs"])
+    configuration = inputs["configuration"]
+    assert configuration["type"] == "choice"
+    assert configuration["options"] == ["Release", "AppStore"]
+    assert configuration["default"] == "Release"
+    archive = next(s for s in _steps() if "Archive" in str(s["name"]))
+    env = cast("dict[str, str]", archive["env"])
+    assert env["BUILD_CONFIGURATION"] == "${{ inputs.configuration }}"
+    run = str(archive["run"])
+    choice_check = (
+        '[[ "$BUILD_CONFIGURATION" == "Release" || '
+        '"$BUILD_CONFIGURATION" == "AppStore" ]]'
+    )
+    assert choice_check in run
+    assert '-configuration "$BUILD_CONFIGURATION"' in run
+    assert "-configuration Release" not in WORKFLOW.read_text()

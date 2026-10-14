@@ -15,6 +15,13 @@ on:
         description: Marketing version to stamp; empty = the version recorded in component-versions.json (the build number is run number + 100)
         required: false
         default: ""
+      configuration:
+        description: Build configuration. AppStore has no iCloud Mailbox transport and is the one to submit for App Store review; Release keeps the beta transport
+        type: choice
+        options:
+          - Release
+          - AppStore
+        default: Release
 
 permissions:
   contents: read
@@ -113,8 +120,10 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
           MARKETING_VERSION: ${{ inputs.marketing_version }}
+          BUILD_CONFIGURATION: ${{ inputs.configuration }}
         run: |
           set -euo pipefail
+          [[ "$BUILD_CONFIGURATION" == "Release" || "$BUILD_CONFIGURATION" == "AppStore" ]] || { echo "::error::configuration must be Release or AppStore"; exit 1; }
           quiet() {
             local name="$1" log="$2"; shift 2
             if ! "$@" > "$log" 2>&1; then
@@ -139,7 +148,7 @@ jobs:
           quiet Archive "$RUNNER_TEMP/archive.log" xcodebuild archive \
             -project HealthBridgeCompanion.xcodeproj \
             -scheme HealthBridgeCompanion \
-            -configuration Release \
+            -configuration "$BUILD_CONFIGURATION" \
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/HealthRelay.xcarchive" \
             -allowProvisioningUpdates \
