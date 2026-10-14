@@ -12,7 +12,8 @@ ROOT = Path(__file__).parents[2]
 
 # Built from pieces so this file does not trip its own guard.
 PERSON_NAME = "Mich" + "ael"
-NAME_PATTERN = re.compile(r"\b" + PERSON_NAME + r"\b")
+# Case-insensitive: a lower- or upper-case spelling is the same name.
+NAME_PATTERN = re.compile(r"\b" + PERSON_NAME + r"\b", re.IGNORECASE)
 
 # (path, exact-line regex) pairs for legitimate attribution. Nothing else is exempt.
 ALLOWLIST: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -88,12 +89,14 @@ def test_public_repository_names_no_private_feedback_source() -> None:
 def test_guard_flags_private_feedback_shapes_and_allows_attribution() -> None:
     # Given synthetic lines in each shape that quotes a person's feedback
     shapes = (
-        f'// ({PERSON_NAME}, 2026-09-29: "Cancel never shows up")',
-        f"// {PERSON_NAME}: the button does nothing",
+        f'// ({PERSON_NAME}, 2000-01-01: "synthetic quote")',
+        f"// {PERSON_NAME}: synthetic remark",
         f"// (from {PERSON_NAME})",
-        f"// the bug {PERSON_NAME} saw on the phone",
-        f"// {PERSON_NAME} 2026-09-28 reported the version did not change",
-        f"Thanks, {PERSON_NAME}, for the report",
+        f"// the example {PERSON_NAME} mentioned",
+        f"// {PERSON_NAME} 2000-01-01 synthetic note",
+        f"Thanks, {PERSON_NAME}, for the example",
+        f"// {PERSON_NAME.lower()}: synthetic remark in lower case",
+        f"// {PERSON_NAME.upper()}: synthetic remark in upper case",
     )
 
     # When / Then every shape is flagged
