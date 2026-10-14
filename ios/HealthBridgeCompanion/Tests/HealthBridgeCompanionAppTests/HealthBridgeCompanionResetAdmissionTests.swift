@@ -6,6 +6,15 @@ import UIKit
 import XCTest
 @testable import HealthBridgeCompanion
 
+/// A receiver client whose persisted consent store admits sending, so tests that drive real uploads
+/// exercise the consent gate inside `ReceiverClient.upload` without touching `UserDefaults.standard`.
+func admittingReceiverClient(session: URLSession? = nil) -> ReceiverClient {
+    let suite = "ReceiverClientConsent.\(UUID().uuidString)"
+    let store = SyncConsentStore(userDefaults: UserDefaults(suiteName: suite) ?? .standard)
+    store.accept()
+    return ReceiverClient(session: session, consentStore: store)
+}
+
 @MainActor
 final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
     func testAutomaticSyncDefaultEligibleTypesMatchRuntimeCatalog() async throws {
@@ -361,7 +370,7 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
                 installationIDGenerator: { "synthetic-steps-fault-installation" }
             ),
             outbox: try FileOutbox(directory: fixture.root.appendingPathComponent("outbox")),
-            receiverClient: ReceiverClient(session: session),
+            receiverClient: admittingReceiverClient(session: session),
             automaticSyncDiagnosticStore: AutomaticSyncDiagnosticStore(
                 fileURL: fixture.root.appendingPathComponent("diagnostics.json")
             ),
@@ -466,7 +475,7 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
                 installationIDGenerator: { "synthetic-steps-installation" }
             ),
             outbox: outbox,
-            receiverClient: ReceiverClient(session: session),
+            receiverClient: admittingReceiverClient(session: session),
             automaticSyncDiagnosticStore: AutomaticSyncDiagnosticStore(
                 fileURL: root.appendingPathComponent("diagnostics.json")
             ),
@@ -860,8 +869,7 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
                 installationIDGenerator: { installationID }
             ),
             outbox: outbox,
-            receiverClient: ReceiverClient(
-                session: URLSession(configuration: sessionConfiguration)
+            receiverClient: admittingReceiverClient(session: URLSession(configuration: sessionConfiguration)
             ),
             readAnchoredSleepChanges: { _, _, receivedAt in
                 HealthKitAnchoredSleepChanges(
@@ -1404,8 +1412,7 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
             settingsStore: settingsStore,
             pairingStateStore: pairingStateStore,
             outbox: outbox,
-            receiverClient: ReceiverClient(
-                session: URLSession(configuration: sessionConfiguration)
+            receiverClient: admittingReceiverClient(session: URLSession(configuration: sessionConfiguration)
             ),
             cancelInheritedLegacyUploads: {
                 cleanupInvocationCount += 1
@@ -1542,7 +1549,7 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
         )
 
         let relaunchedCoordinator = ReceiverPairingCoordinator(
-            client: ReceiverClient(),
+            client: admittingReceiverClient(),
             stateStore: pairingStateStore,
             settingsStore: settingsStore
         )
@@ -1603,7 +1610,7 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
         )
         let cancellationGeneration = settingsStore.receiverSettingsGenerationToken
         let coordinator = ReceiverPairingCoordinator(
-            client: ReceiverClient(),
+            client: admittingReceiverClient(),
             stateStore: pairingStateStore,
             settingsStore: settingsStore
         )
@@ -1697,7 +1704,7 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
         _ = try pairingStateStore.stage(invitation: syntheticInvitation(), destinationReviewAccepted: true)
         let cancellationGeneration = settingsStore.receiverSettingsGenerationToken
         let coordinator = ReceiverPairingCoordinator(
-            client: ReceiverClient(),
+            client: admittingReceiverClient(),
             stateStore: pairingStateStore,
             settingsStore: settingsStore
         )
@@ -2094,7 +2101,7 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
             settingsStore: settingsStore,
             pairingStateStore: pairingStateStore,
             outbox: outbox,
-            receiverClient: ReceiverClient(session: URLSession(configuration: sessionConfiguration))
+            receiverClient: admittingReceiverClient(session: URLSession(configuration: sessionConfiguration))
         )
         let syntheticLink = """
         {"schema_id":"health_bridge.receiver_pairing_invitation.v2","schema_version":"2.0.0","label":"synthetic","receiver_url":"https://receiver.example.test:8443/v1/batches?hidden=secret","redeem_url":"https://receiver.example.test:8443/v1/pairing/redeem","invitation_secret":"hbi_synthetic_invitation","expires_at":"2099-01-01T00:00:00Z","transport":"direct"}
@@ -2167,7 +2174,7 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
             settingsStore: settingsStore,
             pairingStateStore: pairingStateStore,
             outbox: outbox,
-            receiverClient: ReceiverClient(session: URLSession(configuration: sessionConfiguration))
+            receiverClient: admittingReceiverClient(session: URLSession(configuration: sessionConfiguration))
         )
         await viewModel.bootstrap()
         XCTAssertNotNil(viewModel.pendingPairingDestinationReview)
@@ -2192,7 +2199,7 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
         settingsStore: ReceiverSettingsStore,
         pairingStateStore: ReceiverPairingStateStore,
         outbox: FileOutbox,
-        receiverClient: ReceiverClient = ReceiverClient(),
+        receiverClient: ReceiverClient = admittingReceiverClient(),
         automaticSyncDiagnosticStore: AutomaticSyncDiagnosticStore = AutomaticSyncDiagnosticStore(),
         readAnchoredSleepChanges: (@MainActor (
             String?, Date?, Date

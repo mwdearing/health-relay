@@ -55,6 +55,7 @@ CURATED_CORE = {
     "OutboxDeliveryCoordinatorAck.swift",
     "OutboxDeliveryFinalizers.swift",
     "OutboxDeliveryModels.swift",
+    "SyncConsentStore.swift",
 }
 QA_APP_SOURCES = {
     "MailboxQAApp.swift",

@@ -6,6 +6,7 @@ from pathlib import Path
 APP = Path("ios/HealthBridgeCompanion/App")
 CONSENT_VIEW = APP / "SyncConsentView.swift"
 CORE = Path("ios/HealthBridgeCompanion/Sources/HealthBridgeCompanionCore")
+IOS = Path("ios/HealthBridgeCompanion")
 CONSENT_STORE = CORE / "SyncConsentStore.swift"
 VIEW_MODEL = APP / "HealthBridgeCompanionViewModel.swift"
 AUTOMATIC_SYNC = APP / "AutomaticSyncRuntime.swift"
@@ -231,3 +232,58 @@ def test_every_egress_primitive_is_recognised_and_persisted_consent_gated() -> N
                         failures.append(f"{message} before {pattern.pattern}")
     assert not failures, "\n".join(failures)
     assert recognised >= 6, recognised
+
+
+def _sources_phase_file_names(phase_id: str) -> list[str]:
+    project = (IOS / "HealthBridgeCompanion.xcodeproj/project.pbxproj").read_text(
+        encoding="utf-8"
+    )
+    build_file_pattern = r"\t\t(\w+) /\* (\S+) in Sources \*/ = \{isa = PBXBuildFile;"
+    build_files: dict[str, str] = {
+        str(m.group(1)): str(m.group(2))
+        for m in re.finditer(build_file_pattern, project)
+    }
+    phase_pattern = (
+        phase_id
+        + r" /\* Sources \*/ = \{isa = PBXSourcesBuildPhase;[^\n]*files = \(([^)]*)\)"
+    )
+    match = re.search(phase_pattern, project)
+    assert match is not None, phase_id
+    ids = [str(m.group(1)) for m in re.finditer(r"(\w+) /\*", match.group(1))]
+    return [build_files[i] for i in ids]
+
+
+def test_every_target_that_compiles_a_consent_user_also_compiles_the_store() -> None:
+    swift_files = {
+        path.name: path
+        for root in (IOS / "App", IOS / "Sources/HealthBridgeCompanionCore")
+        for path in root.rglob("*.swift")
+    }
+    for phase_id in (
+        "B0193229F5D633567D732C36",
+        "A25174000000000000000001",
+        "A27174000000000000000001",
+    ):
+        names = _sources_phase_file_names(phase_id)
+        users = [
+            name
+            for name in names
+            if name in swift_files
+            and name != "SyncConsentStore.swift"
+            and re.search(
+                r"SyncConsentStore|requirePersistedSyncConsent|SyncConsentRefusal",
+                swift_files[name].read_text(encoding="utf-8"),
+            )
+        ]
+        if users:
+            assert "SyncConsentStore.swift" in names, (phase_id, users)
+
+
+def test_app_tests_build_receiver_clients_with_an_accepted_store() -> None:
+    app_tests = IOS / "Tests/HealthBridgeCompanionAppTests"
+    tests = (app_tests / "HealthBridgeCompanionResetAdmissionTests.swift").read_text(
+        encoding="utf-8"
+    )
+    raw = re.findall(r"(?<![A-Za-z])ReceiverClient\(", tests)
+    assert len(raw) == 1, "only admittingReceiverClient may construct a ReceiverClient"
+    assert "func admittingReceiverClient(" in tests
