@@ -69,7 +69,8 @@ final class AutomaticSyncRuntime {
     }
 
     func prepareForBackgroundLaunch() {
-        guard viewModel.automaticSyncLaunchPreparationIsAllowed else { return }
+        guard viewModel.automaticSyncLaunchPreparationIsAllowed,
+              viewModel.syncConsentAdmitsSend else { return }
         #if os(iOS)
         BackgroundURLSessionOutboxUploader.shared
             .setAutomaticContinuationAdmissionOpen(true)
@@ -78,8 +79,20 @@ final class AutomaticSyncRuntime {
         BackgroundRefreshScheduler.scheduleNextRefreshIfNeeded(viewModel: viewModel)
     }
 
+    /// Called after the user accepts consent. Reopens continuation admission that withdrawal
+    /// closed, then starts the same work a ready launch would.
+    func noteSyncConsentAccepted() {
+        guard viewModel.automaticSyncRuntimeIsReady, viewModel.syncConsentAdmitsSend else { return }
+        // Explicit reopen: activateIfReady returns early once it has run, and withdrawal closed admission.
+        #if os(iOS)
+        BackgroundURLSessionOutboxUploader.shared.setAutomaticContinuationAdmissionOpen(true)
+        #endif
+        activateIfReady(scheduleOutbox: false)
+    }
+
     func activateIfReady(scheduleOutbox: Bool = true) {
-        guard viewModel.automaticSyncRuntimeIsReady else { return }
+        // Consent gate: admission and observers open only once the current disclosure is accepted.
+        guard viewModel.automaticSyncRuntimeIsReady, viewModel.syncConsentAdmitsSend else { return }
         #if os(iOS)
         BackgroundURLSessionOutboxUploader.shared
             .setAutomaticContinuationAdmissionOpen(true)

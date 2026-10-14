@@ -934,12 +934,17 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         syncConsentRecord = syncConsentStore.record
         statusIsError = false
         statusMessage = "Thanks. HealthRelay can now send the data you allow to your receiver."
+        automaticSyncRuntime?.noteSyncConsentAccepted()
         schedulePendingBackgroundOutboxUploadsIfAllowed()
     }
 
     func withdrawSyncConsent() {
         syncConsentStore.withdraw()
         syncConsentRecord = nil
+        // Close continuation admission so a background wake cannot chain new uploads.
+        #if os(iOS)
+        BackgroundURLSessionOutboxUploader.shared.setAutomaticContinuationAdmissionOpen(false)
+        #endif
         cancelPendingBackgroundOutboxUploads()
         statusIsError = false
         statusMessage = "Consent withdrawn. HealthRelay will not send health data until you accept again."

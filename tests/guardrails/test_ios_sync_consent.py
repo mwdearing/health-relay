@@ -75,3 +75,23 @@ def test_consent_copy_names_the_disclosures_and_the_health_revocation_path() -> 
 def test_settings_has_a_consent_review_row() -> None:
     source = CONTENT_VIEW.read_text(encoding="utf-8")
     assert "SyncConsentReviewView(" in source
+
+
+def _function_body(source: str, signature: str, length: int = 1400) -> str:
+    start = source.index(signature)
+    return source[start : start + length]
+
+
+def test_withdraw_closes_background_continuation_admission() -> None:
+    body = _function_body(
+        VIEW_MODEL.read_text(encoding="utf-8"), "func withdrawSyncConsent()"
+    )
+    assert "#if os(iOS)" in body
+    assert "setAutomaticContinuationAdmissionOpen(false)" in body
+
+
+def test_activate_opens_continuation_admission_only_with_consent() -> None:
+    runtime = AUTOMATIC_SYNC.read_text(encoding="utf-8")
+    body = _function_body(runtime, "func activateIfReady(", 700)
+    opened = body.index("setAutomaticContinuationAdmissionOpen(true)")
+    assert "viewModel.syncConsentAdmitsSend" in body[:opened]
