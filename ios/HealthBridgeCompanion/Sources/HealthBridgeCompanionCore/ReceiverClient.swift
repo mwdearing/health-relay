@@ -340,12 +340,16 @@ public final class ReceiverClient: @unchecked Sendable {
         response: URLResponse,
         overflowError: Error
     ) async throws -> Data {
+        // Cancel the transfer before refusing, so the rest of an oversized body is not
+        // downloaded in the background after the error is thrown.
         if response.expectedContentLength > Int64(maximumResponseBodyBytes) {
+            bytes.task.cancel()
             throw overflowError
         }
         var body = Data()
         for try await byte in bytes {
             guard body.count < maximumResponseBodyBytes else {
+                bytes.task.cancel()
                 throw overflowError
             }
             body.append(byte)

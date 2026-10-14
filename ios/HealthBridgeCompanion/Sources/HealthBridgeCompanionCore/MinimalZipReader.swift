@@ -305,11 +305,12 @@ enum MinimalZipReader {
         var entries: [Entry] = []
         var offset = 0
         while offset + 46 <= block.count {
-            guard entries.count < maximumEntryCount else {
-                throw ZipError.tooManyEntries
-            }
             guard Array(block[offset..<offset + 4]) == centralDirectorySignature else {
                 break
+            }
+            // Counted only for real file headers, so trailing records do not trip the cap.
+            guard entries.count < maximumEntryCount else {
+                throw ZipError.tooManyEntries
             }
             let flags = readUInt16(block, at: offset + 8)
             let compressionMethod = readUInt16(block, at: offset + 10)
