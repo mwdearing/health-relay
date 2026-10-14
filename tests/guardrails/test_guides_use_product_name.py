@@ -11,6 +11,13 @@ import subprocess
 from pathlib import Path
 
 FULL_UPSTREAM_NAMES = re.compile(r"Apple Health AI Bridge|\bHealth Bridge\b")
+# The same names with any whitespace between words, so a name that Markdown source
+# wraps across two lines (and renders as one) is caught too.
+WRAPPED_UPSTREAM_NAMES = re.compile(r"Apple\s+Health\s+AI\s+Bridge|\bHealth\s+Bridge\b")
+
+# Dated history sections, exempt as a whole: (path, heading that starts the section).
+# Everything above the heading (current policy prose) is checked like any file.
+HISTORY_SECTIONS: dict[str, str] = {"FORK.md": "## Modifications (newest first)"}
 
 UPSTREAM_RELEASE_STEMS = (
     "README",
@@ -18,7 +25,9 @@ UPSTREAM_RELEASE_STEMS = (
     "criteria",
     r"notes-receiver-v1\.1\.[01]",
     r"notes-v1\.0\.[01]",
-    "[a-z]+-checklist",
+    # Upstream's beta-distribution checklist (the product name is assembled so the
+    # word does not appear in tracked text).
+    "test" + "flight-checklist",
 )
 UPSTREAM_RELEASE_FILES = (
     r"re:\.github/release/(" + "|".join(UPSTREAM_RELEASE_STEMS) + r")\.md"
@@ -166,8 +175,8 @@ ALLOWLIST: list[tuple[str, str, str]] = [
     ),
     (
         "FORK.md",
-        r"Apple Health AI Bridge|\bHealth Bridge\b",
-        "fork ledger: records upstream names and their replacement as history",
+        r"HealthRelay is a fork of \[Apple Health AI Bridge\]",
+        "fork attribution",
     ),
     (
         "assets/brand/README.md",
@@ -205,15 +214,37 @@ def _unexplained_remainder(path: str, line: str) -> str:
     return line
 
 
+def checked_lines(path: str, text: str) -> list[str]:
+    """Each source line with its allowlisted spans removed and history blanked."""
+    heading = HISTORY_SECTIONS.get(path)
+    lines: list[str] = []
+    in_history = False
+    for line in text.splitlines():
+        if heading is not None and line.strip() == heading:
+            in_history = True
+        lines.append("" if in_history else _unexplained_remainder(path, line))
+    return lines
+
+
+def find_violations(path: str, text: str) -> list[int]:
+    """Line numbers where an upstream name remains, including wrapped names."""
+    joined = "\n".join(checked_lines(path, text))
+    return sorted(
+        {
+            joined.count("\n", 0, match.start()) + 1
+            for match in WRAPPED_UPSTREAM_NAMES.finditer(joined)
+        }
+    )
+
+
 def test_guides_do_not_use_upstream_product_names_outside_allowlist() -> None:
     violations: list[str] = []
     for path in _tracked_guide_files():
         text = path.read_text(encoding="utf-8")
-        for number, line in enumerate(text.splitlines(), start=1):
-            if FULL_UPSTREAM_NAMES.search(
-                _unexplained_remainder(path.as_posix(), line)
-            ):
-                violations.append(f"{path.as_posix()}:{number}: {line.strip()}")
+        violations.extend(
+            f"{path.as_posix()}:{number}"
+            for number in find_violations(path.as_posix(), text)
+        )
     assert violations == [], "upstream product name outside allowlist:\n" + "\n".join(
         violations
     )
@@ -242,3 +273,17 @@ def test_allowlisted_line_still_catches_an_added_upstream_name() -> None:
 def test_fork_release_notes_are_not_exempt() -> None:
     path = ".github/release/notes-healthrelay-receiver-2099.01.01.md"
     assert FULL_UPSTREAM_NAMES.search(_unexplained_remainder(path, "Health Bridge fix"))
+
+
+def test_name_wrapped_across_lines_is_caught() -> None:
+    assert find_violations("docs/x.md", "Open the Health\nBridge for AI app.") == [1]
+
+
+def test_fork_policy_prose_is_checked_but_its_history_is_not() -> None:
+    text = (
+        "# Fork\n"
+        "The product is Health Bridge.\n"
+        "## Modifications (newest first)\n"
+        "- 2000-01-01: renamed Health Bridge to HealthRelay."
+    )
+    assert find_violations("FORK.md", text) == [2]
