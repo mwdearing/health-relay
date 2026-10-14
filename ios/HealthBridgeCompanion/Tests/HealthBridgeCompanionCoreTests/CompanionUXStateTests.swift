@@ -17,6 +17,30 @@ final class CompanionUXStateTests: XCTestCase {
         XCTAssertFalse(steps[1].detail.lowercased().contains("granted"))
     }
 
+    func testSetupIsCompleteOnceEveryRequiredStepIsDoneAndTheOptionalStepIsIgnored() {
+        func snapshot(firstSync: Bool, error: Bool = false) -> CompanionOnboardingSnapshot {
+            CompanionOnboardingSnapshot(
+                hasReceiverSettings: true,
+                healthAccessRequested: true,
+                hasCompletedFirstSync: firstSync,
+                isSyncActive: false,
+                hasCurrentError: error,
+                pendingOutboxCount: 0,
+                hasPendingRecovery: false
+            )
+        }
+        let done = CompanionOnboardingPresentation.steps(from: snapshot(firstSync: true))
+        XCTAssertEqual(done.map(\.state), [.complete, .complete, .optional, .complete])
+        XCTAssertTrue(CompanionOnboardingPresentation.setupIsComplete(done))
+        XCTAssertFalse(CompanionOnboardingPresentation.setupIsComplete(
+            CompanionOnboardingPresentation.steps(from: snapshot(firstSync: false))
+        ))
+        // A later error brings the card back so the user sees what needs attention.
+        XCTAssertFalse(CompanionOnboardingPresentation.setupIsComplete(
+            CompanionOnboardingPresentation.steps(from: snapshot(firstSync: true, error: true))
+        ))
+    }
+
     func testOnboardingAttentionOverridesActiveAndUnpairedCopy() {
         let steps = CompanionOnboardingPresentation.steps(from: CompanionOnboardingSnapshot(
             hasReceiverSettings: false,
