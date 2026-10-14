@@ -95,3 +95,18 @@ def test_activate_opens_continuation_admission_only_with_consent() -> None:
     body = _function_body(runtime, "func activateIfReady(", 700)
     opened = body.index("setAutomaticContinuationAdmissionOpen(true)")
     assert "viewModel.syncConsentAdmitsSend" in body[:opened]
+
+
+def test_upload_and_connection_test_check_consent_before_any_request() -> None:
+    source = VIEW_MODEL.read_text(encoding="utf-8")
+    assert CHECK in _function_body(source, "private func uploadPendingOutbox(", 700)
+    assert CHECK in _function_body(source, "func sendConnectionTestBatch()", 300)
+
+
+def test_consent_prompt_can_be_declined_without_locking_out_settings() -> None:
+    content = CONTENT_VIEW.read_text(encoding="utf-8")
+    view = CONSENT_VIEW.read_text(encoding="utf-8")
+    assert "$viewModel.syncConsentPromptIsPresented" in content
+    assert "get: { !viewModel.syncConsentAdmitsSend }" not in content
+    assert "onNotNow" in view
+    assert "Not Now" in view

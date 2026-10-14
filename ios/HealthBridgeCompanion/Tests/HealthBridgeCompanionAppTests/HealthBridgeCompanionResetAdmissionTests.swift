@@ -2209,8 +2209,15 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
             BackgroundUploadCancellationResult(cancelledCount: 0, fullyFinalized: true)
         },
         terminalBackgroundPayloadDrain: (@MainActor () async -> Bool)? = nil,
-        terminalRecoveryDrainTimeoutNanoseconds: UInt64 = 5_000_000_000
+        terminalRecoveryDrainTimeoutNanoseconds: UInt64 = 5_000_000_000,
+        syncConsentAccepted: Bool = true
     ) throws -> HealthBridgeCompanionViewModel {
+        let consentStore = SyncConsentStore(userDefaults: defaults)
+        if syncConsentAccepted {
+            consentStore.accept()
+        } else {
+            consentStore.withdraw()
+        }
         HealthBridgeCompanionViewModel(
             receiverClient: receiverClient,
             settingsStore: settingsStore,
@@ -2251,7 +2258,8 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
             scheduleDirectBackgroundUploads: scheduleDirectBackgroundUploads,
             cancelInheritedLegacyUploads: cancelInheritedLegacyUploads,
             terminalBackgroundPayloadDrain: terminalBackgroundPayloadDrain,
-            terminalRecoveryDrainTimeoutNanoseconds: terminalRecoveryDrainTimeoutNanoseconds
+            terminalRecoveryDrainTimeoutNanoseconds: terminalRecoveryDrainTimeoutNanoseconds,
+            syncConsentStore: consentStore
         )
     }
 }

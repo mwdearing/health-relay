@@ -103,11 +103,11 @@ struct ContentView: View {
                 )
             }
         }
-        .fullScreenCover(isPresented: Binding(
-            get: { !viewModel.syncConsentAdmitsSend },
-            set: { _ in }
-        )) {
-            SyncConsentView(onAccept: { viewModel.acceptSyncConsent() })
+        .fullScreenCover(isPresented: $viewModel.syncConsentPromptIsPresented) {
+            SyncConsentView(
+                onAccept: { viewModel.acceptSyncConsent() },
+                onNotNow: { viewModel.declineSyncConsentForNow() }
+            )
         }
     }
 

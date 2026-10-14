@@ -4,6 +4,7 @@ import SwiftUI
 /// the send path checks the same stored record before any request leaves the phone.
 struct SyncConsentView: View {
     let onAccept: () -> Void
+    let onNotNow: () -> Void
 
     var body: some View {
         NavigationStack {
@@ -24,6 +25,16 @@ struct SyncConsentView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .accessibilityHint("Allows HealthRelay to send the data you allow to your receiver")
+                    Button(action: onNotNow) {
+                        Text("Not Now")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.bordered)
+                    Text("Until you agree, nothing is sent. You can agree later in Settings > Data Sharing.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 20)
@@ -32,6 +43,13 @@ struct SyncConsentView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .interactiveDismissDisabled()
+    }
+}
+
+/// Thrown by upload paths when consent is missing, so no request is made.
+struct SyncConsentRefusal: LocalizedError {
+    var errorDescription: String? {
+        "Accept the data-sharing disclosure in Settings before sending."
     }
 }
 
@@ -108,7 +126,7 @@ struct SyncConsentReviewView: View {
             titleVisibility: .visible
         ) {
             Button("Withdraw Consent", role: .destructive) {
-                viewModel.withdrawSyncConsent()
+                Task { await viewModel.withdrawSyncConsent() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
