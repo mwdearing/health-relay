@@ -398,6 +398,22 @@ final class AppleHealthExportLabImporterTests: XCTestCase {
         }
     }
 
+    func testEntryCountOverCapIsRefusedWhileParsingTheDirectory() throws {
+        let zipURL = try writeArchive((0..<3).map { index -> SyntheticZipFixture.Member in
+            SyntheticZipFixture.Member(
+                path: "apple_health_export/workout-routes/route-\(index).gpx",
+                declaredCompressedSize: 2,
+                declaredUncompressedSize: 2,
+                payload: Array("{}".utf8)
+            )
+        })
+
+        XCTAssertEqual(try MinimalZipReader.listEntries(at: zipURL, maximumEntryCount: 3).count, 3)
+        XCTAssertThrowsError(try MinimalZipReader.listEntries(at: zipURL, maximumEntryCount: 2)) { error in
+            XCTAssertEqual(error as? MinimalZipReader.ZipError, .tooManyEntries)
+        }
+    }
+
     func testOversizedClinicalMemberFailsTheWholeImportNotJustThatMember() throws {
         let cap = UInt64(MinimalZipReader.maximumEntryUncompressedBytes)
         let zipURL = try writeArchive([

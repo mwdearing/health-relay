@@ -58,7 +58,15 @@ enum MinimalZipReader {
         case entryTooLarge
         /// The central directory itself is larger than the reader will load into memory.
         case centralDirectoryTooLarge
+        /// The central directory lists more entries than the reader will parse.
+        case tooManyEntries
     }
+
+    /// Largest number of central-directory entries `listEntries` parses, counted while
+    /// parsing so a directory of many tiny records cannot materialize unbounded `Entry`
+    /// values and path strings. A full Apple Health export (workout routes, ECGs, clinical
+    /// records) holds tens of thousands of files; 100_000 leaves room above that.
+    static let maximumEntryCount = 100_000
 
     /// Largest central directory `listEntries` loads. The whole directory is read into one
     /// buffer before parsing, and its size comes from the archive. A full Apple Health export
@@ -87,7 +95,8 @@ enum MinimalZipReader {
     /// entry with `readEntryData`). Does not read any entry's data.
     static func listEntries(
         at url: URL,
-        maximumCentralDirectoryBytes: Int = MinimalZipReader.maximumCentralDirectoryBytes
+        maximumCentralDirectoryBytes: Int = MinimalZipReader.maximumCentralDirectoryBytes,
+        maximumEntryCount: Int = MinimalZipReader.maximumEntryCount
     ) throws -> [Entry] {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
@@ -113,7 +122,7 @@ enum MinimalZipReader {
             throw ZipError.truncatedCentralDirectory
         }
 
-        return try parseCentralDirectory(block)
+        return try parseCentralDirectory(block, maximumEntryCount: maximumEntryCount)
     }
 
     /// Reads and decompresses one entry's data, given the `Entry` `listEntries` returned
@@ -292,10 +301,13 @@ enum MinimalZipReader {
 
     // MARK: - Central directory parsing
 
-    private static func parseCentralDirectory(_ block: Data) throws -> [Entry] {
+    private static func parseCentralDirectory(_ block: Data, maximumEntryCount: Int) throws -> [Entry] {
         var entries: [Entry] = []
         var offset = 0
         while offset + 46 <= block.count {
+            guard entries.count < maximumEntryCount else {
+                throw ZipError.tooManyEntries
+            }
             guard Array(block[offset..<offset + 4]) == centralDirectorySignature else {
                 break
             }
@@ -470,6 +482,8 @@ extension MinimalZipReader.ZipError: LocalizedError {
         case .entryTooLarge:
             return "An entry in the ZIP archive is larger than this app will read."
         case .centralDirectoryTooLarge:
+            return "The ZIP archive's directory is larger than this app will read."
+        case .tooManyEntries:
             return "The ZIP archive lists more entries than this app will read."
         }
     }
