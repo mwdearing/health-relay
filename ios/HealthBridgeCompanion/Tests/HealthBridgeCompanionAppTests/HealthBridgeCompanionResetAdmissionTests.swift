@@ -2225,7 +2225,7 @@ final class HealthBridgeCompanionResetAdmissionTests: XCTestCase {
         } else {
             consentStore.withdraw()
         }
-        HealthBridgeCompanionViewModel(
+        return HealthBridgeCompanionViewModel(
             receiverClient: receiverClient,
             settingsStore: settingsStore,
             pairingStateStore: pairingStateStore,
