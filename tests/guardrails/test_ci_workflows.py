@@ -162,20 +162,100 @@ def test_only_the_receiver_release_pipeline_can_write_releases() -> None:
             scopes |= _write_scopes(block, name)
         allowed = ALLOWED_WRITE_SCOPES.get(name, frozenset())
         assert scopes <= allowed, f"{name} write scopes {sorted(scopes - allowed)}"
-        # Inside expressions, secrets only by plain name and only allowlisted ones.
-        expressions = " ".join(re.findall(r"\$\{\{(.*?)\}\}", text, re.DOTALL))
+        # Every expression GitHub evaluates (comments dropped): secrets only by plain
+        # name and only allowlisted ones, however the expression is written.
+        evaluated = " ".join(_yaml_strings(workflow))
+        expressions = " ".join(_expressions(workflow))
         assert len(re.findall(r"\bsecrets\b", expressions)) == len(
             SECRET_REF.findall(expressions)
         ), f"{name} uses secrets other than secrets.<NAME>"
+        assert "secrets" not in _yaml_keys(workflow), f"{name} passes secrets on"
         secrets = {match["name"] for match in SECRET_REF.finditer(expressions)}
         allowed_secrets = ALLOWED_SECRETS.get(name, frozenset())
         assert secrets <= allowed_secrets, (
             f"{name} secrets {sorted(secrets - allowed_secrets)}"
         )
         if name in RELEASE_WRITERS:
-            assert not re.search(r"\bipa\b", text, re.IGNORECASE), (
+            assert not IPA_TOKEN.search(evaluated), (
                 f"{name} can write releases and mentions an IPA"
             )
+
+
+def _yaml_strings(node: object) -> list[str]:
+    """Every key and scalar in a parsed workflow, as text."""
+    if isinstance(node, dict):
+        out: list[str] = []
+        for key, value in cast("dict[object, object]", node).items():
+            out.append(str(key))
+            out.extend(_yaml_strings(value))
+        return out
+    if isinstance(node, list):
+        return [
+            text for item in cast("list[object]", node) for text in _yaml_strings(item)
+        ]
+    return [str(node)]
+
+
+def _yaml_keys(node: object) -> set[str]:
+    if isinstance(node, dict):
+        mapping = cast("dict[object, object]", node)
+        keys = {str(key) for key in mapping}
+        for value in mapping.values():
+            keys |= _yaml_keys(value)
+        return keys
+    if isinstance(node, list):
+        return {key for item in cast("list[object]", node) for key in _yaml_keys(item)}
+    return set()
+
+
+def _template_expressions(text: str) -> list[str]:
+    """Bodies of ${{ }} in a string, honouring single-quoted expression literals."""
+    bodies: list[str] = []
+    start = text.find("${{")
+    while start != -1:
+        index, quoted = start + 3, False
+        while index < len(text):
+            if text[index] == "'":
+                quoted = not quoted
+            elif not quoted and text.startswith("}}", index):
+                break
+            index += 1
+        bodies.append(text[start + 3 : index])
+        start = text.find("${{", index)
+    return bodies
+
+
+def _expressions(node: object) -> list[str]:
+    """Every expression a workflow evaluates: ${{ }} bodies and bare `if:` values."""
+    out: list[str] = []
+    if isinstance(node, dict):
+        for key, value in cast("dict[object, object]", node).items():
+            if key == "if" and isinstance(value, str):
+                out.append(value)
+            out.extend(_expressions(value))
+    elif isinstance(node, list):
+        for item in cast("list[object]", node):
+            out.extend(_expressions(item))
+    elif isinstance(node, str):
+        out.extend(_template_expressions(node))
+    return out
+
+
+IPA_TOKEN = re.compile(r"(?<![a-z])ipa(?![a-z])", re.IGNORECASE)
+
+
+def test_secret_and_ipa_checks_see_through_expression_tricks() -> None:
+    text = (
+        "env:\n"
+        "  T: ${{ format('}}') && secrets.RELEASE_PAT }}\n"
+        "  U: ${{ secrets['X'] }}\n"
+        "  V: the signing secrets are masked\n"
+    )
+    found = " ".join(_expressions(cast("object", yaml.safe_load(text))))
+    assert {m["name"] for m in SECRET_REF.finditer(found)} == {"RELEASE_PAT"}
+    assert len(re.findall(r"\bsecrets\b", found)) == 2
+    assert IPA_TOKEN.search("dist/HealthRelay_ipa.zip")
+    assert not IPA_TOKEN.search("participate")
 
 
 def test_write_scope_parser_recognises_yaml_variants() -> None:
