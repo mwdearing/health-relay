@@ -234,12 +234,18 @@ struct ContentView: View {
         .cardStyle()
     }
 
+    /// True only while the mailbox transport is in use. The App Store build maps mailbox to
+    /// direct delivery, so the mailbox-key branch is never taken there.
+    private var mailboxKeyBlocksSync: Bool {
+        viewModel.usesMailboxTransport && viewModel.mailboxKeyDiagnosticState == .lost
+    }
+
     private var pairingRecoveryCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Pairing Recovery Pending", systemImage: "exclamationmark.shield.fill")
                 .font(.headline)
             Text(
-                viewModel.mailboxKeyDiagnosticState == .lost
+                mailboxKeyBlocksSync
                     ? "Automatic sync is paused because the mailbox connection key is lost. Clear this pending pairing before using the dedicated key recovery action."
                     : "Automatic sync is paused. Retry the saved attempt after fixing the route, or clear it before opening a different setup link."
             )
@@ -252,7 +258,7 @@ struct ContentView: View {
                     tint: .relayWaitingInk
                 )
             }
-            if viewModel.mailboxKeyDiagnosticState != .lost {
+            if !mailboxKeyBlocksSync {
                 Button("Retry Pairing") {
                     Task {
                         await viewModel.retryPendingPairing()
@@ -1192,10 +1198,14 @@ private struct PairingDestinationReviewView: View {
                         .accessibilityHint("Canonical server host and non-default port")
                 }
                 Label(
-                    destination.transport == .mailbox ? "Mailbox delivery" : "Direct delivery",
-                    systemImage: destination.transport == .mailbox ? "envelope" : "arrow.up.right"
+                    appBuildEffectiveTransport(destination.transport) == .mailbox ? "Mailbox delivery" : "Direct delivery",
+                    systemImage: appBuildEffectiveTransport(destination.transport) == .mailbox ? "envelope" : "arrow.up.right"
                 )
-                Text(destination.privacySummary)
+                Text(
+                    destination.transport == appBuildEffectiveTransport(destination.transport)
+                        ? destination.privacySummary
+                        : "Direct delivery is used in this build. Check the receiver address above before you continue."
+                )
                     .font(.subheadline)
                     .foregroundStyle(.relaySecondaryText)
                 Spacer()

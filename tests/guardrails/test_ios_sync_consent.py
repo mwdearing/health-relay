@@ -124,9 +124,10 @@ def test_consent_cancel_is_not_gated_by_user_action_admission() -> None:
 
 
 # --- Positive recognition of egress -------------------------------------------------
-# Every network or mailbox-publish primitive in App/ and Sources/ must be one of the
-# recognised shapes below. An unrecognised egress token fails the test, so a new
-# primitive cannot appear without an explicit decision here.
+# Every network or mailbox-publish primitive in App/ and Sources/ must match one of the
+# token shapes below and be gated. The tokens match the API shape, not a variable name,
+# so `URLSession.shared.data(for:)` and `mailboxPublisher.publish(` are caught too.
+# An unrecognised egress fails the test.
 
 EGRESS_ROOTS = (
     Path("ios/HealthBridgeCompanion/App"),
@@ -135,10 +136,12 @@ EGRESS_ROOTS = (
 PERSISTED_CONSENT_CHECK = "requirePersistedSyncConsent("
 # Call tokens: the persisted check must appear before the call in its function.
 EGRESS_CALL_TOKENS = (
-    re.compile(r"\bsession\.data\("),
-    re.compile(r"\bsession\.uploadTask\("),
-    re.compile(r"\bsession\.dataTask\("),
-    re.compile(r"\bpublisher\.publish\("),
+    re.compile(r"\.data\(\s*(?:for|from):"),
+    re.compile(r"\.upload\(\s*(?:for|from|fromFile):"),
+    re.compile(r"\.(?:upload|data|download|stream|webSocket)Task\("),
+    re.compile(r"\.bytes\(\s*(?:for|from):"),
+    re.compile(r"[Pp]ublisher\.publish\("),
+    re.compile(r"\bURLSession\.shared\b"),
 )
 # Definition tokens: the persisted check must appear inside the function body.
 EGRESS_DEFINITION_TOKENS = (
@@ -189,49 +192,138 @@ def _enclosing_function(source: str, index: int) -> tuple[str, int, int] | None:
     return best
 
 
+def scan_egress(source: str, file_name: str) -> tuple[int, list[str]]:
+    """Return (recognised egress count, failure messages) for one Swift source text."""
+    recognised = 0
+    failures: list[str] = []
+    scans = [(pattern, False) for pattern in EGRESS_CALL_TOKENS]
+    scans += [(pattern, True) for pattern in EGRESS_DEFINITION_TOKENS]
+    for pattern, is_definition in scans:
+        for match in pattern.finditer(source):
+            where = f"{file_name}:{pattern.pattern}"
+            if is_definition:
+                decl = FUNC_DECL.match(source, match.start())
+                span = _function_span(source, decl) if decl is not None else None
+                enclosing = (
+                    (decl.group(1), *span)
+                    if decl is not None and span is not None
+                    else None
+                )
+            else:
+                enclosing = _enclosing_function(source, match.start())
+            if enclosing is None:
+                failures.append(f"{where} has no enclosing function")
+                continue
+            name, body_start, body_end = enclosing
+            if (file_name, name) in NON_HEALTH_EGRESS:
+                recognised += 1
+                continue
+            if is_definition:
+                checked = PERSISTED_CONSENT_CHECK in source[body_start:body_end]
+            else:
+                checked = PERSISTED_CONSENT_CHECK in source[body_start : match.start()]
+            if checked:
+                recognised += 1
+            else:
+                check = PERSISTED_CONSENT_CHECK
+                failures.append(
+                    f"{file_name}:{name} lacks {check} before {pattern.pattern}"
+                )
+    return recognised, failures
+
+
 def test_every_egress_primitive_is_recognised_and_persisted_consent_gated() -> None:
     recognised = 0
     failures: list[str] = []
     for root in EGRESS_ROOTS:
         for path in sorted(root.rglob("*.swift")):
-            source = path.read_text(encoding="utf-8")
-            for pattern in EGRESS_CALL_TOKENS + EGRESS_DEFINITION_TOKENS:
-                is_definition = pattern in EGRESS_DEFINITION_TOKENS
-                for match in pattern.finditer(source):
-                    where = f"{path.name}:{pattern.pattern}"
-                    if is_definition:
-                        decl = FUNC_DECL.match(source, match.start())
-                        span = (
-                            _function_span(source, decl) if decl is not None else None
-                        )
-                        enclosing = (
-                            (decl.group(1), *span)
-                            if decl is not None and span is not None
-                            else None
-                        )
-                    else:
-                        enclosing = _enclosing_function(source, match.start())
-                    if enclosing is None:
-                        failures.append(f"{where} has no enclosing function")
-                        continue
-                    name, body_start, body_end = enclosing
-                    if (path.name, name) in NON_HEALTH_EGRESS:
-                        recognised += 1
-                        continue
-                    if is_definition:
-                        checked = PERSISTED_CONSENT_CHECK in source[body_start:body_end]
-                    else:
-                        checked = (
-                            PERSISTED_CONSENT_CHECK
-                            in source[body_start : match.start()]
-                        )
-                    if checked:
-                        recognised += 1
-                    else:
-                        message = f"{path.name}:{name} lacks {PERSISTED_CONSENT_CHECK}"
-                        failures.append(f"{message} before {pattern.pattern}")
+            count, found = scan_egress(path.read_text(encoding="utf-8"), path.name)
+            recognised += count
+            failures.extend(found)
     assert not failures, "\n".join(failures)
     assert recognised >= 6, recognised
+
+
+# Each entry is one unguarded egress line, using a different token. The scanner must
+# flag every one, or the guard could pass vacuously.
+SYNTHETIC_UNGUARDED_EGRESS = (
+    ("session.data(for:", "let (d, r) = try await session.data(for: request)"),
+    (
+        "URLSession.shared.data(for:",
+        "let (d, r) = try await URLSession.shared.data(for: request)",
+    ),
+    ("http.data(from:", "let (d, r) = try await http.data(from: url)"),
+    (
+        "http.upload(for:",
+        "let (d, r) = try await http.upload(for: request, from: body)",
+    ),
+    (
+        "http.upload(fromFile:",
+        "let (d, r) = try await http.upload(for: request, fromFile: url)",
+    ),
+    (
+        "session.uploadTask(",
+        "let task = session.uploadTask(with: request, fromFile: url)",
+    ),
+    ("session.downloadTask(", "let task = session.downloadTask(with: url)"),
+    ("session.webSocketTask(", "let task = session.webSocketTask(with: url)"),
+    (
+        "session.streamTask(",
+        'let task = session.streamTask(withHostName: "h", port: 1)',
+    ),
+    ("session.bytes(for:", "let (b, r) = try await session.bytes(for: request)"),
+    (
+        "mailboxPublisher.publish(",
+        "let url = try mailboxPublisher.publish(bytes, finalName: n, locator: l)",
+    ),
+    (
+        "publisher.publish(",
+        "let url = try publisher.publish(bytes, finalName: n, locator: l)",
+    ),
+    ("URLSession.shared", "let session = URLSession.shared"),
+)
+
+
+def test_scanner_flags_an_unguarded_synthetic_egress_for_every_token() -> None:
+    for label, line in SYNTHETIC_UNGUARDED_EGRESS:
+        source = f"func unguardedSend() async throws {{\n    {line}\n}}\n"
+        _, failures = scan_egress(source, "Synthetic.swift")
+        assert failures, f"scanner passed an unguarded {label} egress"
+
+
+def test_scanner_flags_unguarded_definition_tokens() -> None:
+    for name in ("publishPendingFIFOHead", "deliverPending"):
+        source = f"func {name}() async throws {{\n    let value = 1\n}}\n"
+        _, failures = scan_egress(source, "Synthetic.swift")
+        assert failures, f"scanner passed an unguarded {name} definition"
+
+
+def test_scanner_accepts_a_gated_egress_and_the_named_allowlist() -> None:
+    gated = (
+        "func guardedSend() async throws {\n"
+        "    try requirePersistedSyncConsent(store)\n"
+        "    let (d, r) = try await session.data(for: request)\n"
+        "}\n"
+    )
+    assert scan_egress(gated, "Synthetic.swift")[1] == []
+    late = (
+        "func lateGuard() async throws {\n"
+        "    let (d, r) = try await session.data(for: request)\n"
+        "    try requirePersistedSyncConsent(store)\n"
+        "}\n"
+    )
+    assert scan_egress(late, "Synthetic.swift")[1], (
+        "check after the egress must not count"
+    )
+    allowed = (
+        "func healthCheck() async throws {\n"
+        "    try await session.data(for: request)\n"
+        "}\n"
+    )
+    assert scan_egress(allowed, "ReceiverClient.swift")[1] == []
+    assert scan_egress(allowed, "Synthetic.swift")[1], (
+        "allowlist is keyed by file and name"
+    )
 
 
 def _sources_phase_file_names(phase_id: str) -> list[str]:

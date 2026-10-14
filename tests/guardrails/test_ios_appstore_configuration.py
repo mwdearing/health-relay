@@ -168,3 +168,67 @@ def test_ios_ci_builds_the_app_store_configuration_unsigned() -> None:
     assert "-configuration AppStore" in body
     assert "-sdk iphoneos" in body
     assert "CODE_SIGNING_ALLOWED=NO" in body
+
+
+# mailboxKeyBlocksSync is itself checked to require usesMailboxTransport.
+GATE_TOKENS = (
+    "usesMailboxTransport",
+    "appBuildEffectiveTransport(",
+    "mailboxKeyBlocksSync",
+)
+MAILBOX_CONTENT_NEEDLES = (
+    "mailbox connection key is lost",
+    "Mailbox delivery",
+    "mailboxKeyDiagnosticState",
+    "destination.privacySummary",
+)
+
+
+def _ungated_lines(source: str, needle: str) -> list[int]:
+    """Return 1-based lines with needle that are neither excluded nor gated."""
+    lines = source.splitlines()
+    frames: list[bool] = []
+    ungated: list[int] = []
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("#if"):
+            frames.append(stripped == f"#if !{CONDITION}")
+        elif stripped.startswith("#endif") and frames:
+            del frames[-1]
+        if needle in line:
+            window = "\n".join(lines[max(0, index - 3) : index + 1])
+            in_guard = any(frames)
+            if not in_guard and not any(token in window for token in GATE_TOKENS):
+                ungated.append(index + 1)
+    return ungated
+
+
+def test_mailbox_strings_in_contentview_are_gated_by_the_effective_transport() -> None:
+    # Given: the content view source.
+    source = CONTENT_VIEW.read_text(encoding="utf-8")
+
+    # Then: each mailbox-only string or state read is App Store excluded or gated.
+    for needle in MAILBOX_CONTENT_NEEDLES:
+        assert _ungated_lines(source, needle) == [], f"{needle} is not gated"
+
+
+def test_pairing_recovery_retry_depends_on_the_effective_mailbox_transport() -> None:
+    # Given: the content view source.
+    source = CONTENT_VIEW.read_text(encoding="utf-8")
+
+    # Then: the mailbox-key condition is one property that needs mailbox transport.
+    helper = re.search(
+        r"""
+        private\ var\ mailboxKeyBlocksSync:\ Bool\ \{\s*
+        viewModel\.usesMailboxTransport\s&&\sviewModel\.mailboxKeyDiagnosticState\s==\s\.lost
+        """,
+        source,
+        re.VERBOSE,
+    )
+    assert helper is not None, "mailboxKeyBlocksSync must require usesMailboxTransport"
+
+    # Then: the copy and the Retry button both read that property, so the App Store
+    # never shows the mailbox-key branch and keeps the Retry action.
+    copy = "Automatic sync is paused because the mailbox connection key is lost"
+    assert re.search(r"mailboxKeyBlocksSync\s*\?\s*\"" + re.escape(copy), source)
+    assert re.search(r"if !mailboxKeyBlocksSync \{\s*Button\(\"Retry Pairing\"", source)
