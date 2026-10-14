@@ -35,9 +35,6 @@ ALLOWLIST: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
 )
 
-# Files that are not scanned at all: the lock file is generated and has no prose.
-SKIPPED_PATHS = frozenset({"uv.lock"})
-
 
 def _is_allowlisted(path: str, line: str) -> bool:
     return any(
@@ -68,31 +65,35 @@ def _tracked_files() -> list[str]:
 UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
 
 
-def _decode_text(path: str) -> str | None:
+def _decode_text(path: str) -> str:
     return decode_tracked_bytes((ROOT / path).read_bytes())
 
 
-def decode_tracked_bytes(data: bytes) -> str | None:
-    """Decode a tracked file as text, or return None for binary content."""
-    # UTF-16 text has NUL bytes but is still text: decode it rather than skip it.
-    encoding = "utf-16" if data.startswith(UTF16_BOMS) else "utf-8"
-    if encoding == "utf-8" and b"\0" in data:
-        return None
-    try:
-        return data.decode(encoding)
-    except UnicodeDecodeError:
-        return None
+def decode_tracked_bytes(data: bytes) -> str:
+    """Return the text the guard scans for one tracked file; nothing is skipped.
+
+    Plain UTF-8 and BOM-marked UTF-16 decode normally. Anything else (binary, or
+    UTF-16 without a byte-order mark) is scanned under every decoding the name
+    could hide in, so an unrecognised encoding fails closed instead of passing.
+    """
+    if data.startswith(UTF16_BOMS):
+        return data.decode("utf-16", errors="replace")
+    if b"\0" not in data:
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError:
+            pass
+    return "\n".join(
+        data.decode(encoding, errors="ignore")
+        for encoding in ("utf-8", "utf-16-le", "utf-16-be")
+    )
 
 
 def test_public_repository_names_no_private_feedback_source() -> None:
     # Given / When
     offenders: list[str] = []
     for path in _tracked_files():
-        if path in SKIPPED_PATHS:
-            continue
         text = _decode_text(path)
-        if text is None:
-            continue
         # Report locations only: the offending line may carry the private text itself.
         offenders.extend(
             f"{path}:{number}" for number, _line in find_offending_lines(path, text)
@@ -145,9 +146,17 @@ def test_guard_decodes_utf16_text(tmp_path: Path) -> None:
 
     # When it is decoded the way the repository scan does
     text = decode_tracked_bytes(sample.read_bytes())
-    assert text is not None
 
     # Then its line is flagged rather than skipped as binary
     assert find_offending_lines("docs/utf16.txt", text) == [
         (1, "// " + PERSON_NAME + ": synthetic")
     ]
+
+
+def test_guard_scans_bom_less_utf16_and_binary_content() -> None:
+    line = "// " + PERSON_NAME + ": synthetic"
+    for encoding in ("utf-16-le", "utf-16-be"):
+        text = decode_tracked_bytes(line.encode(encoding))
+        assert find_offending_lines("docs/x.txt", text) != [], encoding
+    binary = b"\x89PNG\0\0" + PERSON_NAME.encode() + b"\0\xff"
+    assert find_offending_lines("assets/x.png", decode_tracked_bytes(binary)) != []
