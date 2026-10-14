@@ -39,6 +39,11 @@ Each top-level array holds at most 5,000 entries (`MAX_BATCH_ENTRIES`, also the
 `maxItems` in the JSON Schema). A batch over that count is rejected with 422 and
 nothing from it is stored. Split larger exports into several batches.
 
+Each declared `health_types` entry is bounded too, because the receiver keeps declared types
+permanently: `type_code` at most 64 characters, `display_name` 128, `default_unit` 32, at
+most 16 `aliases` of up to 128 characters each (also `maxLength`/`maxItems` in the JSON
+Schema). An entry over a bound is rejected with 422 and nothing is stored.
+
 All timestamps are UTC ISO 8601 strings ending in `Z`. Values are observations
 with source context, not interpretations.
 
