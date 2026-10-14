@@ -1,15 +1,16 @@
 """Guides name this product HealthRelay; upstream names appear only as attribution.
 
-The upstream names "Apple Health AI Bridge" and "Health Bridge for AI" are not used for
-the product (docs/brand.md). Every remaining occurrence in tracked docs and README.md
-must match an allowlist entry below; each entry states why the name is correct there.
+The upstream names "Apple Health AI Bridge", "Health Bridge for AI" and the bare
+"Health Bridge" are not used for the product (docs/brand.md). Every remaining
+occurrence in tracked docs and README.md must match an allowlist entry below; each
+entry states why the name is correct there.
 """
 
 import re
 import subprocess
 from pathlib import Path
 
-FULL_UPSTREAM_NAMES = re.compile(r"Apple Health AI Bridge|Health Bridge for AI")
+FULL_UPSTREAM_NAMES = re.compile(r"Apple Health AI Bridge|\bHealth Bridge\b")
 
 # (path, line-regex, reason). The line-regex is searched in the line text.
 ALLOWLIST: list[tuple[str, str, str]] = [
@@ -43,6 +44,28 @@ ALLOWLIST: list[tuple[str, str, str]] = [
         "README.md",
         r"Apple Health AI Bridge is an independent open-source project",
         "upstream project's affiliation notice, kept as attribution",
+    ),
+    # Mailbox guide prose; scope and wording wait on the owner decision, #128 item 1.
+    (
+        "docs/icloud-mailbox-service.md",
+        r"browser into one private local directory; Health Bridge does not silently",
+        "mailbox guide, left for the #128 item 1 decision",
+    ),
+    (
+        "docs/icloud-mailbox-service.md",
+        r"No Health Bridge mailbox service files exist",
+        "mailbox guide, left for the #128 item 1 decision",
+    ),
+    (
+        "docs/icloud-mailbox-service.md",
+        r"retires only the exact Health Bridge-owned plist",
+        "mailbox guide, left for the #128 item 1 decision",
+    ),
+    # Versioning guide quotes the ambiguous phrase as the example to avoid.
+    (
+        "docs/versioning.md",
+        r"Avoid an unlabeled phrase such as .Health Bridge 1\.1\.0.",
+        "quoted counter-example, not a product name",
     ),
     # Brand rule itself.
     (

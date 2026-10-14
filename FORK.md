@@ -35,6 +35,10 @@ receiver-specific parts stay here.
   run only on `ios-v*` tags or manual dispatch; that is no longer true. Since 2026-09-28 both workflows
   run on pull requests targeting `main`, on pushes of `ios-v*` tags, and on manual `workflow_dispatch`.
   Neither workflow has a push trigger for branches, including `main`. The old entry is kept as history.
+  Same change: `pyproject.toml` `[project.urls]` now point at this repository instead of upstream's,
+  user-facing guides call the app HealthRelay instead of the upstream product names, and
+  `tests/guardrails/test_guides_use_product_name.py` fails if those names reappear in docs or
+  README.md outside its attribution allowlist.
 - 2026-10-12 (`0b0aee6`): pinned receiver release `healthrelay-receiver-2026.10.12`, notes in `.github/release/notes-healthrelay-receiver-2026.10.12.md`. It carries the source-binding and export-claim refusals (#103, #110, prepared as the never-tagged `2026.10.06`, whose notes file this one replaces) and the MCP `ping` response from upstream `d97e15f` (#142). Package version unchanged.
 - 2026-10-04 (`0b42c4f`): pinned receiver releases. A receiver release in this fork is the tag
   `healthrelay-receiver-<YYYY.MM.DD>` on an immutable merge commit, created through `gh release
