@@ -241,7 +241,9 @@ def _expressions(node: object) -> list[str]:
     return out
 
 
-IPA_TOKEN = re.compile(r"(?<![a-z])ipa(?![a-z])", re.IGNORECASE)
+# Any occurrence, glued or not: the two release writers contain none today, so a
+# false positive costs one allowlist edit while a miss would ship an IPA.
+IPA_TOKEN = re.compile("ipa", re.IGNORECASE)
 
 
 def test_secret_and_ipa_checks_see_through_expression_tricks() -> None:
@@ -255,7 +257,8 @@ def test_secret_and_ipa_checks_see_through_expression_tricks() -> None:
     assert {m["name"] for m in SECRET_REF.finditer(found)} == {"RELEASE_PAT"}
     assert len(re.findall(r"\bsecrets\b", found)) == 2
     assert IPA_TOKEN.search("dist/HealthRelay_ipa.zip")
-    assert not IPA_TOKEN.search("participate")
+    assert IPA_TOKEN.search("HealthRelayIPA.zip")
+    assert IPA_TOKEN.search("unsignedIpa")
 
 
 def test_write_scope_parser_recognises_yaml_variants() -> None:
