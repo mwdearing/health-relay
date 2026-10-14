@@ -105,7 +105,9 @@ class RejectionCounter:
         if not any(counts.values()):
             return None
         return (
-            f"receiver rejected requests in the last {int(self.window_seconds)}s: "
+            # The window can close long after its last event (lazy flush), so the line
+            # makes no claim about how recent the counts are.
+            "receiver rejected requests since the previous summary: "
             f"unauthenticated={counts['unauthenticated']} "
             f"connection_refused={counts['connection_refused']} "
             f"deadline_expired={counts['deadline_expired']}"

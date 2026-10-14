@@ -97,7 +97,7 @@ def test_missing_token_increments_unauthenticated(
         f"Authorization: Bearer {SECRET_TOKEN}\r\nContent-Length: 0\r\n\r\n"
     ).encode()
     assert status_of(socket_request_from(port, "127.0.0.3", bad)) == 401
-    summary_prefix = "receiver rejected requests in the last 60s: "
+    summary_prefix = "receiver rejected requests since the previous summary: "
     counts = "unauthenticated=1 connection_refused=0 deadline_expired=0"
     assert lines == [summary_prefix + counts]
     emitted = "\n".join(lines)

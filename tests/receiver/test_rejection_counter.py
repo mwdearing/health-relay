@@ -22,7 +22,7 @@ def _line(
     *, unauthenticated: int, connection_refused: int, deadline_expired: int
 ) -> str:
     return (
-        "receiver rejected requests in the last 60s: "
+        "receiver rejected requests since the previous summary: "
         f"unauthenticated={unauthenticated} "
         f"connection_refused={connection_refused} "
         f"deadline_expired={deadline_expired}"
@@ -118,7 +118,7 @@ def test_summary_line_contains_only_the_three_counts(
     clock.now += 61
     counter.record("connection_refused")
     line = lines[0]
-    assert line.startswith("receiver rejected requests in the last 60s: ")
+    assert line.startswith("receiver rejected requests since the previous summary: ")
     assert line.split(": ", 1)[1].split() == [
         "unauthenticated=1",
         "connection_refused=0",

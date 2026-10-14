@@ -389,9 +389,11 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
 
     @override
     def server_close(self) -> None:
-        # Report rejections still waiting in an open window before going away.
-        self.rejection_counter.flush_if_due(force=True)
+        # Report rejections still waiting in an open window before going away. Flushed
+        # after the listener closes so no new connection can add to it; a daemon handler
+        # still mid-request at exit may record after this, and is best effort.
         super().server_close()
+        self.rejection_counter.flush_if_due(force=True)
 
     @property
     def rejection_counter(self) -> RejectionCounter:
