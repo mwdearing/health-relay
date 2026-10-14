@@ -52,7 +52,7 @@ struct SampleReviewView: View {
                         appleHealthCard
                         compoundCard
                         sourceDetailsCard
-                        Text("One drink. One calorie entry.")
+                        Text("Read-only. Sent only to your receiver.")
                             .font(.footnote)
                             .foregroundStyle(SamplePalette.textTertiary)
                             .frame(maxWidth: .infinity)
@@ -126,12 +126,12 @@ struct SampleReviewView: View {
     private var appleHealthCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 14) {
-                iconTile(symbol: "heart.fill", symbolColor: SamplePalette.healthHeart, tile: SamplePalette.healthTile)
+                iconTile(symbol: "chart.bar.doc.horizontal", symbolColor: SamplePalette.accent, tile: SamplePalette.compoundTile)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Apple Health")
                         .font(.headline)
                         .foregroundStyle(SamplePalette.textPrimary)
-                    Text("Supported nutrients")
+                    Text("Data types you allow")
                         .font(.footnote)
                         .foregroundStyle(SamplePalette.textSecondary)
                     Text("Last sync \u{00B7} \(SampleReviewData.lastSyncedLabel)")
@@ -148,12 +148,12 @@ struct SampleReviewView: View {
     private var compoundCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 14) {
-                iconTile(symbol: "pills", symbolColor: SamplePalette.textPrimary, tile: SamplePalette.compoundTile)
+                iconTile(symbol: "desktopcomputer", symbolColor: SamplePalette.textPrimary, tile: SamplePalette.compoundTile)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Creatine & other compounds")
+                    Text("Your receiver")
                         .font(.headline)
                         .foregroundStyle(SamplePalette.textPrimary)
-                    Text("Optional direct connection")
+                    Text("Runs on your own computer")
                         .font(.footnote)
                         .foregroundStyle(SamplePalette.textSecondary)
                     pairedBadge
@@ -364,8 +364,6 @@ private enum SamplePalette {
     static let textTertiary = Color(sampleHex: 0xAFC3D1).opacity(0.7)
     static let chevron = Color(sampleHex: 0xB2CCDE)
     static let footer = Color(sampleHex: 0xCFF6F8)
-    static let healthTile = Color(sampleHex: 0xFCFCFC)
-    static let healthHeart = Color(sampleHex: 0xE0245E)
     static let compoundTile = Color(sampleHex: 0x3A4B52)
     static let warning = Color(sampleHex: 0xF5C451)
 }
@@ -430,33 +428,33 @@ private struct SampleSecondaryButtonStyle: ButtonStyle {
 private extension SampleSourceKind {
     var title: String {
         switch self {
-        case .energy: "Energy"
-        case .water: "Water"
-        case .creatine: "Creatine"
+        case .steps: "Steps"
+        case .sleep: "Sleep"
+        case .medication: "Medication"
         }
     }
 
     var subtitle: String {
         switch self {
-        case .energy: "Food & drinks"
-        case .water: "Drink log"
-        case .creatine: "Supplement log"
+        case .steps: "Activity"
+        case .sleep: "Sleep sessions"
+        case .medication: "Dose events"
         }
     }
 
     var symbol: String {
         switch self {
-        case .energy: "flame"
-        case .water: "drop"
-        case .creatine: "pills"
+        case .steps: "figure.walk"
+        case .sleep: "bed.double"
+        case .medication: "pills"
         }
     }
 
     var unit: String {
         switch self {
-        case .energy: "kcal"
-        case .water: "L"
-        case .creatine: "dose"
+        case .steps: "record"
+        case .sleep: "session"
+        case .medication: "doses"
         }
     }
 }
