@@ -3,9 +3,8 @@ import SwiftUI
 /// HealthRelay addition: reviews the on-device parse of an Apple Health export.zip
 /// before anything is sent to the receiver. Stays open until the send actually
 /// finishes -- previously it dismissed the instant Send was tapped, before the
-/// (fire-and-forget) upload had even started, so a failure was invisible (Michael,
-/// 2026-09-28: "hit send, it went back to the main app screen", nothing landed
-/// server-side; traced to this plus the [Export] activity-log sanitizer gap).
+/// (fire-and-forget) upload had even started, so a failure was invisible. The
+/// missing feedback was traced to this plus the [Export] activity-log sanitizer gap.
 struct ExportImportReviewView: View {
     @ObservedObject var viewModel: HealthBridgeCompanionViewModel
     let summary: AppleHealthExportLabImporter.Summary

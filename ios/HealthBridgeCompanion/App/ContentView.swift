@@ -384,9 +384,8 @@ struct ContentView: View {
             // (syncPresentationIsActive = isSyncing || automaticSyncOwnerIsActive),
             // not just isSyncing alone. A HealthKit-observer-driven Automatic Sync
             // run sets only automaticSyncOwnerIsActive, never isSyncing -- gating on
-            // isSyncing meant Cancel never even appeared during that kind of run
-            // (Michael, 2026-09-29: "Cancel button never shows up in auto"), leaving
-            // no way to interrupt it short of disabling Automatic Sync entirely.
+            // isSyncing meant Cancel never even appeared during that kind of run,
+            // leaving no way to interrupt it short of disabling Automatic Sync entirely.
             if viewModel.syncPresentationIsActive {
                 SyncProgressRow()
 

@@ -1236,8 +1236,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         // (started independently by HealthKit background-delivery observers),
         // which this used to leave completely untouched. If that automatic run
         // was the thing actually holding the outbox busy, Cancel looked like it
-        // did nothing (Michael, 2026-09-29: "acts like you don't press it...
-        // only works when auto syncing is disabled"), because the ONLY thing
+        // did nothing in practice, because the ONLY thing
         // that previously stopped it was disabling Automatic Sync, which calls
         // this same engine.cancelAndWait() via AutomaticSyncRuntime.stopAdmission().
         // Cancel now reaches the automatic engine directly, every time.
