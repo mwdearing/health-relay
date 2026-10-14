@@ -1,6 +1,6 @@
 # iOS real-device convenience scripts
 
-These scripts automate the local Mac + iPhone development loop for the Health Bridge companion.
+These scripts automate the local Mac + iPhone development loop for the HealthRelay companion.
 
 ## Device defaults
 

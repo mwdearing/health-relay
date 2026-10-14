@@ -22,7 +22,7 @@ ALLOWLIST: list[tuple[str, str, str]] = [
     ),
     (
         "README.md",
-        r"builds on Apple Health AI Bridge, the open-source project behind",
+        r"Apple Health AI Bridge, the open-source project behind Health Bridge for AI",
         "upstream credit",
     ),
     (
@@ -37,7 +37,7 @@ ALLOWLIST: list[tuple[str, str, str]] = [
     ),
     (
         "README.md",
-        r"Upstream project \(attribution",
+        r"describe the upstream Health Bridge for AI product",
         "footer that explicitly labels upstream links as attribution",
     ),
     (
@@ -145,12 +145,28 @@ ALLOWLIST: list[tuple[str, str, str]] = [
         r"describe Apple Health AI Bridge's own process",
         "describes upstream's release process, distinguished from HealthRelay's",
     ),
+    # Files that are upstream's own history, kept verbatim and labelled as such.
+    (
+        r"re:\.github/release/.*\.md",
+        r"Apple Health AI Bridge|\bHealth Bridge\b",
+        "upstream release notes and checklists kept as history",
+    ),
+    (
+        "FORK.md",
+        r"Apple Health AI Bridge|\bHealth Bridge\b",
+        "fork ledger: records upstream names and their replacement as history",
+    ),
+    (
+        "assets/brand/README.md",
+        r"fork of Apple Health AI Bridge|upstream Health Bridge assets",
+        "attribution and removal of the upstream assets",
+    ),
 ]
 
 
 def _tracked_guide_files() -> list[Path]:
     result = subprocess.run(
-        ["git", "ls-files", "docs", "README.md"],
+        ["git", "ls-files", "*.md"],
         check=True,
         capture_output=True,
         text=True,
@@ -164,11 +180,16 @@ def _path_matches(entry_path: str, path: str) -> bool:
     return entry_path == path
 
 
-def _is_allowed(path: str, line: str) -> bool:
-    return any(
-        _path_matches(entry_path, path) and re.search(pattern, line)
-        for entry_path, pattern, _reason in ALLOWLIST
-    )
+def _unexplained_remainder(path: str, line: str) -> str:
+    """Remove each allowlisted span from the line; whatever is left must be clean.
+
+    An allowlist entry exempts only the text its pattern matches, so another
+    upstream name added elsewhere on an allowlisted line is still caught.
+    """
+    for entry_path, pattern, _reason in ALLOWLIST:
+        if _path_matches(entry_path, path):
+            line = re.sub(pattern, "", line)
+    return line
 
 
 def test_guides_do_not_use_upstream_product_names_outside_allowlist() -> None:
@@ -176,8 +197,8 @@ def test_guides_do_not_use_upstream_product_names_outside_allowlist() -> None:
     for path in _tracked_guide_files():
         text = path.read_text(encoding="utf-8")
         for number, line in enumerate(text.splitlines(), start=1):
-            if FULL_UPSTREAM_NAMES.search(line) and not _is_allowed(
-                path.as_posix(), line
+            if FULL_UPSTREAM_NAMES.search(
+                _unexplained_remainder(path.as_posix(), line)
             ):
                 violations.append(f"{path.as_posix()}:{number}: {line.strip()}")
     assert violations == [], "upstream product name outside allowlist:\n" + "\n".join(
@@ -198,3 +219,8 @@ def test_allowlist_entries_still_match_a_line() -> None:
             for path in files
         )
         assert matched, f"stale allowlist entry: {entry_path} /{pattern}/"
+
+
+def test_allowlisted_line_still_catches_an_added_upstream_name() -> None:
+    line = "HealthRelay is a fork of Apple Health AI Bridge. Install Health Bridge."
+    assert FULL_UPSTREAM_NAMES.search(_unexplained_remainder("README.md", line))
