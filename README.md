@@ -85,7 +85,7 @@ HealthRelay is not on the App Store. There are two ways to get it on your iPhone
 - **Build and sign it yourself:** run the `Build unsigned IPA` workflow (Actions → Build unsigned IPA → Run workflow) with your bundle identifier and marketing version, download the `HealthRelay-unsigned-ipa-*` artifact and sign it on your phone or Mac (a sideload signer such as AltStore or Sideloadly, or Xcode with your own team), or follow [docs/self-build.md](docs/self-build.md) with Xcode 16 or later.
 
 > [!IMPORTANT]
-> **GitHub Releases no longer carry unsigned IPA files.** Releases published before 2026-10-07 keep their attachments but will not be updated; new app builds go to TestFlight only. The release notes on this page stay as the changelog.
+> **GitHub Releases do not carry IPA files.** The workflows that published and promoted them were retired on 2026-10-14. Releases published before 2026-10-07 keep their attachments as history and will not be updated; new app builds ship only as signed beta builds. The release notes on this page stay as the changelog.
 
 #### Sign with an App ID that has HealthKit
 

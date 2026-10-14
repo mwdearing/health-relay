@@ -63,9 +63,9 @@ Out of scope:
 
 ## Verify what you install
 
-- Get the app only as a signed beta build invited by the maintainer (request one with the [Beta access request](https://github.com/mwdearing/health-relay/issues/new?template=beta_access.yml) form), from a `Build unsigned IPA` workflow run in this repository, or by building it yourself from a checkout you trust. GitHub Releases no longer carry IPA files; attachments on releases published before 2026-10-07 are history.
+- Get the app only as a signed beta build invited by the maintainer (request one with the [Beta access request](https://github.com/mwdearing/health-relay/issues/new?template=beta_access.yml) form), from a `Build unsigned IPA` workflow run in this repository, or by building it yourself from a checkout you trust. GitHub Releases do not carry IPA files: the workflows that published them were retired on 2026-10-14, and attachments on releases published before 2026-10-07 are history.
 - For a workflow artifact, check the IPA against the attached checksum: `sha256sum -c HealthRelay-unsigned.ipa.sha256` (on macOS: `shasum -a 256 -c HealthRelay-unsigned.ipa.sha256`).
-- Each `app-v*` release names the commit and the workflow run that built it.
+- Each historical `app-v*` release names the commit and the workflow run that built it.
 - If you build it yourself, you sign the IPA with your own Apple developer certificate. Keep that signing identity private.
 - Sign with a provisioning profile for an explicit App ID that has the HealthKit capability, and keep its HealthKit entitlement in the signed app. Build with that App ID as the bundle identifier (the `Build unsigned IPA` workflow takes it as an input) rather than only changing it while re-signing, so the identifiers embedded in the IPA match. A wildcard App ID installs, but Health will not list the app and permissions fail. After installing, check Health › Profile › Privacy › Apps (after allowing Health access in the app if it is not listed yet). Changing the identifier later means pairing again.
 

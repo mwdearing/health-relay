@@ -4,7 +4,6 @@ from pathlib import Path
 PYTHON_WORKFLOW = Path(".github/workflows/python.yml")
 IOS_WORKFLOW = Path(".github/workflows/ios.yml")
 BUILD_WORKFLOW = Path(".github/workflows/build-ipa.yml")
-PUBLISH_WORKFLOW = Path(".github/workflows/publish-ipa-release.yml")
 DEPENDABOT_CONFIG = Path(".github/dependabot.yml")
 PINNED_ACTION = re.compile(r"^\s*uses:\s*[^#\s]+@(?P<sha>[0-9a-f]{40})(?:\s+#.*)?$")
 
@@ -67,51 +66,23 @@ def test_dependabot_keeps_security_updates_without_version_prs() -> None:
     assert "groups:" not in text
 
 
-def test_publish_ipa_release_workflow_is_narrow_and_never_overwrites() -> None:
-    text = PUBLISH_WORKFLOW.read_text()
-    build = BUILD_WORKFLOW.read_text()
-    # Manual only, read-only by default; write access lives in exactly one job.
-    assert "workflow_dispatch:" in text
-    assert "push:" not in text
-    assert "pull_request" not in text
-    assert "permissions:\n  contents: read" in text
-    assert text.count("contents: write") == 1
-    assert "contents: write" not in build
-    # Inputs reach shell steps through env, never by interpolation into scripts.
-    run_blocks = text.split("run: |")[1:]
-    assert run_blocks
-    assert all("${{" not in block for block in run_blocks)
-    # Only a successful main build, a placeholder bundle id, and no overwrite.
-    assert '".github/workflows/build-ipa.yml"' in text
-    assert '.head_branch <<<"$run_json")" = "main"' in text
-    assert 'startswith("com.example.")' in text
-    assert "bundle_id == expected" in text  # a real id only via the dispatch input
-    assert "com.mwdearing" not in text  # the real id is never written in the repo
-    assert "releases are never overwritten" in text
-    # No third-party actions; the gh CLI on the runner does the work.
-    assert "uses:" not in text
+RETIRED_RELEASE_WORKFLOWS = (
+    Path(".github/workflows/publish-ipa-release.yml"),
+    Path(".github/workflows/promote-ipa-release.yml"),
+)
 
 
-def test_publish_ipa_release_refuses_older_builds() -> None:
-    text = PUBLISH_WORKFLOW.read_text()
-    assert "git/matching-refs/tags/app-v" in text
-    assert "|| true" not in text  # a failed tag listing must abort publication
-    assert "is already the same or newer" in text
+RELEASE_WRITE_MARKERS = ("gh release", "action-gh-release", "/releases")
 
 
-PROMOTE_WORKFLOW = Path(".github/workflows/promote-ipa-release.yml")
-
-
-def test_publish_creates_only_gated_betas() -> None:
-    text = PUBLISH_WORKFLOW.read_text()
-    assert "--prerelease" in text
-    assert "--latest=false" in text
-    assert "Require green CI on the exact build commit" in text
-
-
-def test_promotion_is_approval_gated_and_ci_checked() -> None:
-    text = PROMOTE_WORKFLOW.read_text()
-    assert "environment: stable" in text
-    assert "--prerelease=false --latest" in text
-    assert "Require green CI on the released commit" in text
-    assert "uses:" not in text  # gh CLI only, like the publish workflow
+def test_unsigned_ipa_release_workflows_stay_retired() -> None:
+    # SECURITY.md says GitHub Releases do not carry IPA files (#127): no workflow
+    # that handles an IPA may also touch GitHub Releases, in any step.
+    for path in RETIRED_RELEASE_WORKFLOWS:
+        assert not path.exists(), path
+    for path in sorted(Path(".github/workflows").glob("*.y*ml")):
+        text = path.read_text(encoding="utf-8").lower()
+        if ".ipa" not in text:
+            continue
+        for marker in RELEASE_WRITE_MARKERS:
+            assert marker not in text, f"{path} handles an IPA and uses {marker}"
