@@ -863,7 +863,7 @@ private struct AppDetailsView: View {
                 NavigationLink {
                     DiagnosticsView(viewModel: viewModel)
                 } label: {
-                    Label("Diagnostics", systemImage: "stethoscope")
+                    Label("Diagnostics", systemImage: "wrench.and.screwdriver")
                 }
             }
 
@@ -880,6 +880,9 @@ private struct AppDetailsView: View {
                 LabeledContent("Version", value: appVersion)
                 Link("Privacy Policy", destination: Self.privacyPolicyURL)
                 Link("Support", destination: Self.supportURL)
+                Text("HealthRelay sends the data you allow to your own receiver. It does not interpret that data and is not a medical device. Talk to a doctor before making medical decisions.")
+                    .font(.footnote)
+                    .foregroundStyle(.relaySecondaryText)
             }
         }
         .navigationTitle("Settings")
