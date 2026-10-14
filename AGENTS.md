@@ -1,4 +1,4 @@
-# Apple Health AI Bridge agent instructions
+# HealthRelay agent instructions
 
 This file gives safe operating rules for AI coding agents and automation working in this repository. The project is fixture-first, local-first, and privacy-sensitive.
 

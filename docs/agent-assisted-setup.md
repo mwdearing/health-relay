@@ -1,6 +1,6 @@
 # Agent-Assisted Receiver and MCP Setup
 
-Apple Health AI Bridge is designed so a local AI agent can handle most receiver, database, and MCP setup work for a user. This document explains what agents can safely automate and where platform or user-owned boundaries remain.
+HealthRelay is designed so a local AI agent can handle most receiver, database, and MCP setup work for a user. This document explains what agents can safely automate and where platform or user-owned boundaries remain.
 
 ## What an agent can usually handle
 

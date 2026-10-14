@@ -535,9 +535,9 @@ falls back to mailbox delivery.
 3. Generate a fresh invitation setup page.
 4. Open it on a trusted screen.
 5. Scan the QR with iPhone Camera.
-6. If QR cannot be used, tap the setup-page button or paste its link inside Health Bridge.
+6. If QR cannot be used, tap the setup-page button or paste its link inside HealthRelay.
 7. If link handoff is unavailable, enter the displayed server address and invitation code.
-8. Confirm that Health Bridge reports the connection as saved.
+8. Confirm that HealthRelay reports the connection as saved.
 9. Grant only the Apple Health read permissions the user wants.
 10. Tap the primary app action and verify receiver-side aggregate sync evidence.
 11. Delete the setup page after pairing or expiry.

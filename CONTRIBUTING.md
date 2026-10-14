@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve Apple Health AI Bridge.
+Thanks for helping improve HealthRelay.
 
 This project handles health-adjacent data, so contributions must preserve the local-first and privacy-first boundary before anything else.
 

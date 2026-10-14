@@ -72,7 +72,7 @@ fresh-user run must use the following sequence:
    from the iPhone's active LAN or VPN route before creating an invitation;
 6. display the private setup page on a separate trusted screen and scan its QR with
    the iPhone Camera app;
-7. after Camera hands off to Health Bridge, do not relaunch or force-quit the app
+7. after Camera hands off to HealthRelay, do not relaunch or force-quit the app
    until the app and receiver both confirm one successful redemption;
 8. complete the native Local Network and Apple Health permission prompts as a human;
 9. run first sync, unchanged-data idempotence, receiver outage, and recovery while
