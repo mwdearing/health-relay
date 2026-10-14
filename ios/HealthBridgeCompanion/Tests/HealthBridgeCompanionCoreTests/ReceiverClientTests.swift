@@ -63,7 +63,7 @@ final class ReceiverClientTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
         let session = URLSession(configuration: configuration)
-        let client = ReceiverClient(session: session)
+        let client = ReceiverClient(session: session, consentStore: admittingSyncConsentStore())
 
         MockURLProtocol.requestHandler = { request in
             XCTAssertEqual(request.httpMethod, "POST")
@@ -132,7 +132,7 @@ final class ReceiverClientTests: XCTestCase {
     func testUploadRejectsUnauthorizedResponsesWithStatusAndBodyDetails() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
-        let client = ReceiverClient(session: URLSession(configuration: configuration))
+        let client = ReceiverClient(session: URLSession(configuration: configuration), consentStore: admittingSyncConsentStore())
 
         MockURLProtocol.requestHandler = { request in
             MockURLProtocolResponse(
@@ -166,7 +166,7 @@ final class ReceiverClientTests: XCTestCase {
     func testUploadDecodesSleepBaselineEpochConflictFloor() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
-        let client = ReceiverClient(session: URLSession(configuration: configuration))
+        let client = ReceiverClient(session: URLSession(configuration: configuration), consentStore: admittingSyncConsentStore())
 
         MockURLProtocol.requestHandler = { request in
             MockURLProtocolResponse(

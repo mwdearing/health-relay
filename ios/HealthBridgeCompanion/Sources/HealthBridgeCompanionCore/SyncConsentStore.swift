@@ -23,6 +23,21 @@ public enum SyncConsentPolicy {
     }
 }
 
+/// Thrown by egress primitives when the persisted record does not admit sending.
+public struct SyncConsentRefusal: LocalizedError {
+    public init() {}
+
+    public var errorDescription: String? {
+        "Accept the data-sharing disclosure in Settings before sending."
+    }
+}
+
+/// Authoritative check for egress primitives. It reads the persisted store at call time and fails
+/// closed, so no caller can send from a stale in-memory copy of the consent state.
+public func requirePersistedSyncConsent(_ store: SyncConsentStore = SyncConsentStore()) throws {
+    guard store.maySend else { throw SyncConsentRefusal() }
+}
+
 /// Local storage for the consent record. Withdrawing removes the record, which closes the gate.
 public struct SyncConsentStore {
     private static let versionKey = "healthrelay.syncConsent.version"

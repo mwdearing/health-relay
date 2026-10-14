@@ -106,6 +106,7 @@ public struct ProductionMailboxBackgroundDeliverySummary: Equatable, Sendable {
 }
 
 public final class ProductionMailboxDelivery {
+    private let consentStore: SyncConsentStore
     public static let backgroundAcknowledgmentFileLimit = 8
 
     private let settingsStore: ReceiverSettingsStore
@@ -125,8 +126,10 @@ public final class ProductionMailboxDelivery {
         sleepStore: (any SleepSyncManifestStoring)? = nil,
         keyStore: MailboxKeyStore = MailboxKeyStore(
             service: HealthBridgeAppIdentity.mailboxKeychainServiceName
-        )
+        ),
+        consentStore: SyncConsentStore = SyncConsentStore()
     ) {
+        self.consentStore = consentStore
         self.settingsStore = settingsStore
         self.outbox = outbox
         self.cursorStore = cursorStore
@@ -167,6 +170,7 @@ public final class ProductionMailboxDelivery {
     public func publishPendingFIFOHead() async throws
         -> ProductionMailboxBackgroundDeliverySummary
     {
+        try requirePersistedSyncConsent(consentStore)
         try Task.checkCancellation()
         let components = try backgroundComponents()
         let items = try backgroundPendingItems(components: components)
@@ -182,6 +186,7 @@ public final class ProductionMailboxDelivery {
             deliveryCoordinator = try coordinator(components: components, itemID: item.id)
             var terminalCount = 0
             for _ in 0 ..< 4 {
+                try requirePersistedSyncConsent(consentStore)
                 try Task.checkCancellation()
                 let state = try deliveryCoordinator.advance(itemID: item.id)
                 switch state.phase {
@@ -424,6 +429,7 @@ public final class ProductionMailboxDelivery {
 
     @MainActor
     public func deliverPending() async throws -> ProductionMailboxDeliverySummary {
+        try requirePersistedSyncConsent(consentStore)
         let components: ProductionMailboxComponents
         do {
             components = try makeComponents()
@@ -445,6 +451,7 @@ public final class ProductionMailboxDelivery {
         var terminalCount = 0
         do {
             for item in items {
+                try requirePersistedSyncConsent(consentStore)
                 let coordinator = try coordinator(
                     components: components,
                     itemID: item.id

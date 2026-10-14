@@ -90,7 +90,8 @@ final class MailboxTransportFixture {
             envelopeID: { self.sealContext.envelopeID },
             nowMilliseconds: { self.sealContext.createdAtMS },
             isCancelled: isCancelled,
-            observe: observe
+            observe: observe,
+            consentStore: admittingSyncConsentStore()
         )
     }
 
