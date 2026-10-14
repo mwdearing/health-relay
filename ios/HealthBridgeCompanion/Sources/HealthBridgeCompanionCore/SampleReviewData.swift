@@ -22,11 +22,49 @@ public struct SampleReviewRecord: Equatable, Identifiable, Sendable {
     public let endISO: String
 }
 
+/// Screens the sample mode can open directly. `overview` is the default.
+/// Screenshot scenes: overview, sync, ecg, labs. A consent scene is not part of this branch.
+public enum SampleReviewScene: String, CaseIterable, Equatable, Sendable {
+    case overview
+    case sync
+    case ecg
+    case labs
+}
+
+/// Launch-argument selection for App Review and screenshots.
+///
+/// Launching with `-HealthRelaySampleScene <name>` opens the app in sample mode at that scene.
+/// A missing or unknown name opens `overview`. Without the flag this returns nil and the live app runs.
+public enum SampleReviewLaunch {
+    public static let argumentName = "-HealthRelaySampleScene"
+
+    public static func requestedScene(arguments: [String]) -> SampleReviewScene? {
+        guard let index = arguments.firstIndex(of: argumentName) else { return nil }
+        let name = arguments.indices.contains(index + 1) ? arguments[index + 1] : ""
+        return SampleReviewScene(rawValue: name) ?? .overview
+    }
+}
+
+/// Source rows on the overview. Titles and units live in the view; only quantities are here.
+public enum SampleSourceKind: CaseIterable, Equatable, Sendable {
+    case energy
+    case water
+    case creatine
+}
+
 public enum SampleReviewData {
     public static let receiverName = "Sample Receiver"
     public static let receiverHost = "sample.invalid"
-    public static let lastSyncedISO = "2026-01-15T09:00:00Z"
+    public static let lastSyncedLabel = "Sample 9:00 AM"
     public static let pendingLabImportCount = 3
+
+    public static func sourceQuantity(_ kind: SampleSourceKind) -> Double {
+        switch kind {
+        case .energy: 320
+        case .water: 0.5
+        case .creatine: 1.0
+        }
+    }
 
     public static let syncRunLog: [String] = [
         "Sample sync started.",

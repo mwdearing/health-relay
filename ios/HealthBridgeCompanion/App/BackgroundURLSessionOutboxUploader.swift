@@ -993,14 +993,24 @@ final class BackgroundURLSessionOutboxUploader: NSObject, @unchecked Sendable, U
 
 @MainActor
 final class HealthBridgeBackgroundURLSessionAppDelegate: NSObject, UIApplicationDelegate {
-    let applicationRuntime: HealthBridgeCompanionApplicationRuntime
+    private let runtimeProvider: @MainActor () -> HealthBridgeCompanionApplicationRuntime
+
+    /// Read lazily, so a sample-scene launch never constructs the live runtime.
+    var applicationRuntime: HealthBridgeCompanionApplicationRuntime {
+        runtimeProvider()
+    }
 
     override convenience init() {
-        self.init(applicationRuntime: .shared)
+        self.init(runtimeProvider: { HealthBridgeCompanionApplicationRuntime.shared })
     }
 
     init(applicationRuntime: HealthBridgeCompanionApplicationRuntime) {
-        self.applicationRuntime = applicationRuntime
+        self.runtimeProvider = { applicationRuntime }
+        super.init()
+    }
+
+    private init(runtimeProvider: @escaping @MainActor () -> HealthBridgeCompanionApplicationRuntime) {
+        self.runtimeProvider = runtimeProvider
         super.init()
     }
 
@@ -1008,6 +1018,10 @@ final class HealthBridgeBackgroundURLSessionAppDelegate: NSObject, UIApplication
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        // Sample-scene launches (App Review and screenshots) start no live work: no bootstrap, no sync.
+        guard SampleReviewLaunch.requestedScene(arguments: ProcessInfo.processInfo.arguments) == nil else {
+            return true
+        }
         applicationRuntime.prepareForBackgroundLaunch()
         Task { @MainActor [applicationRuntime = self.applicationRuntime] in
             await applicationRuntime.bootstrap()

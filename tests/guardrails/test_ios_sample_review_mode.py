@@ -7,10 +7,17 @@ invented values only.
 """
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 IOS = Path("ios/HealthBridgeCompanion")
 CONTENT_VIEW = IOS / "App/ContentView.swift"
+APP_ENTRY = IOS / "App/HealthBridgeCompanionApp.swift"
+DELEGATE_FILE = IOS / "App/BackgroundURLSessionOutboxUploader.swift"
+COLOR_ASSETS = IOS / "App/Assets.xcassets"
 SAMPLE_VIEW = IOS / "App/SampleReviewView.swift"
 SAMPLE_DATA = IOS / "Sources/HealthBridgeCompanionCore/SampleReviewData.swift"
 XCODE_PROJECT = IOS / "HealthBridgeCompanion.xcodeproj/project.pbxproj"
@@ -47,6 +54,9 @@ _ALLOWED_PARTS = (
     r"ecg",
     r"medication",
     r"labs",
+    r"overview",
+    r"sync",
+    r"-HealthRelaySampleScene",
     r"[0-9T:\-. Z]*",
     r"0{8}-0000-0000-0000-[0-9]{12}",
 )
@@ -163,3 +173,122 @@ def test_sample_files_are_registered_in_the_xcode_project() -> None:
         assert any(build_id in line for line in sources_lines), (
             f"{filename} is not in the Sources phase"
         )
+
+
+def test_dark_scheme_is_applied_once_at_the_root() -> None:
+    # Given: every App source file in the target.
+    hits = {
+        path.name: _source(path).count(".preferredColorScheme(.dark)")
+        for path in sorted((IOS / "App").glob("*.swift"))
+    }
+    # Then: exactly one application, at the root in the app entry file.
+    assert sum(hits.values()) == 1, hits
+    assert hits[APP_ENTRY.name] == 1
+    # And the teal colour tokens keep their dark variants (asset values unchanged).
+    for name in ("RelayMint", "RelayOnMint", "RelayAccentInk"):
+        contents = (COLOR_ASSETS / f"{name}.colorset/Contents.json").read_text(
+            encoding="utf-8"
+        )
+        assert '"value" : "dark"' in contents or '"value": "dark"' in contents, name
+
+
+def test_sample_overview_carries_the_mockup_copy_and_palette() -> None:
+    source = _source(SAMPLE_VIEW)
+    for text in (
+        "HealthRelay",
+        "Connected",
+        "Manage connection",
+        "Your local ledger works on its own.",
+        "Apple Health",
+        "Supported nutrients",
+        "Creatine & other compounds",
+        "Optional direct connection",
+        "Paired receiver",
+        "Saved locally when offline",
+        "Source details",
+        "Energy",
+        "Food & drinks",
+        "Water",
+        "Drink log",
+        "Creatine",
+        "Supplement log",
+        "One drink. One calorie entry.",
+    ):
+        assert text in source, text
+    # Mockup colours, defined locally in the sample view (asset colours unchanged).
+    for hex_value in (
+        "03141A",
+        "0D2229",
+        "192A31",
+        "23F6C9",
+        "4AF4E8",
+        "04141A",
+        "032C2E",
+        "065B55",
+        "6FF8EC",
+        "052D2E",
+        "0B5C55",
+        "74F1E2",
+        "FCFCFC",
+        "3A4B52",
+        "CFF6F8",
+    ):
+        assert f"0x{hex_value}" in source, hex_value
+
+
+def test_launch_argument_is_parsed_into_sample_scenes_only() -> None:
+    data = _source(SAMPLE_DATA)
+    assert '"-HealthRelaySampleScene"' in data
+    scene_block = re.search(
+        r"enum SampleReviewScene: String[^{]*\{(.*?)\n\}", data, re.DOTALL
+    )
+    assert scene_block is not None
+    cases = re.findall(r"case (\w+)", scene_block.group(1))
+    assert cases == ["overview", "sync", "ecg", "labs"]
+    assert "requestedScene(arguments:" in data
+    # The app entry picks sample or live scenes from that parser.
+    # The live root is only used in the else branch.
+    entry = _source(APP_ENTRY)
+    assert "SampleReviewLaunch.requestedScene(arguments:" in entry
+    sample_branch = entry.index("if let sampleScene")
+    live_root = entry.index("LiveRootView()", sample_branch)
+    assert entry.index("} else {", sample_branch) < live_root
+    # The app delegate bootstraps the live runtime only outside sample launches.
+    delegate = _source(DELEGATE_FILE)
+    launch = delegate[delegate.index("didFinishLaunchingWithOptions") :]
+    guard = launch.index("SampleReviewLaunch.requestedScene(arguments:")
+    assert guard < launch.index("applicationRuntime.prepareForBackgroundLaunch()")
+    assert guard < launch.index("await applicationRuntime.bootstrap()")
+
+
+@pytest.mark.skipif(shutil.which("swiftc") is None, reason="swiftc not installed")
+def test_launch_parser_selects_scenes_when_compiled(tmp_path: Path) -> None:
+    main = tmp_path / "main.swift"
+    source = (
+        "let scene = SampleReviewLaunch.requestedScene(\n"
+        "    arguments: Array(CommandLine.arguments.dropFirst()))\n"
+        'print(scene?.rawValue ?? "live")\n'
+    )
+    _ = main.write_text(source, encoding="utf-8")
+    binary = tmp_path / "parser"
+    _ = subprocess.run(
+        ["swiftc", "-o", str(binary), str(SAMPLE_DATA), str(main)],
+        check=True,
+        capture_output=True,
+        timeout=600,
+    )
+    cases = {
+        (): "live",
+        ("-HealthRelaySampleScene", "sync"): "sync",
+        ("-HealthRelaySampleScene", "labs"): "labs",
+        ("-HealthRelaySampleScene", "ecg"): "ecg",
+        ("-HealthRelaySampleScene", "overview"): "overview",
+        ("-HealthRelaySampleScene", "not-a-scene"): "overview",
+        ("-HealthRelaySampleScene",): "overview",
+        ("-SomeOtherFlag", "sync"): "live",
+    }
+    for args, expected in cases.items():
+        run = subprocess.run(
+            [str(binary), *args], check=True, capture_output=True, text=True, timeout=60
+        )
+        assert run.stdout.strip() == expected, (args, run.stdout)
