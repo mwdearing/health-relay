@@ -103,6 +103,12 @@ struct ContentView: View {
                 )
             }
         }
+        .fullScreenCover(isPresented: Binding(
+            get: { !viewModel.syncConsentAdmitsSend },
+            set: { _ in }
+        )) {
+            SyncConsentView(onAccept: { viewModel.acceptSyncConsent() })
+        }
     }
 
     /// The Sync card only appears once the iPhone is paired and Health access was requested.
@@ -851,6 +857,14 @@ private struct AppDetailsView: View {
                     Task { await viewModel.requestHealthPermissions() }
                 }
                 .disabled(viewModel.isRequestingHealthPermissions)
+            }
+
+            Section("Data Sharing") {
+                NavigationLink {
+                    SyncConsentReviewView(viewModel: viewModel)
+                } label: {
+                    Label("Consent and Withdrawal", systemImage: "hand.raised")
+                }
             }
 
             Section("Automatic Sync") {

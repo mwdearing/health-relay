@@ -122,6 +122,8 @@ final class AutomaticSyncRuntime {
     }
 
     func runForegroundCatchUpIfNeeded() {
+        // Consent gate: leave the catch-up unconsumed so it can run once the user accepts.
+        guard viewModel.syncConsentAdmitsSend else { return }
         let opportunityWasConsumed = foregroundOpportunityConsumed
         guard !opportunityWasConsumed else { return }
         foregroundOpportunityConsumed = true
@@ -182,10 +184,13 @@ final class AutomaticSyncRuntime {
     func handleBackgroundRefresh() async {
         BackgroundRefreshScheduler.noteRequestConsumed()
         reconcileRegistrations()
-        try? await engine.requestRun(
-            reason: .scheduledRefresh,
-            bootstrapBeforeRun: true
-        )
+        // Consent gate: no run is enqueued until the current disclosure is accepted.
+        if viewModel.syncConsentAdmitsSend {
+            try? await engine.requestRun(
+                reason: .scheduledRefresh,
+                bootstrapBeforeRun: true
+            )
+        }
         BackgroundRefreshScheduler.scheduleNextRefreshIfNeeded(viewModel: viewModel)
     }
 
@@ -193,6 +198,7 @@ final class AutomaticSyncRuntime {
         reason: AutomaticSyncReason,
         diagnosticRunID: UUID = UUID()
     ) async {
+        guard viewModel.syncConsentAdmitsSend else { return }
         try? await engine.requestRun(
             reason: reason,
             diagnosticRunID: diagnosticRunID
@@ -200,6 +206,7 @@ final class AutomaticSyncRuntime {
     }
 
     func runManualSync() async {
+        guard viewModel.syncConsentAdmitsSend else { return }
         await engine.cancelAndWait()
         guard !Task.isCancelled else { return }
         try? await engine.requestRun(reason: .manualSync)
@@ -291,6 +298,8 @@ final class AutomaticSyncRuntime {
                 )
             }
         ) { [weak self] typeCode, diagnosticRunID in
+            // Consent gate: an observer wake-up enqueues nothing while consent is withdrawn.
+            guard self?.viewModel.syncConsentAdmitsSend == true else { return nil }
             self?.engine.requestRunWithoutWaiting(
                 reason: .observer(typeCode: typeCode),
                 diagnosticRunID: diagnosticRunID
