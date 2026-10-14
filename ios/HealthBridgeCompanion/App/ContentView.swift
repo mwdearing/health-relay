@@ -1198,11 +1198,11 @@ private struct PairingDestinationReviewView: View {
                         .accessibilityHint("Canonical server host and non-default port")
                 }
                 Label(
-                    appBuildEffectiveTransport(destination.transport) == .mailbox ? "Mailbox delivery" : "Direct delivery",
-                    systemImage: appBuildEffectiveTransport(destination.transport) == .mailbox ? "envelope" : "arrow.up.right"
+                    appBuildShowsMailboxPairing(destination.transport) ? "Mailbox delivery" : "Direct delivery",
+                    systemImage: appBuildShowsMailboxPairing(destination.transport) ? "envelope" : "arrow.up.right"
                 )
                 Text(
-                    destination.transport == appBuildEffectiveTransport(destination.transport)
+                    destination.transport == .direct || appBuildShowsMailboxPairing(destination.transport)
                         ? destination.privacySummary
                         : "Direct delivery is used in this build. Check the receiver address above before you continue."
                 )

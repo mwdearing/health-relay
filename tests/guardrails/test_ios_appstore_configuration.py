@@ -175,6 +175,7 @@ GATE_TOKENS = (
     "usesMailboxTransport",
     "appBuildEffectiveTransport(",
     "mailboxKeyBlocksSync",
+    "appBuildShowsMailboxPairing(",
 )
 MAILBOX_CONTENT_NEEDLES = (
     "mailbox connection key is lost",

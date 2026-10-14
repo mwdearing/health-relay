@@ -55,6 +55,16 @@ func appBuildEffectiveTransport(_ stored: ReceiverTransportKind?) -> ReceiverTra
 #endif
 }
 
+/// Whether a pairing destination is presented as mailbox delivery in this build. The App Store
+/// build has no mailbox transport, so a mailbox pairing is always presented as direct delivery.
+func appBuildShowsMailboxPairing(_ transport: ReceiverPairingTransport) -> Bool {
+#if HEALTHRELAY_APPSTORE
+    return false
+#else
+    return transport == .mailbox
+#endif
+}
+
 private enum MailboxDeliveryDiagnosticLine {
     static func failure(for error: Error) -> String {
         if let phaseError = error as? ProductionMailboxDeliveryPhaseError {
