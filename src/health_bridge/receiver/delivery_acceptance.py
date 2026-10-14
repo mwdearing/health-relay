@@ -5,7 +5,6 @@ import sqlite3
 from typing import TYPE_CHECKING, assert_never, final
 
 from health_bridge.contract.delivery_v1 import DeliveryProtocolError, DeliveryReceiptV1
-from health_bridge.ingest import UndeclaredReferenceError
 from health_bridge.receiver._delivery_acceptance_crypto import (
     committed_receipt_record,
     envelope_claims,
@@ -31,6 +30,7 @@ from health_bridge.receiver.batch_acceptance import (
     BatchPrincipalMismatch,
     PreparedBatch,
 )
+from health_bridge.storage.catalog import UndeclaredReferenceError
 from health_bridge.storage.database import connect_database
 from health_bridge.storage.delivery_receipts import (
     DeliveryReceiptConflictError,

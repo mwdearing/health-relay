@@ -16,8 +16,9 @@ from health_bridge.contract.batch_v1 import (
     SyncCursor,
     TimeWindow,
 )
-from health_bridge.ingest import UndeclaredReferenceError, ingest_batch, ingest_fixture
+from health_bridge.ingest import ingest_batch, ingest_fixture
 from health_bridge.storage import initialize_database
+from health_bridge.storage.catalog import UndeclaredReferenceError
 from health_bridge.storage.sqlite_rows import fetch_one_int
 
 FIXTURE_PATH = Path("fixtures/health_bridge_batch_v1.synthetic.json")

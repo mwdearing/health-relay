@@ -6,7 +6,10 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from health_bridge.contract import HealthBridgeBatchV1
-from health_bridge.storage.catalog import MISSING_SOURCE_ERROR
+from health_bridge.storage.catalog import (
+    MISSING_SOURCE_ERROR,
+    UndeclaredReferenceError,
+)
 from health_bridge.storage.database import connect_database, initialize_database
 from health_bridge.storage.models import (
     IngestResult,
@@ -20,10 +23,6 @@ SCHEMA_ERROR_SUMMARY = "Fixture did not match health_bridge.batch.v1 schema."
 STORAGE_ERROR_SUMMARY = "Fixture records could not be stored."
 UNDECLARED_REFERENCE_MESSAGE = "batch names an undeclared type or source"
 FOREIGN_KEY_FAILURE_MESSAGE = "FOREIGN KEY constraint failed"
-
-
-class UndeclaredReferenceError(Exception):
-    """A schema-valid batch names a type or source it never declared (RELAY-S13)."""
 
 
 @dataclass(frozen=True, slots=True)
