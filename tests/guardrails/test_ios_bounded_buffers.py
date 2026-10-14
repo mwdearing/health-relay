@@ -20,8 +20,10 @@ def _text(path: Path) -> str:
 def test_receiver_client_never_buffers_unbounded_session_data() -> None:
     source = _text(RECEIVER_CLIENT)
     assert "session.data(for:" not in source
-    assert source.count("boundedData(") >= 4  # helper definition plus three call sites
-    assert "session.bytes(for:" in source
+    streamed = source.count("session.bytes(for:")
+    # health check, pairing redeem and upload, each read through the bounded helper
+    assert streamed >= 3
+    assert source.count("Self.boundedBody(") == streamed
 
 
 def test_zip_reader_checks_declared_sizes_before_reading_or_inflating() -> None:

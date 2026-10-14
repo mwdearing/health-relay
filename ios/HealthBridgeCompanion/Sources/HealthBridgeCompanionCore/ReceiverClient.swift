@@ -330,23 +330,27 @@ public final class ReceiverClient: @unchecked Sendable {
         return components.url ?? batchURL
     }
 
-    /// Reads the response body with a hard cap of `maximumResponseBodyBytes`. A declared
+    /// Reads a response body with a hard cap of `maximumResponseBodyBytes`. A declared
     /// Content-Length above the cap is refused before any body byte is read. The header can
     /// lie or be absent, so the streamed count is enforced too: the byte that would exceed
-    /// the cap throws `overflowError` and stops the transfer.
-    private func boundedData(for request: URLRequest, overflowError: Error) async throws -> (Data, URLResponse) {
-        let (bytes, response) = try await session.bytes(for: request)
-        if response.expectedContentLength > Int64(Self.maximumResponseBodyBytes) {
+    /// the cap throws `overflowError` and stops the transfer. Callers start the request
+    /// themselves, so each network call stays where its consent check is.
+    private static func boundedBody(
+        _ bytes: URLSession.AsyncBytes,
+        response: URLResponse,
+        overflowError: Error
+    ) async throws -> Data {
+        if response.expectedContentLength > Int64(maximumResponseBodyBytes) {
             throw overflowError
         }
         var body = Data()
         for try await byte in bytes {
-            guard body.count < Self.maximumResponseBodyBytes else {
+            guard body.count < maximumResponseBodyBytes else {
                 throw overflowError
             }
             body.append(byte)
         }
-        return (body, response)
+        return body
     }
 
     public func healthCheck(forBatchURL batchURL: URL) async throws -> ReceiverUploadResult {
@@ -355,8 +359,10 @@ public final class ReceiverClient: @unchecked Sendable {
         request.timeoutInterval = Self.healthCheckTimeout
         request.httpMethod = "GET"
 
-        let (data, response) = try await boundedData(
-            for: request,
+        let (bytes, response) = try await session.bytes(for: request)
+        let data = try await Self.boundedBody(
+            bytes,
+            response: response,
             overflowError: ReceiverClientError.responseBodyTooLarge
         )
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -410,8 +416,10 @@ public final class ReceiverClient: @unchecked Sendable {
         request.httpBody = body
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let (data, response) = try await boundedData(
-            for: request,
+        let (bytes, response) = try await session.bytes(for: request)
+        let data = try await Self.boundedBody(
+            bytes,
+            response: response,
             overflowError: ReceiverPairingRedeemError.responseBodyTooLarge
         )
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -556,8 +564,10 @@ public final class ReceiverClient: @unchecked Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         try requirePersistedSyncConsent(consentStore)
-        let (data, response) = try await boundedData(
-            for: request,
+        let (bytes, response) = try await session.bytes(for: request)
+        let data = try await Self.boundedBody(
+            bytes,
+            response: response,
             overflowError: ReceiverClientError.responseBodyTooLarge
         )
         guard let httpResponse = response as? HTTPURLResponse else {
