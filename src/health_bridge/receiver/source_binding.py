@@ -14,9 +14,8 @@ INSTALLATION_HASH_DOMAIN: Final = "health-bridge-pairing:installation:"
 # one-shot upload, not a per-device live HealthKit lane -- it deliberately uses a
 # source key outside the apple_health.phone[.<installation>] family so rows stay
 # traceable to a manual import (see AppleHealthExportLabImporter.sourceKey on the
-# client). Bug found 2026-09-29 (Michael: every export send got 403'd forever,
-# which then blocked every other queued item behind it): this file's allowlist
-# never accounted for that key, so it always failed principal binding. It carries
+# client). Without this key in the allowlist, every export send fails principal
+# binding with 403 and blocks the queued items behind it. It carries
 # no device-installation claim to verify, so it is accepted unconditionally, the
 # same way the legacy bare phone key is.
 EXPORT_SOURCE_KEY: Final = "apple_health.export"
