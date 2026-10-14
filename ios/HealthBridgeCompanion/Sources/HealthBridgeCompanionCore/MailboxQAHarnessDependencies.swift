@@ -2,6 +2,17 @@ import CryptoKit
 import Foundation
 
 extension MailboxQAHarness {
+    /// The QA harness publishes only synthetic payloads and has no consent screen. It therefore
+    /// owns an accepted store of its own, so the production fail-closed default cannot block QA runs.
+    /// Production code never constructs this harness.
+    private static var syntheticOnlyConsentStore: SyncConsentStore {
+        let store = SyncConsentStore(
+            userDefaults: UserDefaults(suiteName: "HealthRelay.MailboxQA.SyntheticConsent") ?? .standard
+        )
+        store.accept()
+        return store
+    }
+
     func coordinator(
         fault: MailboxQAFault?
     ) throws -> OutboxDeliveryCoordinator {
@@ -16,7 +27,8 @@ extension MailboxQAHarness {
             envelopeID: envelopeID,
             nowMilliseconds: { Int64(Date().timeIntervalSince1970 * 1_000) },
             isCancelled: { false },
-            observe: observeEnvelope
+            observe: observeEnvelope,
+            consentStore: Self.syntheticOnlyConsentStore
         )
         return OutboxDeliveryCoordinator(
             outbox: outbox,

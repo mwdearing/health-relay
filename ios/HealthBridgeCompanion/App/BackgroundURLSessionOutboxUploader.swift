@@ -147,6 +147,7 @@ final class BackgroundURLSessionOutboxUploader: NSObject, @unchecked Sendable, U
             receiverBindingID: receiverBindingID,
             alreadyScheduledItemIDs: scheduledItemIDs
         ) { plan in
+            try requirePersistedSyncConsent()
             let task = self.session.uploadTask(
                 with: plan.request,
                 fromFile: plan.fileURL

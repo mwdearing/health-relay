@@ -44,7 +44,7 @@ final class Todo7SwiftCharacterizationTests: XCTestCase {
 
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [Todo7URLProtocol.self]
-        let client = ReceiverClient(session: URLSession(configuration: configuration))
+        let client = ReceiverClient(session: URLSession(configuration: configuration), consentStore: admittingSyncConsentStore())
         Todo7URLProtocol.requestHandler = { request in
             XCTAssertEqual(request.httpMethod, "POST")
             XCTAssertEqual(request.httpBodyStream?.todo7ReadAllData(), expectedBody)

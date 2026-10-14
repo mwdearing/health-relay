@@ -97,14 +97,6 @@ def test_activate_opens_continuation_admission_only_with_consent() -> None:
     assert "viewModel.syncConsentAdmitsSend" in body[:opened]
 
 
-def test_upload_and_connection_test_check_consent_before_any_request() -> None:
-    source = VIEW_MODEL.read_text(encoding="utf-8")
-    assert "requireSyncConsent()" in _function_body(
-        source, "private func uploadPendingOutbox(", 700
-    )
-    assert CHECK in _function_body(source, "func sendConnectionTestBatch()", 300)
-
-
 def test_consent_prompt_can_be_declined_without_locking_out_settings() -> None:
     content = CONTENT_VIEW.read_text(encoding="utf-8")
     view = CONSENT_VIEW.read_text(encoding="utf-8")
@@ -130,44 +122,112 @@ def test_consent_cancel_is_not_gated_by_user_action_admission() -> None:
     assert "cancelBackgroundUploadsForConsent()" in bootstrap
 
 
-def _between(source: str, start_marker: str, end_marker: str) -> str:
-    start = source.index(start_marker)
-    end = source.index(end_marker, start + len(start_marker))
-    return source[start:end]
+# --- Positive recognition of egress -------------------------------------------------
+# Every network or mailbox-publish primitive in App/ and Sources/ must be one of the
+# recognised shapes below. An unrecognised egress token fails the test, so a new
+# primitive cannot appear without an explicit decision here.
+
+EGRESS_ROOTS = (
+    Path("ios/HealthBridgeCompanion/App"),
+    Path("ios/HealthBridgeCompanion/Sources"),
+)
+PERSISTED_CONSENT_CHECK = "requirePersistedSyncConsent("
+# Call tokens: the persisted check must appear before the call in its function.
+EGRESS_CALL_TOKENS = (
+    re.compile(r"\bsession\.data\("),
+    re.compile(r"\bsession\.uploadTask\("),
+    re.compile(r"\bsession\.dataTask\("),
+    re.compile(r"\bpublisher\.publish\("),
+)
+# Definition tokens: the persisted check must appear inside the function body.
+EGRESS_DEFINITION_TOKENS = (
+    re.compile(r"\bfunc\s+publishPendingFIFOHead\b"),
+    re.compile(r"\bfunc\s+deliverPending\b"),
+)
+FUNC_DECL = re.compile(r"\bfunc\s+(\w+)")
+# Non-health egress, allowed by exact file and function name only.
+NON_HEALTH_EGRESS = {
+    ("ReceiverClient.swift", "healthCheck"),
+    ("ReceiverClient.swift", "redeem"),
+}
 
 
-def test_upload_loop_rechecks_consent_before_each_send_and_after_each_await() -> None:
-    source = VIEW_MODEL.read_text(encoding="utf-8")
-    upload = _between(
-        source,
-        "private func uploadPendingOutbox(",
-        "private func makeProductionMailboxDelivery()",
-    )
-    assert upload.count("requireSyncConsent()") >= 4
-    loop = upload[upload.index("for item in pendingItems") :]
-    send = loop.index("receiverClient.upload(")
-    assert "requireSyncConsent()" in loop[:send]
-    assert "requireSyncConsent()" in loop[send:]
-    mailbox = upload[: upload.index("guard let receiverIdentity")]
-    assert mailbox.index("requireSyncConsent()") < mailbox.index("deliverPending()")
+def _matching(source: str, open_index: int, open_char: str, close_char: str) -> int:
+    depth = 0
+    for index in range(open_index, len(source)):
+        if source[index] == open_char:
+            depth += 1
+        elif source[index] == close_char:
+            depth -= 1
+            if depth == 0:
+                return index
+    message = "unbalanced braces"
+    raise AssertionError(message)
 
 
-def test_mailbox_reconciliation_and_foreground_retry_check_consent() -> None:
-    source = VIEW_MODEL.read_text(encoding="utf-8")
-    foreground = _between(
-        source,
-        "func runForegroundMailboxReconciliationIfNeeded()",
-        "func noteSceneLeftActive()",
-    )
-    assert CHECK in foreground[:600]
-    reconcile = _between(
-        source, "private func reconcileMailboxDeliveryIfNeeded(", "private func "
-    )
-    assert "syncConsentAdmitsSend" in reconcile[:800]
-    assert "requireSyncConsent()" in reconcile
-    scheduled = _between(
-        source,
-        "private func schedulePendingBackgroundOutboxUploadsNow(",
-        "private func ",
-    )
-    assert "requireSyncConsent()" in scheduled
+def _function_span(source: str, decl: re.Match[str]) -> tuple[int, int] | None:
+    paren = source.index("(", decl.end())
+    close = _matching(source, paren, "(", ")")
+    brace = source.find("{", close)
+    if brace == -1:
+        return None
+    between = source[close:brace]
+    if "func " in between or "\n    }" in between or "var " in between:
+        return None  # protocol requirement without a body
+    return brace, _matching(source, brace, "{", "}")
+
+
+def _enclosing_function(source: str, index: int) -> tuple[str, int, int] | None:
+    best: tuple[str, int, int] | None = None
+    for decl in FUNC_DECL.finditer(source):
+        span = _function_span(source, decl)
+        if span is None or not (span[0] <= index <= span[1]):
+            continue
+        if best is None or (span[1] - span[0]) < (best[2] - best[1]):
+            best = (decl.group(1), span[0], span[1])
+    return best
+
+
+def test_every_egress_primitive_is_recognised_and_persisted_consent_gated() -> None:
+    recognised = 0
+    failures: list[str] = []
+    for root in EGRESS_ROOTS:
+        for path in sorted(root.rglob("*.swift")):
+            source = path.read_text(encoding="utf-8")
+            for pattern in EGRESS_CALL_TOKENS + EGRESS_DEFINITION_TOKENS:
+                is_definition = pattern in EGRESS_DEFINITION_TOKENS
+                for match in pattern.finditer(source):
+                    where = f"{path.name}:{pattern.pattern}"
+                    if is_definition:
+                        decl = FUNC_DECL.match(source, match.start())
+                        span = (
+                            _function_span(source, decl) if decl is not None else None
+                        )
+                        enclosing = (
+                            (decl.group(1), *span)
+                            if decl is not None and span is not None
+                            else None
+                        )
+                    else:
+                        enclosing = _enclosing_function(source, match.start())
+                    if enclosing is None:
+                        failures.append(f"{where} has no enclosing function")
+                        continue
+                    name, body_start, body_end = enclosing
+                    if (path.name, name) in NON_HEALTH_EGRESS:
+                        recognised += 1
+                        continue
+                    if is_definition:
+                        checked = PERSISTED_CONSENT_CHECK in source[body_start:body_end]
+                    else:
+                        checked = (
+                            PERSISTED_CONSENT_CHECK
+                            in source[body_start : match.start()]
+                        )
+                    if checked:
+                        recognised += 1
+                    else:
+                        message = f"{path.name}:{name} lacks {PERSISTED_CONSENT_CHECK}"
+                        failures.append(f"{message} before {pattern.pattern}")
+    assert not failures, "\n".join(failures)
+    assert recognised >= 6, recognised

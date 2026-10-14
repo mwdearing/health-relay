@@ -46,13 +46,6 @@ struct SyncConsentView: View {
     }
 }
 
-/// Thrown by upload paths when consent is missing, so no request is made.
-struct SyncConsentRefusal: LocalizedError {
-    var errorDescription: String? {
-        "Accept the data-sharing disclosure in Settings before sending."
-    }
-}
-
 /// The disclosure copy, shared by the first-run screen and the Settings review.
 struct SyncConsentDisclosure: View {
     var body: some View {

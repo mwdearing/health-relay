@@ -287,6 +287,7 @@ public final class ReceiverClient: @unchecked Sendable {
     private static let uploadStallTimeout: TimeInterval = 120
     private static let uploadResourceTimeout: TimeInterval = 3_600
     private let session: URLSession
+    private let consentStore: SyncConsentStore
 
     public static func foregroundSessionConfiguration() -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.default
@@ -296,12 +297,13 @@ public final class ReceiverClient: @unchecked Sendable {
         return configuration
     }
 
-    public init(session: URLSession? = nil) {
+    public init(session: URLSession? = nil, consentStore: SyncConsentStore = SyncConsentStore()) {
         self.session = session ?? URLSession(
             configuration: Self.foregroundSessionConfiguration(),
             delegate: ReceiverURLSessionRedirectDelegate(),
             delegateQueue: nil
         )
+        self.consentStore = consentStore
     }
 
     public static func healthURL(forBatchURL batchURL: URL) -> URL {
@@ -514,6 +516,7 @@ public final class ReceiverClient: @unchecked Sendable {
         request.setValue("Bearer \(trimmedToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
+        try requirePersistedSyncConsent(consentStore)
         let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ReceiverClientError.nonHTTPResponse

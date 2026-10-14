@@ -48,3 +48,11 @@ final class SyncConsentPolicyTests: XCTestCase {
         XCTAssertNil(SyncConsentStore(userDefaults: defaults).record)
     }
 }
+
+/// A persisted store that admits sending, for tests that drive real egress primitives.
+func admittingSyncConsentStore() -> SyncConsentStore {
+    let suite = "SyncConsentAdmitting.\(UUID().uuidString)"
+    let store = SyncConsentStore(userDefaults: UserDefaults(suiteName: suite) ?? .standard)
+    store.accept()
+    return store
+}
