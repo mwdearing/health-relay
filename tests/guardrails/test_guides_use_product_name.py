@@ -10,10 +10,16 @@ import re
 import subprocess
 from pathlib import Path
 
-FULL_UPSTREAM_NAMES = re.compile(r"Apple Health AI Bridge|\bHealth Bridge\b")
-# The same names with any whitespace between words, so a name that Markdown source
-# wraps across two lines (and renders as one) is caught too.
-WRAPPED_UPSTREAM_NAMES = re.compile(r"Apple\s+Health\s+AI\s+Bridge|\bHealth\s+Bridge\b")
+FULL_UPSTREAM_NAMES = re.compile(
+    r"Apple Health AI Bridge|\bHealth Bridge\b", re.IGNORECASE
+)
+# The same names, in any case, with spaces or one soft line break between words,
+# so a name Markdown source wraps across two lines (and renders as one) is caught;
+# a blank line is a paragraph break and does not join words.
+_GAP = r"(?:[ \t]+|[ \t]*\n[ \t]*)"
+WRAPPED_UPSTREAM_NAMES = re.compile(
+    rf"Apple{_GAP}Health{_GAP}AI{_GAP}Bridge|\bHealth{_GAP}Bridge\b", re.IGNORECASE
+)
 
 # Dated history sections, exempt as a whole: (path, heading that starts the section).
 # Everything above the heading (current policy prose) is checked like any file.
@@ -111,11 +117,6 @@ ALLOWLIST: list[tuple[str, str, str]] = [
         "states the guide is upstream's and not used by HealthRelay",
     ),
     (
-        "docs/maintainer-guide.md",
-        r"public triage, merge, and release process for Apple Health AI Bridge",
-        "describes the upstream project's process, not HealthRelay's",
-    ),
-    (
         "docs/maintainers/README.md",
         r"describe the upstream Apple Health AI Bridge release process",
         "states the directory describes upstream's release process",
@@ -210,7 +211,7 @@ def _unexplained_remainder(path: str, line: str) -> str:
     """
     for entry_path, pattern, _reason in ALLOWLIST:
         if _path_matches(entry_path, path):
-            line = re.sub(pattern, "", line)
+            line = re.sub(pattern, "", line, flags=re.IGNORECASE)
     return line
 
 
@@ -277,6 +278,13 @@ def test_fork_release_notes_are_not_exempt() -> None:
 
 def test_name_wrapped_across_lines_is_caught() -> None:
     assert find_violations("docs/x.md", "Open the Health\nBridge for AI app.") == [1]
+    # A blank line is a paragraph break, not a wrapped name.
+    assert find_violations("docs/x.md", "Health\n\nBridge networks") == []
+
+
+def test_names_are_matched_in_any_case() -> None:
+    for line in ("Health bridge", "health Bridge", "APPLE HEALTH AI BRIDGE"):
+        assert find_violations("docs/x.md", line) == [1], line
 
 
 def test_fork_policy_prose_is_checked_but_its_history_is_not() -> None:
