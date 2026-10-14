@@ -6,7 +6,7 @@ import yaml
 
 ROOT = Path(__file__).parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "app-store-screenshots.yml"
-SCENES = ("overview", "sync", "ecg", "labs", "consent")
+SCENES = ("overview", "sync", "ecg", "labs")
 PINNED_ACTION = re.compile(r"^[^@\s]+@(?P<sha>[0-9a-f]{40})(?:\s+#.*)?$")
 
 

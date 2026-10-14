@@ -130,7 +130,7 @@ jobs:
             echo "::warning::built app does not contain the HealthRelaySampleScene launch argument; captures will show the default launch screen"
           fi
           n=0
-          for scene in overview sync ecg labs consent; do
+          for scene in overview sync ecg labs; do
             n=$((n + 1))
             file="$SHOT_DIR/$(printf '%02d' "$n")-$scene.png"
             xcrun simctl terminate booted "$BUNDLE_ID" >/dev/null 2>&1 || true
