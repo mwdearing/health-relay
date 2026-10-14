@@ -16,12 +16,12 @@ UPSERT_SOURCE_SQL = (
     "device_model = excluded.device_model, "
     "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
 )
-UPSERT_HEALTH_TYPE_SQL = (
+# health_types is one global catalog shared by every paired device, so a batch may
+# add a type it declares but never rewrite the metadata of a stored one (RELAY-S15):
+# otherwise any device could relabel the rows another device's samples are read under.
+INSERT_HEALTH_TYPE_SQL = (
     "insert into health_types (type_code, display_name, category, default_unit, "
-    "sensitivity) values (?, ?, ?, ?, ?) on conflict(type_code) do update set "
-    "display_name = excluded.display_name, category = excluded.category, "
-    "default_unit = excluded.default_unit, sensitivity = excluded.sensitivity, "
-    "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
+    "sensitivity) values (?, ?, ?, ?, ?) on conflict(type_code) do nothing"
 )
 INSERT_ALIAS_SQL = (
     "insert into health_type_aliases (type_code, alias) values (?, ?) "
@@ -80,7 +80,7 @@ def upsert_catalog(connection: sqlite3.Connection, batch: HealthBridgeBatchV1) -
     for health_type in batch.health_types:
         canonical_type_code = canonical_sample_type_code(health_type.type_code)
         _ = connection.execute(
-            UPSERT_HEALTH_TYPE_SQL,
+            INSERT_HEALTH_TYPE_SQL,
             (
                 canonical_type_code,
                 health_type.display_name,
