@@ -85,7 +85,7 @@ HealthRelay is not on the App Store. There are two ways to get it on your iPhone
 - **Build and sign it yourself:** run the `Build unsigned IPA` workflow (Actions → Build unsigned IPA → Run workflow) with your bundle identifier and marketing version, download the `HealthRelay-unsigned-ipa-*` artifact and sign it on your phone or Mac (a sideload signer such as AltStore or Sideloadly, or Xcode with your own team), or follow [docs/self-build.md](docs/self-build.md) with Xcode 16 or later.
 
 > [!IMPORTANT]
-> **GitHub Releases no longer carry unsigned IPA files.** Releases published before 2026-10-07 keep their attachments but will not be updated; new app builds go to TestFlight only. The release notes on this page stay as the changelog.
+> **GitHub Releases are not an install path.** The workflows that published unsigned IPA files there were retired on 2026-10-14. Older `app-v*` releases, including the one currently marked Latest, still carry unsigned IPA attachments as history; they will not be updated, so do not install from them. New app builds ship only as signed beta builds. The release notes on this page stay as the changelog.
 
 #### Sign with an App ID that has HealthKit
 
@@ -254,7 +254,7 @@ These numbers do not need to match. Receiver-only fixes must not force an unchan
 <details>
 <summary><strong>How releases are published</strong></summary>
 
-The app ships as signed beta builds through TestFlight (request access with the [Beta access request](https://github.com/mwdearing/health-relay/issues/new?template=beta_access.yml) form); the signed-upload workflow runs manually, on `main` only, behind a reviewer-approved environment. GitHub Releases no longer carry unsigned IPA files: `app-v<marketing-version>` releases published before 2026-10-07 keep their attachments as history, and new `app-v*` releases carry notes only. The receiver is installed from `main` of this repository, so a fix lands for users once it is merged. A pinned receiver release (`healthrelay-receiver-<YYYY.MM.DD>`) is the alternative when you want one known commit: it is not marked Latest, and the package version stays unchanged. There are no `receiver-v*` or `ios-v*` tags in this fork. See [versioning](docs/versioning.md).
+The app ships as signed beta builds through Apple's beta distribution (request access with the [Beta access request](https://github.com/mwdearing/health-relay/issues/new?template=beta_access.yml) form); the signed-upload workflow runs manually, on `main` only, behind a reviewer-approved environment. GitHub Releases are not an install path: the workflows that attached unsigned IPA files were retired on 2026-10-14, and older `app-v<marketing-version>` releases, including the one marked Latest, keep those attachments only as unmaintained history. The receiver is installed from `main` of this repository, so a fix lands for users once it is merged. A pinned receiver release (`healthrelay-receiver-<YYYY.MM.DD>`) is the alternative when you want one known commit: it is not marked Latest, and the package version stays unchanged. There are no `receiver-v*` or `ios-v*` tags in this fork. See [versioning](docs/versioning.md).
 
 </details>
 

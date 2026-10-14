@@ -1,10 +1,12 @@
 import re
 from pathlib import Path
+from typing import cast
+
+import yaml
 
 PYTHON_WORKFLOW = Path(".github/workflows/python.yml")
 IOS_WORKFLOW = Path(".github/workflows/ios.yml")
 BUILD_WORKFLOW = Path(".github/workflows/build-ipa.yml")
-PUBLISH_WORKFLOW = Path(".github/workflows/publish-ipa-release.yml")
 DEPENDABOT_CONFIG = Path(".github/dependabot.yml")
 PINNED_ACTION = re.compile(r"^\s*uses:\s*[^#\s]+@(?P<sha>[0-9a-f]{40})(?:\s+#.*)?$")
 
@@ -67,51 +69,226 @@ def test_dependabot_keeps_security_updates_without_version_prs() -> None:
     assert "groups:" not in text
 
 
-def test_publish_ipa_release_workflow_is_narrow_and_never_overwrites() -> None:
-    text = PUBLISH_WORKFLOW.read_text()
-    build = BUILD_WORKFLOW.read_text()
-    # Manual only, read-only by default; write access lives in exactly one job.
-    assert "workflow_dispatch:" in text
-    assert "push:" not in text
-    assert "pull_request" not in text
-    assert "permissions:\n  contents: read" in text
-    assert text.count("contents: write") == 1
-    assert "contents: write" not in build
-    # Inputs reach shell steps through env, never by interpolation into scripts.
-    run_blocks = text.split("run: |")[1:]
-    assert run_blocks
-    assert all("${{" not in block for block in run_blocks)
-    # Only a successful main build, a placeholder bundle id, and no overwrite.
-    assert '".github/workflows/build-ipa.yml"' in text
-    assert '.head_branch <<<"$run_json")" = "main"' in text
-    assert 'startswith("com.example.")' in text
-    assert "bundle_id == expected" in text  # a real id only via the dispatch input
-    assert "com.mwdearing" not in text  # the real id is never written in the repo
-    assert "releases are never overwritten" in text
-    # No third-party actions; the gh CLI on the runner does the work.
-    assert "uses:" not in text
+RETIRED_RELEASE_WORKFLOWS = (
+    Path(".github/workflows/publish-ipa-release.yml"),
+    Path(".github/workflows/promote-ipa-release.yml"),
+)
 
 
-def test_publish_ipa_release_refuses_older_builds() -> None:
-    text = PUBLISH_WORKFLOW.read_text()
-    assert "git/matching-refs/tags/app-v" in text
-    assert "|| true" not in text  # a failed tag listing must abort publication
-    assert "is already the same or newer" in text
+WORKFLOWS_DIR = Path(".github/workflows")
+SECRET_REF = re.compile(r"secrets\.(?P<name>[A-Za-z0-9_]+)")
+# Every write scope a workflow token may hold. Writing a GitHub Release needs
+# `contents: write`, which only the signed receiver release pipeline has, so no
+# other workflow can attach an IPA to a release or promote one to Latest (#127).
+ALLOWED_WRITE_SCOPES: dict[str, frozenset[str]] = {
+    "codeql.yml": frozenset({"security-events"}),
+    "publish-release.yml": frozenset({"contents", "id-token", "attestations"}),
+    "release.yml": frozenset({"contents", "id-token", "attestations"}),
+}
+RELEASE_WRITERS = frozenset(
+    name for name, scopes in ALLOWED_WRITE_SCOPES.items() if "contents" in scopes
+)
+# Repository secrets a workflow may read. None is a GitHub token, so the only token
+# that could write a release is the job token bounded above.
+ALLOWED_SECRETS: dict[str, frozenset[str]] = {
+    "signed-beta.yml": frozenset(
+        {
+            "APPLE_TEAM_ID",
+            "ASC_ISSUER_ID",
+            "ASC_KEY_ID",
+            "ASC_KEY_P8",
+            "BUNDLE_ID",
+            "SIGNING_CERT_P12_BASE64",
+            "SIGNING_CERT_PASSWORD",
+        }
+    ),
+}
 
 
-PROMOTE_WORKFLOW = Path(".github/workflows/promote-ipa-release.yml")
+def _workflow_files() -> list[Path]:
+    files = sorted(WORKFLOWS_DIR.glob("*.y*ml"))
+    assert files, "no workflow files found; run from the repository root"
+    return files
 
 
-def test_publish_creates_only_gated_betas() -> None:
-    text = PUBLISH_WORKFLOW.read_text()
-    assert "--prerelease" in text
-    assert "--latest=false" in text
-    assert "Require green CI on the exact build commit" in text
+def test_unsigned_ipa_release_workflows_stay_retired() -> None:
+    for path in RETIRED_RELEASE_WORKFLOWS:
+        assert not path.exists(), path
 
 
-def test_promotion_is_approval_gated_and_ci_checked() -> None:
-    text = PROMOTE_WORKFLOW.read_text()
-    assert "environment: stable" in text
-    assert "--prerelease=false --latest" in text
-    assert "Require green CI on the released commit" in text
-    assert "uses:" not in text  # gh CLI only, like the publish workflow
+def _permission_blocks(workflow: dict[object, object]) -> list[object]:
+    blocks: list[object] = []
+    if "permissions" in workflow:
+        blocks.append(workflow["permissions"])
+    jobs = cast("dict[object, object]", workflow.get("jobs") or {})
+    job_maps = [
+        cast("dict[object, object]", job)
+        for job in jobs.values()
+        if isinstance(job, dict)
+    ]
+    blocks.extend(job["permissions"] for job in job_maps if "permissions" in job)
+    return blocks
+
+
+def _write_scopes(block: object, name: str) -> set[str]:
+    """Scopes a permissions value grants write on; anything unrecognised fails."""
+    if block is None:
+        return set()
+    if isinstance(block, str):
+        assert block.strip().lower() == "read-all", f"{name}: permissions {block!r}"
+        return set()
+    assert isinstance(block, dict), f"{name}: permissions {block!r}"
+    scopes: set[str] = set()
+    for scope, value in cast("dict[object, object]", block).items():
+        level = str(value).strip().strip("'\"").lower()
+        assert level in {"read", "write", "none"}, f"{name}: {scope}: {value!r}"
+        if level == "write":
+            scopes.add(str(scope).strip().lower())
+    return scopes
+
+
+def test_only_the_receiver_release_pipeline_can_write_releases() -> None:
+    for path in _workflow_files():
+        text = path.read_text(encoding="utf-8")
+        name = path.name
+        loaded = cast("object", yaml.safe_load(text))
+        assert isinstance(loaded, dict), name
+        workflow = cast("dict[object, object]", loaded)
+        # A workflow without top-level permissions gets the repository default.
+        assert "permissions" in workflow, name
+        assert "write-all" not in text.lower(), name
+        scopes: set[str] = set()
+        for block in _permission_blocks(workflow):
+            scopes |= _write_scopes(block, name)
+        allowed = ALLOWED_WRITE_SCOPES.get(name, frozenset())
+        assert scopes <= allowed, f"{name} write scopes {sorted(scopes - allowed)}"
+        # Every expression GitHub evaluates (comments dropped): secrets only by plain
+        # name and only allowlisted ones, however the expression is written.
+        evaluated = " ".join(_yaml_strings(workflow))
+        expressions = " ".join(_expressions(workflow))
+        assert len(re.findall(r"\bsecrets\b", expressions)) == len(
+            SECRET_REF.findall(expressions)
+        ), f"{name} uses secrets other than secrets.<NAME>"
+        assert "secrets" not in _yaml_keys(workflow), f"{name} passes secrets on"
+        secrets = {match["name"] for match in SECRET_REF.finditer(expressions)}
+        allowed_secrets = ALLOWED_SECRETS.get(name, frozenset())
+        assert secrets <= allowed_secrets, (
+            f"{name} secrets {sorted(secrets - allowed_secrets)}"
+        )
+        if name in RELEASE_WRITERS:
+            assert not IPA_TOKEN.search(evaluated), (
+                f"{name} can write releases and mentions an IPA"
+            )
+
+
+def _yaml_strings(node: object) -> list[str]:
+    """Every key and scalar in a parsed workflow, as text."""
+    if isinstance(node, dict):
+        out: list[str] = []
+        for key, value in cast("dict[object, object]", node).items():
+            out.append(str(key))
+            out.extend(_yaml_strings(value))
+        return out
+    if isinstance(node, list):
+        return [
+            text for item in cast("list[object]", node) for text in _yaml_strings(item)
+        ]
+    return [str(node)]
+
+
+def _yaml_keys(node: object) -> set[str]:
+    if isinstance(node, dict):
+        mapping = cast("dict[object, object]", node)
+        keys = {str(key) for key in mapping}
+        for value in mapping.values():
+            keys |= _yaml_keys(value)
+        return keys
+    if isinstance(node, list):
+        return {key for item in cast("list[object]", node) for key in _yaml_keys(item)}
+    return set()
+
+
+def _template_expressions(text: str) -> list[str]:
+    """Bodies of ${{ }} in a string, honouring single-quoted expression literals."""
+    bodies: list[str] = []
+    start = text.find("${{")
+    while start != -1:
+        index, quoted = start + 3, False
+        while index < len(text):
+            if text[index] == "'":
+                quoted = not quoted
+            elif not quoted and text.startswith("}}", index):
+                break
+            index += 1
+        bodies.append(text[start + 3 : index])
+        start = text.find("${{", index)
+    return bodies
+
+
+def _expressions(node: object) -> list[str]:
+    """Every expression a workflow evaluates: ${{ }} bodies and bare `if:` values."""
+    out: list[str] = []
+    if isinstance(node, dict):
+        for key, value in cast("dict[object, object]", node).items():
+            if key == "if" and isinstance(value, str):
+                out.append(value)
+            out.extend(_expressions(value))
+    elif isinstance(node, list):
+        for item in cast("list[object]", node):
+            out.extend(_expressions(item))
+    elif isinstance(node, str):
+        out.extend(_template_expressions(node))
+    return out
+
+
+# Any occurrence, glued or not: the two release writers contain none today, so a
+# false positive costs one allowlist edit while a miss would ship an IPA.
+IPA_TOKEN = re.compile("ipa", re.IGNORECASE)
+
+
+def test_secret_and_ipa_checks_see_through_expression_tricks() -> None:
+    text = (
+        "env:\n"
+        "  T: ${{ format('}}') && secrets.RELEASE_PAT }}\n"
+        "  U: ${{ secrets['X'] }}\n"
+        "  V: the signing secrets are masked\n"
+    )
+    found = " ".join(_expressions(cast("object", yaml.safe_load(text))))
+    assert {m["name"] for m in SECRET_REF.finditer(found)} == {"RELEASE_PAT"}
+    assert len(re.findall(r"\bsecrets\b", found)) == 2
+    assert IPA_TOKEN.search("dist/HealthRelay_ipa.zip")
+    assert IPA_TOKEN.search("HealthRelayIPA.zip")
+    assert IPA_TOKEN.search("unsignedIpa")
+
+
+def test_write_scope_parser_recognises_yaml_variants() -> None:
+    for text in (
+        "permissions: {contents: write}",
+        "permissions:\n  contents: 'write'",
+        'permissions:\n  "contents": write',
+        "permissions:\n  contents : WRITE",
+    ):
+        loaded = cast("dict[str, object]", yaml.safe_load(text))
+        assert _write_scopes(loaded["permissions"], "probe") == {"contents"}, text
+
+
+def test_build_ipa_workflow_stays_manual_and_read_only() -> None:
+    text = BUILD_WORKFLOW.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    on_index = lines.index("on:")
+    triggers: list[str] = []
+    for line in lines[on_index + 1 :]:
+        if line and not line.startswith(" "):
+            break
+        if re.match(r"^  \S", line):
+            triggers.append(line.strip())
+    assert triggers == ["workflow_dispatch:"]
+    perm_index = lines.index("permissions:")
+    block: list[str] = []
+    for line in lines[perm_index + 1 :]:
+        if not line.startswith(" "):
+            break
+        block.append(line.strip())
+    assert [line for line in block if line] == ["contents: read"]
+    # No job-level permissions widen it.
+    assert text.count("permissions:") == 1

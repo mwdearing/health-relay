@@ -31,6 +31,11 @@ receiver-specific parts stay here.
 - Version: do not bump the iOS version by hand. The `Build unsigned IPA` workflow stamps both the marketing version and the build number as `1.2.<run number>`; the tracked values (`MARKETING_VERSION` 1.2.0, `CURRENT_PROJECT_VERSION` 50, `component-versions.json` `ios_companion`) are placeholders that never change on an app change.
 
 ## Modifications (newest first)
+- 2026-10-14: retired the `Publish IPA release` and `Promote IPA release` workflows (#127), so
+  no workflow here attaches an unsigned IPA to a GitHub Release or promotes one to Latest, and
+  a guardrail limits the workflow token's write scopes so only the receiver release pipeline
+  can write releases. `Build unsigned IPA` stays as the self-build artifact path.
+  Existing releases and their attachments are unchanged.
 - 2026-10-13: CI trigger record corrected. The 2026-09-27 entry below says `ios.yml` and `python.yml`
   run only on `ios-v*` tags or manual dispatch; that is no longer true. Since 2026-09-28 both workflows
   run on pull requests targeting `main`, on pushes of `ios-v*` tags, and on manual `workflow_dispatch`.
