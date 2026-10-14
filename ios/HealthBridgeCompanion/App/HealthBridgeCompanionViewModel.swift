@@ -43,6 +43,18 @@ private enum CompanionPrivateStorageError: LocalizedError {
     }
 }
 
+/// The transport this build may use. The App Store build (`HEALTHRELAY_APPSTORE`) never
+/// uses the iCloud Mailbox, because guideline 5.1.3(ii) forbids storing health data in iCloud;
+/// a record paired for the mailbox falls back to direct delivery there. Every transport
+/// decision in the app and the background uploader goes through this function.
+func appBuildEffectiveTransport(_ stored: ReceiverTransportKind?) -> ReceiverTransportKind? {
+#if HEALTHRELAY_APPSTORE
+    return stored == .mailbox ? ReceiverTransportKind.directHTTP : stored
+#else
+    return stored
+#endif
+}
+
 private enum MailboxDeliveryDiagnosticLine {
     static func failure(for error: Error) -> String {
         if let phaseError = error as? ProductionMailboxDeliveryPhaseError {
@@ -177,7 +189,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 return false
             }
             if viewModel.pendingOutboxCount > 0,
-               viewModel.settingsStore.activeTransport == .mailbox {
+               appBuildEffectiveTransport(viewModel.settingsStore.activeTransport) == .mailbox {
                 let mailboxResult = await viewModel.reconcileMailboxDeliveryIfNeeded(
                     at: .afterDurableEnqueue
                 )
@@ -257,7 +269,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         }
     }
     var usesMailboxTransport: Bool {
-        settingsStore.activeTransport == .mailbox
+        appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox
     }
     @Published private(set) var hasPendingSleepTransition = false
     @Published private(set) var hasPendingOutboxDeletion = false
@@ -1103,7 +1115,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     }
 
     private func checkReceiverHealth() async {
-        if settingsStore.activeTransport == .mailbox {
+        if appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox {
             do {
                 statusIsError = false
                 statusMessage = "Checking encrypted iCloud mailbox..."
@@ -1323,7 +1335,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             let summary = upload.summary
             try requireCurrentConnectionGeneration(expectedGeneration)
             refreshPendingOutboxCount()
-            if settingsStore.activeTransport == .mailbox,
+            if appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox,
                summary.failedCount == 0 {
                 statusIsError = false
                 statusMessage = "Secure mailbox delivery confirmed \(summary.uploadedCount) item(s). Waiting for receiver confirmation: \(pendingOutboxCount)."
@@ -3243,7 +3255,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
               !Task.isCancelled else {
             return
         }
-        if settingsStore.activeTransport == .mailbox {
+        if appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox {
             do {
                 try requireCurrentConnectionGeneration(expectedGeneration)
                 let summary = try await makeProductionMailboxDelivery()
@@ -3382,7 +3394,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             terminalPayloadActionAdmissionIsOpen,
             automaticSyncEnablePrerequisitesReady,
             backgroundSyncRequestedEnabled,
-            settingsStore.activeTransport == .mailbox,
+            appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox,
             !foregroundMailboxOpportunityConsumed
         else {
             return
@@ -3444,7 +3456,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         at point: AutomaticSyncMailboxReconciliationPoint
     ) async -> AutomaticSyncMailboxReconciliationResult {
         guard let requestedPhase = AutomaticSyncBackgroundOpportunityPolicy.deliveryPhase(
-            usesMailboxTransport: settingsStore.activeTransport == .mailbox,
+            usesMailboxTransport: appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox,
             at: point
         ) else {
             return .completed(pendingCount: pendingOutboxCount)
@@ -4127,7 +4139,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             return
         }
         if pendingOutbox > 0 {
-            if settingsStore.activeTransport == .mailbox {
+            if appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox {
                 _ = await reconcileMailboxDeliveryIfNeeded(at: .beforePayloadGeneration)
             } else {
                 schedulePendingBackgroundOutboxUploadsIfAllowed()
@@ -4139,7 +4151,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             try preparePrivateStorageForUploadAdmission()
             processedAllPending = try await processPendingTypes()
             if (trustedPendingOutboxCount() ?? 0) > 0 {
-                if settingsStore.activeTransport == .mailbox {
+                if appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox {
                     _ = await reconcileMailboxDeliveryIfNeeded(at: .afterDurableEnqueue)
                 } else {
                     _ = await flushPendingOutbox()
@@ -5650,7 +5662,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             let pendingItems = try outbox.pendingItems()
             var itemRemains = pendingItems.contains { $0.id == outboxItemID }
             if executionMode == .automatic,
-               settingsStore.activeTransport == .directHTTP,
+               appBuildEffectiveTransport(settingsStore.activeTransport) == .directHTTP,
                itemRemains {
                 schedulePendingBackgroundOutboxUploadsIfAllowed()
                 statusIsError = false
@@ -6090,7 +6102,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         if let uploadResult = delivery.directUpload {
             return "\(uploadedDescription) with HTTP \(uploadResult.statusCode). Pending outbox: \(pendingOutboxCount).\(outboxNotice)"
         }
-        let cursorDetail = settingsStore.activeTransport == .mailbox
+        let cursorDetail = appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox
             ? "Local cursor remains held until authenticated receiver acknowledgment."
             : "Local cursor remains held until Direct receiver acceptance."
         return "\(queuedDescription) in local outbox for FIFO retry. \(cursorDetail) Pending outbox: \(pendingOutboxCount).\(outboxNotice)"
@@ -6098,7 +6110,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
 
     private func shouldStopManualSyncForPendingMailboxAcknowledgment() -> Bool {
         pendingOutboxCount > 0
-            && settingsStore.activeTransport == .mailbox
+            && appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox
     }
 
     private func uploadPayloadsWithOutbox(
@@ -6140,7 +6152,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             .subtracting(initialItemIDs)
         refreshPendingOutboxCount()
 
-        if settingsStore.activeTransport == .mailbox {
+        if appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox {
             lastOutboxNotice = " Exact payload sequence is durably queued for encrypted iCloud mailbox publication."
             schedulePendingBackgroundOutboxUploadsIfAllowed()
             return PayloadDelivery(
@@ -6414,7 +6426,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             throw KeychainReceiverTokenStoreError.unavailable
         }
         try outbox.requireUploadAdmission()
-        if settingsStore.activeTransport == .directHTTP,
+        if appBuildEffectiveTransport(settingsStore.activeTransport) == .directHTTP,
            let receiverBindingID = settingsStore.receiverBindingID {
             let finalizer = OutboxDeliveryCursorFinalizer(
                 outbox: outbox,
@@ -6516,7 +6528,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         lastDirectUploadResult: ReceiverUploadResult?
     ) {
         try requireCurrentConnectionGeneration(expectedGeneration)
-        if settingsStore.activeTransport == .mailbox {
+        if appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox {
             do {
                 let summary = try await makeProductionMailboxDelivery().deliverPending()
                 try requireCurrentConnectionGeneration(expectedGeneration)

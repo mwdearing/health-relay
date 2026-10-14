@@ -198,7 +198,7 @@ final class BackgroundURLSessionOutboxUploader: NSObject, @unchecked Sendable, U
         }
         let settingsStore = ReceiverSettingsStore()
         let receiverURLString = settingsStore.receiverURLString
-        guard settingsStore.activeTransport == .directHTTP,
+        guard appBuildEffectiveTransport(settingsStore.activeTransport) == .directHTTP,
               let receiverURL = URL(string: receiverURLString),
               let receiverBindingID = settingsStore.receiverBindingID else {
             return

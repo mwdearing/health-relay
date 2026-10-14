@@ -38,7 +38,10 @@ def test_mailbox_startup_and_foreground_use_delivery_only_reconciliation() -> No
     helper = source[helper_start:helper_end]
 
     assert "!Task.isCancelled" in mailbox_entry
-    assert "settingsStore.activeTransport == .mailbox" in mailbox_entry
+    assert (
+        "appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox"
+        in mailbox_entry
+    )
     assert "!foregroundMailboxOpportunityConsumed" in mailbox_entry
     assert "foregroundMailboxOpportunityConsumed = true" in mailbox_entry
     assert "reconcileForegroundMailboxDelivery(" in mailbox_entry
@@ -133,7 +136,9 @@ def test_manual_mailbox_ack_diagnostic_publishes_only_after_generation_check() -
         "private func makeProductionMailboxDelivery()", helper_start
     )
     helper = source[helper_start:helper_end]
-    mailbox_start = helper.index("if settingsStore.activeTransport == .mailbox")
+    mailbox_start = helper.index(
+        "if appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox"
+    )
     mailbox_end = helper.index("guard let receiverIdentity", mailbox_start)
     mailbox = helper[mailbox_start:mailbox_end]
 
@@ -161,7 +166,9 @@ def test_background_mailbox_failure_checks_generation_before_publication() -> No
     )
     helper_end = source.index("#endif", helper_start)
     helper = source[helper_start:helper_end]
-    mailbox_start = helper.index("if settingsStore.activeTransport == .mailbox")
+    mailbox_start = helper.index(
+        "if appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox"
+    )
     mailbox_end = helper.index("let committedReceiverURLString", mailbox_start)
     mailbox = helper[mailbox_start:mailbox_end]
 

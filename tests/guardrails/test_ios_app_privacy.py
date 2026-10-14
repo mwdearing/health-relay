@@ -747,8 +747,9 @@ def test_ios_permission_usage_descriptions_are_pinned_and_consistent() -> None:
         "NSHealthUpdateUsageDescription",
         "NSLocalNetworkUsageDescription",
     }
-    assert project.count("INFOPLIST_KEY_NSCameraUsageDescription") == 2
-    assert build_setting_copies == [camera_copy, camera_copy]
+    assert project.count("INFOPLIST_KEY_NSCameraUsageDescription") == 3
+    # Debug, Release and AppStore (R1) each carry the same camera string.
+    assert build_setting_copies == [camera_copy, camera_copy, camera_copy]
     lowered = camera_copy.lower()
     assert "setup qr" in lowered
     assert "nothing is stored or sent" in lowered
@@ -1387,7 +1388,8 @@ def test_ios_companion_is_iphone_only() -> None:
     ).read_text()
 
     # Then
-    assert project.count("TARGETED_DEVICE_FAMILY = 1;") == 2
+    # Debug, Release and AppStore (R1).
+    assert project.count("TARGETED_DEVICE_FAMILY = 1;") == 3
     assert 'TARGETED_DEVICE_FAMILY = "1,2";' not in project
     assert "UISupportedInterfaceOrientations~ipad" not in plist
 

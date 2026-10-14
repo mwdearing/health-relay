@@ -184,7 +184,9 @@ struct ContentView: View {
             DisclosureGroup("How connections work") {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Direct / Tailscale-compatible (the default): this iPhone sends data straight to your receiver over your home network, Tailscale or your own HTTPS address. Custom HTTPS is still a Direct connection. Recommended on Linux and Mac.")
+#if !HEALTHRELAY_APPSTORE
                     Text("Encrypted iCloud Mailbox (Beta): Mac only. No VPN required. Data is encrypted and left in an iCloud folder that your Mac picks up. Best-effort, eventual delivery, so it can be delayed.")
+#endif
                     Text("Advanced / Limited: a receiver that works only on the same Wi-Fi network. Syncing waits until this iPhone is back on that network.")
                 }
                 .font(.footnote)
@@ -682,6 +684,7 @@ private struct ReceiverSettingsView: View {
 
             Divider()
 
+#if !HEALTHRELAY_APPSTORE
             LabeledContent("Mailbox connection key") {
                 Text(viewModel.mailboxKeyLifecycleLabel)
                     .foregroundStyle(
@@ -703,6 +706,7 @@ private struct ReceiverSettingsView: View {
                 .controlSize(.large)
                 .disabled(!viewModel.canResetLostMailboxConnectionKey)
             }
+#endif
 
             PrimaryButton(
                 title: viewModel.usesMailboxTransport ? "Check Mailbox Folder" : "Check Connection",

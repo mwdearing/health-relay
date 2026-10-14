@@ -719,12 +719,105 @@
 			};
 			name = Release;
 		};
-/* End XCBuildConfiguration section */
+		E0A5A1C0B0F0E0D0C0B0A001 /* AppStore */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = App/HealthBridgeCompanionAppStore.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 50;
+				DEVELOPMENT_TEAM = "";
+				HEALTH_BRIDGE_SOURCE_COMMIT = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = App/Info-AppStore.plist;
+				INFOPLIST_PREPROCESS = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "HealthRelay";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSCameraUsageDescription = "HealthRelay uses the camera only to scan the setup QR code on this device. Nothing is stored or sent.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "HealthRelay reads only the Apple Health data types you choose to allow, which can include ECG recordings and medication records, and sends them only to your own receiver. Nothing is sent to the developer.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "HealthRelay never changes your Apple Health data. It only reads what you allow.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
+				MARKETING_VERSION = 1.2.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.HealthBridgeCompanion;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = HEALTHRELAY_APPSTORE;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = AppStore;
+		};
+		E0A5A1C0B0F0E0D0C0B0A002 /* AppStore */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = AppStore;
+		};
+	/* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
 		A29075000000000000000003 /* Build configuration list for PBXNativeTarget "HealthBridgeCompanionAppTests" */ = {isa = XCConfigurationList; buildConfigurations = (A29075000000000000000001 /* Debug */, A29075000000000000000002 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		314425BAD361EE8153704C56 /* Build configuration list for PBXProject "HealthBridgeCompanion" */ = {isa = XCConfigurationList; buildConfigurations = (BFD315016DE16320F7E2120C /* Debug */, 1D8C0C6B1D22EA8C7669B263 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		E31BA15CC04B0F0B923553D1 /* Build configuration list for PBXNativeTarget "HealthBridgeCompanion" */ = {isa = XCConfigurationList; buildConfigurations = (75BB3D5A44EA88B6630AB580 /* Debug */, 78E9FF212122B0C0397A6DB4 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		314425BAD361EE8153704C56 /* Build configuration list for PBXProject "HealthBridgeCompanion" */ = {isa = XCConfigurationList; buildConfigurations = (BFD315016DE16320F7E2120C /* Debug */, 1D8C0C6B1D22EA8C7669B263 /* Release */, E0A5A1C0B0F0E0D0C0B0A002 /* AppStore */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		E31BA15CC04B0F0B923553D1 /* Build configuration list for PBXNativeTarget "HealthBridgeCompanion" */ = {isa = XCConfigurationList; buildConfigurations = (75BB3D5A44EA88B6630AB580 /* Debug */, 78E9FF212122B0C0397A6DB4 /* Release */, E0A5A1C0B0F0E0D0C0B0A001 /* AppStore */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		A25175000000000000000003 /* Build configuration list for PBXNativeTarget "HealthBridgeCompanionMailboxQA" */ = {isa = XCConfigurationList; buildConfigurations = (A25175000000000000000001 /* Debug */, A25175000000000000000002 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		A27175000000000000000003 /* Build configuration list for PBXNativeTarget "HealthBridgeCompanionPublicDocumentsQA" */ = {isa = XCConfigurationList; buildConfigurations = (A27175000000000000000001 /* Debug */, A27175000000000000000002 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
