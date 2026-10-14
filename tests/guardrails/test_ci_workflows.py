@@ -72,17 +72,66 @@ RETIRED_RELEASE_WORKFLOWS = (
 )
 
 
-RELEASE_WRITE_MARKERS = ("gh release", "action-gh-release", "/releases")
+# Anything that can create, upload to, edit or promote a GitHub Release.
+RELEASE_WRITE_MARKERS = (
+    "gh release",
+    "/releases",
+    "createrelease",
+    "uploadreleaseasset",
+    "updaterelease",
+    "release-action",
+    "action-gh-release",
+    "create-release",
+    "upload-release-asset",
+    "--latest",
+)
+# The only files allowed to write releases: the signed receiver release pipeline.
+RELEASE_WRITERS = frozenset(
+    {".github/workflows/release.yml", ".github/workflows/publish-release.yml"}
+)
+RELEASE_SCAN_ROOTS = (".github", "scripts")
+
+
+def _release_write_markers(text: str) -> list[str]:
+    # Downloading a tool from some project's release page is a read, not a write.
+    text = text.lower().replace("/releases/download/", "/")
+    return [marker for marker in RELEASE_WRITE_MARKERS if marker in text]
 
 
 def test_unsigned_ipa_release_workflows_stay_retired() -> None:
-    # SECURITY.md says GitHub Releases do not carry IPA files (#127): no workflow
-    # that handles an IPA may also touch GitHub Releases, in any step.
+    # SECURITY.md says GitHub Releases do not carry IPA files (#127). Only the
+    # receiver release pipeline may write releases, and it never handles an IPA.
     for path in RETIRED_RELEASE_WORKFLOWS:
         assert not path.exists(), path
-    for path in sorted(Path(".github/workflows").glob("*.y*ml")):
-        text = path.read_text(encoding="utf-8").lower()
-        if ".ipa" not in text:
-            continue
-        for marker in RELEASE_WRITE_MARKERS:
-            assert marker not in text, f"{path} handles an IPA and uses {marker}"
+    for root in RELEASE_SCAN_ROOTS:
+        for path in sorted(Path(root).rglob("*")):
+            if not path.is_file() or path.suffix not in {".yml", ".yaml", ".py", ".sh"}:
+                continue
+            name = path.as_posix()
+            text = path.read_text(encoding="utf-8")
+            markers = _release_write_markers(text)
+            if name in RELEASE_WRITERS:
+                assert ".ipa" not in text.lower(), f"{name} handles an IPA"
+            else:
+                assert markers == [], f"{name} writes releases: {markers}"
+
+
+def test_build_ipa_workflow_stays_manual_and_read_only() -> None:
+    text = BUILD_WORKFLOW.read_text(encoding="utf-8")
+    assert "contents: write" not in text
+    assert "contents: read" in text
+    on_block = text.split("\non:", 1)[1].split("\npermissions:", 1)[0]
+    assert "workflow_dispatch" in on_block
+    for trigger in ("push:", "pull_request", "schedule:", "release:", "workflow_run:"):
+        assert trigger not in on_block, trigger
+
+
+def test_release_write_guard_recognises_other_routes() -> None:
+    for text in (
+        "uses: ncipollo/release-action@v1",
+        "github.rest.repos.createRelease({})",
+        "gh api -X POST /repos/o/r/releases",
+        "gh release upload v1 HealthRelay.zip",
+    ):
+        assert _release_write_markers(text), text
+    assert not _release_write_markers("curl -L https://x/y/releases/download/v1/t.tgz")

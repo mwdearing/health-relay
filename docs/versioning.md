@@ -21,7 +21,7 @@ healthrelay-receiver-<YYYY.MM.DD>
 ```
 
 - The tag is created at a merge commit and is never moved or reused for a different commit.
-- The release is **not** marked **Latest**. **Latest** stays on the last app release; the workflows that published and promoted app releases were retired on 2026-10-14, so nothing moves it.
+- The release is **not** marked **Latest**. **Latest** stays on the last app release (an unmaintained unsigned-IPA release kept as history); the workflows that published and promoted app releases were retired on 2026-10-14.
 - Create the tag only through the release: if `git ls-remote --tags origin healthrelay-receiver-<YYYY.MM.DD>` already returns a tag, stop unless it points at the intended merge commit (`--target` only applies when the tag does not exist yet; a leftover tag at another commit would be published as is).
 - Publish it with an explicit `--latest=false`; GitHub otherwise marks a new non-prerelease Latest automatically, which would move Latest off the app release:
 

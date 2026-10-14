@@ -6,7 +6,7 @@ HealthRelay moves Apple Health data from an iPhone to a receiver you run yoursel
 
 | Component | Supported |
 |---|---|
-| iOS app | The newest signed beta build, and the newest `app-v*` release notes on the [Releases page](https://github.com/mwdearing/health-relay/releases). Older builds are not patched; update instead. |
+| iOS app | The newest signed beta build. Older builds, including every unsigned IPA attached to an `app-v*` release, are not patched; update instead. |
 | Receiver, CLI and MCP server | The `main` branch of this repository. Its version is in `pyproject.toml`. Fixes land here and are not backported to upstream tags, so install from this repository's `main` rather than a pinned upstream receiver tag. |
 | Batch protocol | `health_bridge.batch.v1` |
 
@@ -63,7 +63,7 @@ Out of scope:
 
 ## Verify what you install
 
-- Get the app only as a signed beta build invited by the maintainer (request one with the [Beta access request](https://github.com/mwdearing/health-relay/issues/new?template=beta_access.yml) form), from a `Build unsigned IPA` workflow run in this repository, or by building it yourself from a checkout you trust. GitHub Releases do not carry IPA files: the workflows that published them were retired on 2026-10-14, and attachments on releases published before 2026-10-07 are history.
+- Get the app only as a signed beta build invited by the maintainer (request one with the [Beta access request](https://github.com/mwdearing/health-relay/issues/new?template=beta_access.yml) form), from a `Build unsigned IPA` workflow run in this repository, or by building it yourself from a checkout you trust. Do not install from [GitHub Releases](https://github.com/mwdearing/health-relay/releases): the workflows that attached unsigned IPA files were retired on 2026-10-14, and the attachments that remain on older `app-v*` releases, including the one marked Latest, are unmaintained history.
 - For a workflow artifact, check the IPA against the attached checksum: `sha256sum -c HealthRelay-unsigned.ipa.sha256` (on macOS: `shasum -a 256 -c HealthRelay-unsigned.ipa.sha256`).
 - Each historical `app-v*` release names the commit and the workflow run that built it.
 - If you build it yourself, you sign the IPA with your own Apple developer certificate. Keep that signing identity private.

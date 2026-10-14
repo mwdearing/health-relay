@@ -32,8 +32,8 @@ receiver-specific parts stay here.
 
 ## Modifications (newest first)
 - 2026-10-14: retired the `Publish IPA release` and `Promote IPA release` workflows (#127), so
-  nothing in this repository can attach an unsigned IPA to a GitHub Release or make one Latest,
-  matching the policy in SECURITY.md. `Build unsigned IPA` stays as the self-build artifact path.
+  no workflow here attaches an unsigned IPA to a GitHub Release or promotes one to Latest, and
+  a guardrail keeps release writes to the receiver release pipeline. `Build unsigned IPA` stays as the self-build artifact path.
   Existing releases and their attachments are unchanged.
 - 2026-10-13: CI trigger record corrected. The 2026-09-27 entry below says `ios.yml` and `python.yml`
   run only on `ios-v*` tags or manual dispatch; that is no longer true. Since 2026-09-28 both workflows
