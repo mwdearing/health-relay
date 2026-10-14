@@ -884,6 +884,14 @@ private struct AppDetailsView: View {
                     .font(.footnote)
                     .foregroundStyle(.relaySecondaryText)
             }
+
+            Section("Legal") {
+                NavigationLink {
+                    AcknowledgementsView()
+                } label: {
+                    Text("Acknowledgements")
+                }
+            }
         }
         .navigationTitle("Settings")
     }
@@ -893,6 +901,43 @@ private struct AppDetailsView: View {
             shortVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
             build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
         )
+    }
+}
+
+private struct AcknowledgementsView: View {
+    private static let licenseURL = URL(string: "https://www.apache.org/licenses/LICENSE-2.0")!
+
+    // Mirrors the repository NOTICE file; a guardrail test fails if the two differ.
+    static let noticeText = """
+        HealthRelay
+        Copyright (c) 2026 Michael Dearing
+
+        This product is a fork of Apple Health AI Bridge
+        (https://github.com/roian6/apple-health-ai-bridge), Copyright (c) the
+        Apple Health AI Bridge contributors, licensed under the Apache License,
+        Version 2.0. The full license text is in the LICENSE file.
+
+        Modifications made in this fork are listed in FORK.md. The names
+        "Apple Health AI Bridge", "Health Bridge for AI" and "Health Bridge",
+        and the brand assets under assets/brand/ and the upstream app icon, are
+        not covered by the Apache-2.0 grant and are not used by this fork's
+        product; they remain the property of the upstream project. Apple and
+        Apple Health are trademarks of Apple Inc.; this project is not affiliated
+        with Apple.
+        """
+
+    var body: some View {
+        List {
+            Section("Notice") {
+                Text(Self.noticeText)
+                    .font(.footnote)
+                    .textSelection(.enabled)
+            }
+            Section("License") {
+                Link("Apache License, Version 2.0", destination: Self.licenseURL)
+            }
+        }
+        .navigationTitle("Acknowledgements")
     }
 }
 
