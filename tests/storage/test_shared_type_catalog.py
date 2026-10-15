@@ -235,3 +235,57 @@ def test_known_source_and_known_type_inherit_without_rewrite(tmp_path: Path) -> 
     assert _source_scoped_row(db_path, "synthetic.late", code) == (
         _source_scoped_row(db_path, owner, code)
     )
+
+
+def test_sample_from_previously_accepted_source_not_redeclared(tmp_path: Path) -> None:
+    db_path = tmp_path / "catalog.sqlite"
+    initialize_database(db_path)
+    first = _payload()
+    _ = _ingest(db_path, first)
+    second = _stripped(_payload())
+    second["sources"] = [{"source_key": "synthetic.late", "name": "L", "kind": "app"}]
+    second["health_types"] = [_filler_type()]
+    assert _ingest(db_path, second) == "succeeded"
+
+    # The late source is omitted from sources[] but already known.
+    sample = dict(cast("list[JsonObject]", first["samples"])[0])
+    sample.update(
+        {"source_key": "synthetic.late", "client_record_id": "synthetic-late-2"}
+    )
+    third = _stripped(_payload())
+    third["sources"] = cast("list[JsonObject]", first["sources"])[:1]
+    third["health_types"] = [_filler_type()]
+    third["samples"] = [sample]
+    assert _ingest(db_path, third) == "succeeded"
+    code = cast("str", sample["type_code"])
+    assert _source_scoped_row(db_path, "synthetic.late", code) is not None
+
+
+def test_catalog_view_keeps_the_first_declaration(tmp_path: Path) -> None:
+    db_path = tmp_path / "catalog.sqlite"
+    initialize_database(db_path)
+    first = _payload()
+    _ = _ingest(db_path, first)
+    code = cast("str", _types(first)[0]["type_code"])
+    with sqlite3.connect(db_path) as connection:
+        before = cast(
+            "tuple[str] | None",
+            connection.execute(
+                "select display_name from health_type_catalog where type_code = ?",
+                (code,),
+            ).fetchone(),
+        )
+    other = _stripped(_payload())
+    other["sources"] = [{"source_key": "synthetic.aaa", "name": "A", "kind": "app"}]
+    _types(other)[0].update({"type_code": code, "display_name": "Later Label"})
+    other["health_types"] = [_types(other)[0]]
+    assert _ingest(db_path, other) == "succeeded"
+    with sqlite3.connect(db_path) as connection:
+        after = cast(
+            "tuple[str] | None",
+            connection.execute(
+                "select display_name from health_type_catalog where type_code = ?",
+                (code,),
+            ).fetchone(),
+        )
+    assert after == before

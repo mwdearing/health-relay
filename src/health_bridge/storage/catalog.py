@@ -1,13 +1,16 @@
 import json
 import sqlite3
 from collections.abc import Iterable
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
 from health_bridge.contract import HealthBridgeBatchV1
 from health_bridge.storage.sqlite_rows import fetch_one_int
 from health_bridge.timeseries_catalog import canonical_sample_type_code
+
+if TYPE_CHECKING:
+    from health_bridge.contract.batch_v1 import HealthType
 
 UPSERT_SOURCE_SQL = (
     "insert into sources (source_key, name, kind, bundle_id, device_model) "
@@ -88,28 +91,38 @@ def upsert_catalog(connection: sqlite3.Connection, batch: HealthBridgeBatchV1) -
                 source.device_model,
             ),
         )
-    keys = {source.source_key for source in batch.sources}
-    source_ids = [source_id(connection, key) for key in sorted(keys)]
-    # A declared type is stored for the sources whose samples use it in this batch
-    # (or the batch's first source when none does), so the work is bounded by the
-    # rows the batch carries, never by sources x types.
+    # Every source a batch's samples name is resolved from the database, so a
+    # source accepted by an earlier batch is covered even when it is not declared
+    # again here.
     sample_pairs = {
         (sample.source_key, canonical_sample_type_code(sample.type_code))
         for sample in batch.samples
     }
-    owners_by_type: dict[str, set[int]] = {}
-    known_sources = dict(zip(sorted(keys), source_ids, strict=True))
+    keys = {source.source_key for source in batch.sources}
+    keys |= {pair[0] for pair in sample_pairs}
+    known_sources = _known_source_ids(connection, keys)
     sample_pairs = {pair for pair in sample_pairs if pair[0] in known_sources}
+    declared_keys = sorted({s.source_key for s in batch.sources})
+    first_source = [known_sources[key] for key in declared_keys[:1]]
+    owners_by_type: dict[str, set[int]] = {}
     for source_key, type_code in sample_pairs:
         owners_by_type.setdefault(type_code, set()).add(known_sources[source_key])
+    # A declared type is stored for the sources whose samples use it in this batch
+    # (or the batch's first source when none does). Repeated declarations of one
+    # canonical type are collapsed first, so the work is bounded by the rows the
+    # batch carries, never by sources x types or declarations x owners.
+    declared: dict[str, tuple[HealthType, set[str]]] = {}
     for health_type in batch.health_types:
         canonical_type_code = canonical_sample_type_code(health_type.type_code)
-        owners = sorted(owners_by_type.get(canonical_type_code, set()))
-        if not owners and source_ids:
-            owners = source_ids[:1]
         aliases = set(health_type.aliases)
         if canonical_type_code != health_type.type_code:
             aliases.add(health_type.type_code)
+        if canonical_type_code in declared:
+            declared[canonical_type_code][1].update(aliases)
+        else:
+            declared[canonical_type_code] = (health_type, aliases)
+    for canonical_type_code, (health_type, aliases) in declared.items():
+        owners = sorted(owners_by_type.get(canonical_type_code, set())) or first_source
         for owner_id in owners:
             _ = connection.execute(
                 INSERT_HEALTH_TYPE_SQL,
@@ -135,6 +148,22 @@ def upsert_catalog(connection: sqlite3.Connection, batch: HealthBridgeBatchV1) -
             INHERIT_HEALTH_TYPE_SQL,
             (known_sources[source_key], type_code),
         )
+
+
+def _known_source_ids(connection: sqlite3.Connection, keys: set[str]) -> dict[str, int]:
+    if not keys:
+        return {}
+    rows = cast(
+        "list[tuple[str, int]]",
+        connection.execute(
+            """
+            select source_key, source_id from sources
+            where source_key in (select value from json_each(?))
+            """,
+            (json.dumps(sorted(keys)),),
+        ).fetchall(),
+    )
+    return dict(rows)
 
 
 def source_id(connection: sqlite3.Connection, source_key: str) -> int:

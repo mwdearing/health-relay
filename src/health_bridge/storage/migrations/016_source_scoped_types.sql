@@ -4,9 +4,10 @@
 -- rows. SQLite cannot change a primary key or add a composite foreign key in
 -- place, so health_types, health_type_aliases and samples are rebuilt; foreign
 -- key checks are deferred to commit so the parent can be swapped.
--- Existing catalog rows are copied to every existing source, which keeps what
--- each source could read before; later declarations only ever touch the
--- declaring source's own rows.
+-- Existing catalog rows are kept for the sources that stored samples of the type
+-- (plus the lowest source for an unsampled type); later declarations only ever
+-- touch the declaring source's own rows, and a source that reports a known type
+-- inherits its existing metadata at write time.
 
 pragma defer_foreign_keys = on;
 
@@ -28,10 +29,20 @@ insert into health_types (
     source_id, type_code, display_name, category, default_unit, sensitivity,
     created_at, updated_at
 )
-select s.source_id, t.type_code, t.display_name, t.category, t.default_unit,
+select o.source_id, t.type_code, t.display_name, t.category, t.default_unit,
        t.sensitivity, t.created_at, t.updated_at
 from health_types_old as t
-cross join sources as s;
+join (
+    -- Only real ownership pairs: sources that stored samples of the type, and
+    -- the lowest source for a type nothing has sampled yet. Never sources x types.
+    select distinct source_id, type_code from samples
+    union
+    select (select min(source_id) from sources), type_code
+    from health_types_old
+    where type_code not in (select type_code from samples)
+      and exists (select 1 from sources)
+) as o on o.type_code = t.type_code
+order by t.created_at, t.rowid;
 
 create table health_type_aliases_v2 (
     alias_id integer primary key,
@@ -44,9 +55,9 @@ create table health_type_aliases_v2 (
 );
 
 insert into health_type_aliases_v2 (source_id, type_code, alias)
-select s.source_id, a.type_code, a.alias
+select t.source_id, a.type_code, a.alias
 from health_type_aliases as a
-cross join sources as s
+join health_types as t on t.type_code = a.type_code
 -- Legacy databases may hold more aliases per type than the runtime cap of 64;
 -- carry the oldest 64 so each owned type starts within the bound.
 where (
@@ -101,12 +112,16 @@ begin
 end;
 
 -- One row per type for readers that report the catalog, from the earliest
--- source that declared it; the owning rows stay per source above.
+-- declaration (lowest rowid, independent of source registration order); the
+-- owning rows stay per source above.
+create index if not exists health_types_type_code_idx
+    on health_types (type_code, source_id);
+
 create view if not exists health_type_catalog as
 select type_code, display_name, category, default_unit, sensitivity
 from health_types
-where source_id = (
-    select min(inner_type.source_id)
+where rowid = (
+    select min(inner_type.rowid)
     from health_types as inner_type
     where inner_type.type_code = health_types.type_code
 );
