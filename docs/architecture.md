@@ -245,6 +245,11 @@ the full command reference.
   set per server with `intake_rate_limit_count` and
   `intake_rate_limit_window_seconds`, and idle token keys are dropped so memory
   stays bounded.
+- **Batch route limit.** `POST /v1/batches` allows 60 requests per 60 seconds
+  per batch token on the same sliding window, counted after authentication so a
+  bad token cannot spend a device's budget. Over it the receiver answers 429
+  `rate_limited` with `Retry-After`, closes the connection and leaves the body
+  unread. The count is set with `batch_rate_limit_count`.
 - **Capabilities limit and caching.** `GET /v1/intake-context/capabilities`
   has its own fixed budget of 30 requests per 60 seconds per intake token,
   separate from the batch budget, so polling capabilities never blocks uploads.
