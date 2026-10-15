@@ -977,12 +977,12 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
         """
         token = self._bearer_token()
         if token is None:
-            token_prefix = ""
+            limiter_key = ""
         elif key_on_full_token:
-            token_prefix = hashlib.sha256(token.encode()).hexdigest()
+            limiter_key = hashlib.sha256(token.encode()).hexdigest()
         else:
-            token_prefix = token[:INTAKE_TOKEN_PREFIX_LENGTH]
-        if limiter.allow(token_prefix):
+            limiter_key = token[:INTAKE_TOKEN_PREFIX_LENGTH]
+        if limiter.allow(limiter_key):
             return True
         self.close_connection = True
         self._send_json(
