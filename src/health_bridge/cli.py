@@ -40,6 +40,7 @@ from health_bridge.ingest import ingest_fixture as ingest_fixture_batch
 from health_bridge.status import read_status, read_status_markdown, read_status_snapshot
 from health_bridge.storage import initialize_database
 from health_bridge.storage.catalog import UndeclaredReferenceError
+from health_bridge.storage.catalog_prune import prune_unreferenced_types
 
 app = typer.Typer(
     add_completion=False,
@@ -251,6 +252,27 @@ def ingest_fixture(
         f"lab_results={result.lab_result_count}",
     ]
     typer.echo(" ".join(output_parts))
+
+
+@app.command("prune-catalog")
+def prune_catalog(
+    db: Annotated[
+        Path,
+        typer.Option("--db", help="User-owned SQLite database path."),
+    ],
+    apply: Annotated[
+        bool,
+        typer.Option(
+            "--apply",
+            help="Delete the rows. Without it only counts what would be removed.",
+        ),
+    ] = False,
+) -> None:
+    """Remove type catalog rows no stored sample uses (back up the database first)."""
+    result = prune_unreferenced_types(db, apply=apply)
+    verb = "removed" if result.applied else "would remove"
+    typer.echo(f"{verb}: health_types={result.type_rows}")
+    typer.echo(f"{verb}: health_type_aliases={result.alias_rows}")
 
 
 @app.command()
