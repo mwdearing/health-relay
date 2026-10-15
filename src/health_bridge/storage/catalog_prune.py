@@ -12,7 +12,10 @@ from typing import ClassVar, Final
 
 from pydantic import BaseModel, ConfigDict
 
-from health_bridge.storage.database import connect_database
+from health_bridge.storage.database import (
+    connect_database,
+    connect_readonly_database,
+)
 from health_bridge.storage.sqlite_rows import fetch_one_int
 
 COUNT_TYPES_SQL: Final = """
@@ -48,15 +51,30 @@ class PruneResult(BaseModel):
 
 
 def prune_unreferenced_types(db_path: Path, *, apply: bool) -> PruneResult:
-    """Count (and with `apply`, delete) catalog rows no sample references."""
+    """Count (and with `apply`, delete) catalog rows no sample references.
+
+    A dry run opens the database read-only and writes nothing. `apply` counts and
+    deletes inside one write transaction, so the reported rows are the removed rows.
+    """
+    if not apply:
+        with connect_readonly_database(db_path) as connection:
+            return _count(connection, applied=False)
     with connect_database(db_path) as connection:
-        return _prune(connection, apply=apply)
+        _ = connection.execute("begin immediate")
+        try:
+            result = _count(connection, applied=True)
+            if result.type_rows:
+                _ = connection.execute(DELETE_TYPES_SQL)
+            connection.commit()
+        except sqlite3.Error:
+            connection.rollback()
+            raise
+        return result
 
 
-def _prune(connection: sqlite3.Connection, *, apply: bool) -> PruneResult:
-    type_rows = fetch_one_int(connection, COUNT_TYPES_SQL)
-    alias_rows = fetch_one_int(connection, COUNT_ALIASES_SQL)
-    if apply and type_rows:
-        _ = connection.execute(DELETE_TYPES_SQL)
-        connection.commit()
-    return PruneResult(applied=apply, type_rows=type_rows, alias_rows=alias_rows)
+def _count(connection: sqlite3.Connection, *, applied: bool) -> PruneResult:
+    return PruneResult(
+        applied=applied,
+        type_rows=fetch_one_int(connection, COUNT_TYPES_SQL),
+        alias_rows=fetch_one_int(connection, COUNT_ALIASES_SQL),
+    )

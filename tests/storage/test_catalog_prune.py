@@ -1,5 +1,6 @@
 """RELAY-S14: unreferenced type catalog rows can be pruned; referenced ones stay."""
 
+import contextlib
 import json
 import sqlite3
 from pathlib import Path
@@ -78,3 +79,10 @@ def test_apply_removes_only_unreferenced_rows_and_their_aliases(tmp_path: Path) 
         == 0
     )
     assert prune_unreferenced_types(db_path, apply=True).type_rows == 0
+
+
+def test_dry_run_on_a_missing_database_creates_nothing(tmp_path: Path) -> None:
+    missing = tmp_path / "nested" / "missing.sqlite"
+    with contextlib.suppress(OSError, sqlite3.Error):
+        _ = prune_unreferenced_types(missing, apply=False)
+    assert not missing.parent.exists()
