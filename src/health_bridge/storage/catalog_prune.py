@@ -1,3 +1,4 @@
+# ruff: noqa: S608 - the CTE is a module constant; values bind as parameters.
 """Prune stored type catalog rows no sample uses (RELAY-S14, #134).
 
 `health_types` and `health_type_aliases` only grow: every declaration adds rows
