@@ -132,3 +132,10 @@ def test_types_named_by_a_deletion_tombstone_are_kept(tmp_path: Path) -> None:
         )
     assert kept >= 1
     assert result.applied
+
+
+def test_apply_on_a_missing_database_creates_nothing(tmp_path: Path) -> None:
+    missing = tmp_path / "nested" / "missing.sqlite"
+    with contextlib.suppress(OSError):
+        _ = prune_unreferenced_types(missing, apply=True)
+    assert not missing.parent.exists()

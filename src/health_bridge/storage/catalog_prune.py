@@ -90,6 +90,9 @@ def prune_unreferenced_types(
     A dry run opens the database read-only and writes nothing. `apply` counts and
     deletes inside one write transaction, so the reported rows are the removed rows.
     """
+    if not db_path.is_file():
+        message = f"database not found: {db_path}"
+        raise FileNotFoundError(message)
     cutoff = f"-{max(min_age_days, 0)} days"
     if not apply:
         with connect_readonly_database(db_path) as connection:
