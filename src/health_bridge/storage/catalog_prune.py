@@ -14,6 +14,7 @@ it. Aliases of a dropped row go with it.
 """
 
 import sqlite3
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import ClassVar, Final
 
@@ -39,7 +40,7 @@ with prunable as materialized (
             select 1 from samples as s
             where s.source_id = t.source_id and s.type_code = t.type_code
         )
-      and t.created_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)
+      and t.created_at <= ?
       and not exists (
             select 1 from deleted_records as d
             where d.source_id = t.source_id
@@ -60,7 +61,7 @@ with prunable as materialized (
             select 1 from samples as s
             where s.source_id = t.source_id and s.type_code = t.type_code
         )
-      and t.created_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)
+      and t.created_at <= ?
       and not exists (
             select 1 from deleted_records as d
             where d.source_id = t.source_id
@@ -83,7 +84,7 @@ with prunable as materialized (
             select 1 from samples as s
             where s.source_id = t.source_id and s.type_code = t.type_code
         )
-      and t.created_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)
+      and t.created_at <= ?
       and not exists (
             select 1 from deleted_records as d
             where d.source_id = t.source_id
@@ -121,7 +122,9 @@ def prune_unreferenced_types(
     if not db_path.is_file():
         message = f"database not found: {db_path}"
         raise FileNotFoundError(message)
-    cutoff = f"-{max(min_age_days, 0)} days"
+    cutoff = (datetime.now(tz=UTC) - timedelta(days=max(min_age_days, 0))).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
     if not apply:
         with connect_readonly_database(db_path) as connection:
             return _count(connection, cutoff, applied=False)
