@@ -9,7 +9,7 @@ from health_bridge.storage.database import connect_readonly_database
 from health_bridge.storage.sqlite_rows import fetch_one_int, fetch_optional_sync_status
 
 SOURCE_COUNT_SQL: Final = "select count(*) from sources"
-HEALTH_TYPE_COUNT_SQL: Final = "select count(*) from health_types"
+HEALTH_TYPE_COUNT_SQL: Final = "select count(*) from health_type_catalog"
 SAMPLE_COUNT_SQL: Final = "select count(*) from samples"
 WORKOUT_COUNT_SQL: Final = "select count(*) from workouts"
 SLEEP_SESSION_COUNT_SQL: Final = "select count(*) from sleep_sessions"
@@ -31,16 +31,16 @@ limit 1
 METRIC_STATUS_SQL: Final = """
 with metric_catalog as (
     select type_code, display_name, category, default_unit, sensitivity
-    from health_types
+    from health_type_catalog
     union all
     select 'workout', 'Workouts', 'activity', 'session', 'moderate'
     where exists (select 1 from workouts)
-      and not exists (select 1 from health_types where type_code = 'workout')
+      and not exists (select 1 from health_type_catalog where type_code = 'workout')
     union all
     select 'sleep_analysis', 'Sleep Analysis', 'sleep', 'stage', 'moderate'
     where exists (select 1 from sleep_sessions)
       and not exists (
-          select 1 from health_types where type_code = 'sleep_analysis'
+          select 1 from health_type_catalog where type_code = 'sleep_analysis'
       )
 )
 select ht.type_code, ht.display_name, ht.category, ht.default_unit,

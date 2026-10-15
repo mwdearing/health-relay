@@ -102,8 +102,9 @@ def test_ingest_fixture_stores_batch_records_when_fixture_is_valid(
     assert result.status == "succeeded"
     assert counts == {
         "sources": 2,
-        "health_types": 4,
-        "health_type_aliases": 5,
+        # types and aliases are stored once per source, and the fixture has two
+        "health_types": 8,
+        "health_type_aliases": 10,
         "samples": 3,
         "workouts": 1,
         "sleep_sessions": 1,
@@ -1572,9 +1573,10 @@ def test_ingest_batch_promotes_existing_legacy_active_energy_sample_without_dupl
         _ = connection.execute(
             """
             insert into health_types (
-                type_code, display_name, category, default_unit, sensitivity
+                source_id, type_code, display_name, category, default_unit,
+                sensitivity
             )
-            values (?, ?, ?, ?, ?)
+            select source_id, ?, ?, ?, ?, ? from sources
             """,
             ("active_energy", "Active Energy", "activity", "kcal", "moderate"),
         )
@@ -1771,9 +1773,10 @@ def test_ingest_batch_removes_existing_legacy_sample_after_canonical_tombstone(
         _ = connection.execute(
             """
             insert into health_types (
-                type_code, display_name, category, default_unit, sensitivity
+                source_id, type_code, display_name, category, default_unit,
+                sensitivity
             )
-            values (?, ?, ?, ?, ?)
+            select source_id, ?, ?, ?, ?, ? from sources
             """,
             ("active_energy", "Active Energy", "activity", "kcal", "moderate"),
         )
@@ -1888,9 +1891,10 @@ def test_ingest_batch_deletes_legacy_active_energy_sample_from_canonical_tombsto
         _ = connection.execute(
             """
             insert into health_types (
-                type_code, display_name, category, default_unit, sensitivity
+                source_id, type_code, display_name, category, default_unit,
+                sensitivity
             )
-            values (?, ?, ?, ?, ?)
+            select source_id, ?, ?, ?, ?, ? from sources
             """,
             ("active_energy", "Active Energy", "activity", "kcal", "moderate"),
         )

@@ -166,7 +166,7 @@ def test_legacy_identical_raw_body_is_accepted_twice_without_logical_duplicates(
             connection.execute(
                 """
                 select (select count(*) from sources),
-                       (select count(*) from health_types),
+                       (select count(distinct type_code) from health_types),
                        (select count(*) from samples),
                        (select count(*) from workouts),
                        (select count(*) from sleep_sessions),

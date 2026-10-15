@@ -45,8 +45,8 @@ _AGGREGATION_ROLES: Final[dict[str, AggregationRole]] = {
 }
 INSERT_TYPE_SQL: Final = """
 insert or ignore into health_types
-    (type_code, display_name, category, default_unit, sensitivity)
-values (?, ?, ?, ?, 'sensitive')
+    (source_id, type_code, display_name, category, default_unit, sensitivity)
+values (?, ?, ?, ?, ?, 'sensitive')
 """
 INSERT_SOURCE_SQL: Final = """
 insert or ignore into sources (source_key, name, kind, bundle_id)
@@ -344,10 +344,6 @@ def put_sample(  # noqa: PLR0913
         (type_code.replace("_", " ").title(), "nutrition", unit),
     )
     _ = connection.execute(
-        INSERT_TYPE_SQL,
-        (type_code, display_name, category, default_unit),
-    )
-    _ = connection.execute(
         INSERT_SOURCE_SQL,
         (source_key, EXPORTER_BUNDLE),
     )
@@ -356,6 +352,10 @@ def put_sample(  # noqa: PLR0913
         connection.execute(
             "select source_id from sources where source_key = ?", (source_key,)
         ).fetchone()[0],
+    )
+    _ = connection.execute(
+        INSERT_TYPE_SQL,
+        (source_id, type_code, display_name, category, default_unit),
     )
     metadata: dict[str, str] = {
         "healthkit_source_name": "Synthetic Nutrition App",

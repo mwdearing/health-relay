@@ -97,3 +97,85 @@ def test_new_types_and_aliases_are_still_added(tmp_path: Path) -> None:
         "low",
     )
     assert "synthetic_added_alias" in _aliases(db_path, existing_code)
+
+
+def _source_scoped_row(
+    db_path: Path, source_key: str, type_code: str
+) -> tuple[str, str] | None:
+    with sqlite3.connect(db_path) as connection:
+        return cast(
+            "tuple[str, str] | None",
+            connection.execute(
+                """
+                select t.display_name, t.default_unit from health_types as t
+                join sources as s on s.source_id = t.source_id
+                where s.source_key = ? and t.type_code = ?
+                """,
+                (source_key, type_code),
+            ).fetchone(),
+        )
+
+
+def test_each_source_owns_its_own_type_metadata(tmp_path: Path) -> None:
+    # Given a type declared by the first batch's sources
+    db_path = tmp_path / "catalog.sqlite"
+    initialize_database(db_path)
+    first = _payload()
+    _ = _ingest(db_path, first)
+    type_code = cast("str", _types(first)[0]["type_code"])
+    owner = cast("str", cast("list[JsonObject]", first["sources"])[0]["source_key"])
+    before = _source_scoped_row(db_path, owner, type_code)
+
+    # When another source declares the same type code with different metadata
+    other = _payload()
+    other["sources"] = [
+        {"source_key": "synthetic.other", "name": "Other", "kind": "app"}
+    ]
+    other["samples"] = []
+    other["workouts"] = []
+    other["sleep_sessions"] = []
+    other["deleted_records"] = []
+    other["electrocardiograms"] = []
+    other["medication_dose_events"] = []
+    other["lab_results"] = []
+    _types(other)[0].update(
+        {"type_code": type_code, "display_name": "Other Label", "default_unit": "zz"}
+    )
+    sync = cast("JsonObject", other["sync"])
+    sync["cursors"] = []
+    assert _ingest(db_path, other) == "succeeded"
+
+    # Then each source keeps its own row and the first source is untouched
+    assert _source_scoped_row(db_path, owner, type_code) == before
+    assert _source_scoped_row(db_path, "synthetic.other", type_code) == (
+        "Other Label",
+        "zz",
+    )
+
+
+def test_aliases_are_bounded_per_owned_type(tmp_path: Path) -> None:
+    db_path = tmp_path / "catalog.sqlite"
+    initialize_database(db_path)
+    first = _payload()
+    _ = _ingest(db_path, first)
+    type_code = cast("str", _types(first)[0]["type_code"])
+    for round_index in range(8):
+        later = _payload()
+        _types(later)[0]["aliases"] = [
+            f"synthetic_alias_{round_index}_{n}" for n in range(16)
+        ]
+        assert _ingest(db_path, later) == "succeeded"
+
+    with sqlite3.connect(db_path) as connection:
+        counts = cast(
+            "list[tuple[int]]",
+            connection.execute(
+                """
+                select count(*) from health_type_aliases
+                where type_code = ? group by source_id
+                """,
+                (type_code,),
+            ).fetchall(),
+        )
+    assert counts
+    assert all(count <= 64 for (count,) in counts)

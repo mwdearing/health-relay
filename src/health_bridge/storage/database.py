@@ -55,6 +55,7 @@ MIGRATION_IDS: Final = (
     "013_intake_context",
     "014_intake_context_tokens",
     "015_range_guards",
+    "016_source_scoped_types",
 )
 
 

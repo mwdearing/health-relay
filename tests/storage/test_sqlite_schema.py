@@ -490,6 +490,7 @@ def test_initialize_database_creates_core_tables_when_database_is_empty(
         ("013_intake_context",),
         ("014_intake_context_tokens",),
         ("015_range_guards",),
+        ("016_source_scoped_types",),
     ]
 
 
@@ -508,7 +509,7 @@ def test_initialize_database_is_idempotent_when_called_twice(tmp_path: Path) -> 
             "select count(*) from schema_migrations",
         )
 
-    assert migration_count == 15
+    assert migration_count == 16
 
 
 def _create_legacy_sleep_revision_database(db_path: Path) -> None:

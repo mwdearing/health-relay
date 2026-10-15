@@ -16,16 +16,21 @@ UPSERT_SOURCE_SQL = (
     "device_model = excluded.device_model, "
     "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
 )
-# health_types is one global catalog shared by every paired device, so a batch may
-# add a type it declares but never rewrite the metadata of a stored one (RELAY-S15):
-# otherwise any device could relabel the rows another device's samples are read under.
+# Each source owns its own type rows, keyed (source_id, type_code), so a batch can
+# only ever declare types for the sources it is bound to and never touches another
+# source's metadata (RELAY-S15). A stored row is never rewritten; aliases are
+# capped per owning type so repeated declarations cannot grow the table.
+MAX_STORED_ALIASES_PER_TYPE = 64
 INSERT_HEALTH_TYPE_SQL = (
-    "insert into health_types (type_code, display_name, category, default_unit, "
-    "sensitivity) values (?, ?, ?, ?, ?) on conflict(type_code) do nothing"
+    "insert into health_types (source_id, type_code, display_name, category, "
+    "default_unit, sensitivity) values (?, ?, ?, ?, ?, ?) "
+    "on conflict(source_id, type_code) do nothing"
 )
 INSERT_ALIAS_SQL = (
-    "insert into health_type_aliases (type_code, alias) values (?, ?) "
-    "on conflict(type_code, alias) do nothing"
+    "insert into health_type_aliases (source_id, type_code, alias) "
+    "select ?1, ?2, ?3 where (select count(*) from health_type_aliases "
+    "where source_id = ?1 and type_code = ?2) < ?4 "
+    "on conflict(source_id, type_code, alias) do nothing"
 )
 MISSING_SOURCE_ERROR = "source was not available after catalog upsert"
 MAX_REPORTED_REFERENCE_KEYS = 5
@@ -77,23 +82,33 @@ def upsert_catalog(connection: sqlite3.Connection, batch: HealthBridgeBatchV1) -
                 source.device_model,
             ),
         )
+    source_ids = [
+        source_id(connection, key)
+        for key in sorted({source.source_key for source in batch.sources})
+    ]
     for health_type in batch.health_types:
         canonical_type_code = canonical_sample_type_code(health_type.type_code)
-        _ = connection.execute(
-            INSERT_HEALTH_TYPE_SQL,
-            (
-                canonical_type_code,
-                health_type.display_name,
-                health_type.category,
-                health_type.default_unit,
-                health_type.sensitivity,
-            ),
-        )
+        for owner_id in source_ids:
+            _ = connection.execute(
+                INSERT_HEALTH_TYPE_SQL,
+                (
+                    owner_id,
+                    canonical_type_code,
+                    health_type.display_name,
+                    health_type.category,
+                    health_type.default_unit,
+                    health_type.sensitivity,
+                ),
+            )
         aliases = set(health_type.aliases)
         if canonical_type_code != health_type.type_code:
             aliases.add(health_type.type_code)
-        for alias in sorted(aliases):
-            _ = connection.execute(INSERT_ALIAS_SQL, (canonical_type_code, alias))
+        for owner_id in source_ids:
+            for alias in sorted(aliases):
+                _ = connection.execute(
+                    INSERT_ALIAS_SQL,
+                    (owner_id, canonical_type_code, alias, MAX_STORED_ALIASES_PER_TYPE),
+                )
 
 
 def source_id(connection: sqlite3.Connection, source_key: str) -> int:

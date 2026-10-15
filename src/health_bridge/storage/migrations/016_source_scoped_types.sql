@@ -1,0 +1,105 @@
+-- Key the type catalog by (source_id, type_code) (RELAY-S15, #135).
+-- health_types was one global registry, so the first device to declare a type
+-- decided its metadata for every other device. Each source now owns its own
+-- rows. SQLite cannot change a primary key or add a composite foreign key in
+-- place, so health_types, health_type_aliases and samples are rebuilt; foreign
+-- key checks are deferred to commit so the parent can be swapped.
+-- Existing catalog rows are copied to every existing source, which keeps what
+-- each source could read before; later declarations only ever touch the
+-- declaring source's own rows.
+
+pragma defer_foreign_keys = on;
+
+alter table health_types rename to health_types_old;
+
+create table health_types (
+    source_id integer not null references sources(source_id) on delete cascade,
+    type_code text not null,
+    display_name text not null,
+    category text not null,
+    default_unit text not null,
+    sensitivity text not null,
+    created_at text not null default (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    primary key (source_id, type_code)
+);
+
+insert into health_types (
+    source_id, type_code, display_name, category, default_unit, sensitivity,
+    created_at, updated_at
+)
+select s.source_id, t.type_code, t.display_name, t.category, t.default_unit,
+       t.sensitivity, t.created_at, t.updated_at
+from health_types_old as t
+cross join sources as s;
+
+create table health_type_aliases_v2 (
+    alias_id integer primary key,
+    source_id integer not null,
+    type_code text not null,
+    alias text not null,
+    unique (source_id, type_code, alias),
+    foreign key (source_id, type_code)
+        references health_types(source_id, type_code) on delete cascade
+);
+
+insert into health_type_aliases_v2 (source_id, type_code, alias)
+select s.source_id, a.type_code, a.alias
+from health_type_aliases as a
+cross join sources as s;
+
+create table samples_v2 (
+    sample_id integer primary key,
+    source_id integer not null references sources(source_id) on delete cascade,
+    type_code text not null,
+    client_record_id text not null,
+    start_time text not null,
+    end_time text not null,
+    value real not null,
+    unit text not null,
+    metadata_json text not null,
+    created_at text not null default (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at text not null default (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    unique (source_id, type_code, client_record_id),
+    foreign key (source_id, type_code)
+        references health_types(source_id, type_code) on delete restrict
+);
+
+insert into samples_v2 (
+    sample_id, source_id, type_code, client_record_id, start_time, end_time,
+    value, unit, metadata_json, created_at, updated_at
+)
+select sample_id, source_id, type_code, client_record_id, start_time, end_time,
+       value, unit, metadata_json, created_at, updated_at
+from samples;
+
+drop table samples;
+drop table health_type_aliases;
+drop table health_types_old;
+alter table health_type_aliases_v2 rename to health_type_aliases;
+alter table samples_v2 rename to samples;
+
+create trigger if not exists samples_interval_order_insert
+before insert on samples
+when new.end_time < new.start_time
+begin
+    select raise(abort, 'sample interval reversed');
+end;
+
+create trigger if not exists samples_interval_order_update
+before update on samples
+when new.end_time < new.start_time
+begin
+    select raise(abort, 'sample interval reversed');
+end;
+
+-- One row per type for readers that report the catalog, from the earliest
+-- source that declared it; the owning rows stay per source above.
+create view if not exists health_type_catalog as
+select type_code, display_name, category, default_unit, sensitivity
+from health_types
+where source_id = (
+    select min(inner_type.source_id)
+    from health_types as inner_type
+    where inner_type.type_code = health_types.type_code
+);

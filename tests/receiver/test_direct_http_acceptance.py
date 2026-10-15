@@ -269,7 +269,7 @@ def test_direct_http_rejects_health_type_field_over_its_limit_without_writing(
 
 def _catalog_row_counts(db_path: Path) -> tuple[int, int, int]:
     counts = (
-        "(select count(*) from health_types),"
+        "(select count(distinct type_code) from health_types),"
         " (select count(*) from health_type_aliases),"
         " (select count(*) from sync_runs)"
     )
