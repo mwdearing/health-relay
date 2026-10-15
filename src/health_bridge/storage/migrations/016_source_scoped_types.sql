@@ -118,10 +118,11 @@ create index if not exists health_types_type_code_idx
     on health_types (type_code, source_id);
 
 create view if not exists health_type_catalog as
-select type_code, display_name, category, default_unit, sensitivity
-from health_types
-where rowid = (
-    select min(inner_type.rowid)
-    from health_types as inner_type
-    where inner_type.type_code = health_types.type_code
-);
+select ht.type_code, ht.display_name, ht.category, ht.default_unit,
+       ht.sensitivity
+from health_types as ht
+join (
+    select min(rowid) as first_rowid
+    from health_types
+    group by type_code
+) as first_declaration on first_declaration.first_rowid = ht.rowid;
