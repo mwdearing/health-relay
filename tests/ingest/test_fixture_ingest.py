@@ -1572,9 +1572,10 @@ def test_ingest_batch_promotes_existing_legacy_active_energy_sample_without_dupl
         _ = connection.execute(
             """
             insert into health_types (
-                type_code, display_name, category, default_unit, sensitivity
+                source_id, type_code, display_name, category, default_unit,
+                sensitivity
             )
-            values (?, ?, ?, ?, ?)
+            select source_id, ?, ?, ?, ?, ? from sources
             """,
             ("active_energy", "Active Energy", "activity", "kcal", "moderate"),
         )
@@ -1771,9 +1772,10 @@ def test_ingest_batch_removes_existing_legacy_sample_after_canonical_tombstone(
         _ = connection.execute(
             """
             insert into health_types (
-                type_code, display_name, category, default_unit, sensitivity
+                source_id, type_code, display_name, category, default_unit,
+                sensitivity
             )
-            values (?, ?, ?, ?, ?)
+            select source_id, ?, ?, ?, ?, ? from sources
             """,
             ("active_energy", "Active Energy", "activity", "kcal", "moderate"),
         )
@@ -1888,9 +1890,10 @@ def test_ingest_batch_deletes_legacy_active_energy_sample_from_canonical_tombsto
         _ = connection.execute(
             """
             insert into health_types (
-                type_code, display_name, category, default_unit, sensitivity
+                source_id, type_code, display_name, category, default_unit,
+                sensitivity
             )
-            values (?, ?, ?, ?, ?)
+            select source_id, ?, ?, ?, ?, ? from sources
             """,
             ("active_energy", "Active Energy", "activity", "kcal", "moderate"),
         )

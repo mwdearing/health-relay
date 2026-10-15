@@ -20,16 +20,16 @@ METRIC_ROWS_ADAPTER: Final[TypeAdapter[list[MetricRow]]] = TypeAdapter(
 LIST_METRICS_SQL: Final = """
 with metric_catalog as (
     select type_code, display_name, category, default_unit, sensitivity
-    from health_types
+    from health_type_catalog
     union all
     select 'workout', 'Workouts', 'activity', 'session', 'moderate'
     where exists (select 1 from workouts)
-      and not exists (select 1 from health_types where type_code = 'workout')
+      and not exists (select 1 from health_type_catalog where type_code = 'workout')
     union all
     select 'sleep_analysis', 'Sleep Analysis', 'sleep', 'stage', 'moderate'
     where exists (select 1 from sleep_sessions)
       and not exists (
-          select 1 from health_types where type_code = 'sleep_analysis'
+          select 1 from health_type_catalog where type_code = 'sleep_analysis'
       )
 )
 select ht.type_code, ht.display_name, ht.category, ht.default_unit,

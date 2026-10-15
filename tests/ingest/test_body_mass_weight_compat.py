@@ -121,8 +121,9 @@ def test_body_mass_upgrade_delete_and_replay_share_one_weight_namespace(
         _ = connection.execute(
             """
             insert into health_types (
-                type_code, display_name, category, default_unit, sensitivity
-            ) values (?, ?, ?, ?, ?)
+                source_id, type_code, display_name, category, default_unit,
+                sensitivity
+            ) select source_id, ?, ?, ?, ?, ? from sources
             """,
             ("body_mass", "Body Mass", "body", "kg", "high"),
         )

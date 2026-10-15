@@ -57,6 +57,7 @@ def test_receiver_holds_lifecycle_lock_while_idle(
             request_timeout_seconds: float = 30.0,
             intake_rate_limit_count: int = 60,
             intake_rate_limit_window_seconds: float = 60.0,
+            batch_rate_limit_count: int = 60,
         ) -> None:
             del host, port
             assert mailbox_key_store is None
@@ -66,6 +67,7 @@ def test_receiver_holds_lifecycle_lock_while_idle(
             assert request_timeout_seconds == 30.0
             assert intake_rate_limit_count == 60
             assert intake_rate_limit_window_seconds == 60.0
+            assert batch_rate_limit_count == 60
             self.db_path = db_path
 
         def __enter__(self) -> Self:

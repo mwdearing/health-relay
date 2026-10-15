@@ -606,6 +606,10 @@ def test_mcp_stdio_survives_missing_database_without_traceback(tmp_path: Path) -
 def test_mcp_stdio_survives_malformed_legacy_sleep_row(tmp_path: Path) -> None:
     db_path = initialized_fixture_db(tmp_path)
     with connect_database(db_path) as connection:
+        # A legacy row predates the range guards, so drop them to plant one.
+        _ = connection.execute(
+            "drop trigger sleep_stage_intervals_interval_order_update",
+        )
         _ = connection.execute(
             "update sleep_stage_intervals set start_time = ?",
             ("not-a-timestamp",),

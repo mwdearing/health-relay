@@ -10,8 +10,8 @@ Tables:
 - `sync_runs`: one row per ingest attempt with status, counts, sync-window
   bounds when available, and redacted errors.
 - `sources`: source registry keyed by `source_key`.
-- `health_types`: bridge type registry keyed by `type_code`.
-- `health_type_aliases`: source or platform aliases for a bridge type.
+- `health_types`: bridge type registry, one row per source, keyed by `(source_id, type_code)` since `016_source_scoped_types`. A source's rows are never rewritten by another source's batch; the `health_type_catalog` view gives readers one row per `type_code` (earliest source).
+- `health_type_aliases`: source or platform aliases for a bridge type, owned by the same `(source_id, type_code)` and capped at 64 per owned type.
 - `samples`: scalar and interval observations.
 - `workouts`: workout records.
 - `electrocardiograms`: ECG recordings (classification, symptoms status, average heart rate, sampling frequency, voltage count, optional voltages as a JSON array in `voltages_json`; a summary-only replay keeps stored voltages). Added by migration `010_electrocardiograms`, which also adds `sync_runs.electrocardiogram_count`.
@@ -53,13 +53,19 @@ These tokens are separate from `receiver_tokens`.
 
 Migrations from `010_` on: `010_electrocardiograms`,
 `011_medication_dose_events`, `012_lab_results`, `013_intake_context`,
-`014_intake_context_tokens`.
+`014_intake_context_tokens`, `015_range_guards`, `016_source_scoped_types`.
+
+`015_range_guards` adds BEFORE INSERT/UPDATE triggers that abort a write whose
+interval is reversed (`end_time < start_time`, on `samples`, `workouts`,
+`sleep_sessions`, `sleep_stage_intervals`, `electrocardiograms`) or whose workout duration, energy or
+distance is negative. They mirror what the batch contract already refuses;
+existing rows are not rescanned.
 
 Idempotency keys:
 
 - `sources.source_key`
-- `health_types.type_code`
-- `health_type_aliases(type_code, alias)`
+- `health_types(source_id, type_code)`
+- `health_type_aliases(source_id, type_code, alias)`
 - `samples(source_id, type_code, client_record_id)`
 - `workouts(source_id, client_record_id)`
 - `electrocardiograms(source_id, client_record_id)` and `electrocardiograms(source_id, start_time)`
