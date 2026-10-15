@@ -53,7 +53,13 @@ These tokens are separate from `receiver_tokens`.
 
 Migrations from `010_` on: `010_electrocardiograms`,
 `011_medication_dose_events`, `012_lab_results`, `013_intake_context`,
-`014_intake_context_tokens`.
+`014_intake_context_tokens`, `015_range_guards`.
+
+`015_range_guards` adds BEFORE INSERT/UPDATE triggers that abort a write whose
+interval is reversed (`end_time < start_time`, on `samples`, `workouts`,
+`sleep_sessions`, `sleep_stage_intervals`) or whose workout duration, energy or
+distance is negative. They mirror what the batch contract already refuses;
+existing rows are not rescanned.
 
 Idempotency keys:
 

@@ -54,6 +54,7 @@ MIGRATION_IDS: Final = (
     "012_lab_results",
     "013_intake_context",
     "014_intake_context_tokens",
+    "015_range_guards",
 )
 
 
