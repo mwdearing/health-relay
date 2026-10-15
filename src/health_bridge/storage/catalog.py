@@ -135,7 +135,7 @@ def upsert_catalog(connection: sqlite3.Connection, batch: HealthBridgeBatchV1) -
                     health_type.sensitivity,
                 ),
             )
-            for alias in sorted(aliases):
+            for alias in sorted(aliases)[:MAX_STORED_ALIASES_PER_TYPE]:
                 _ = connection.execute(
                     INSERT_ALIAS_SQL,
                     (owner_id, canonical_type_code, alias, MAX_STORED_ALIASES_PER_TYPE),
