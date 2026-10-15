@@ -267,9 +267,17 @@ def prune_catalog(
             help="Delete the rows. Without it only counts what would be removed.",
         ),
     ] = False,
+    older_than_days: Annotated[
+        int,
+        typer.Option(
+            "--older-than-days",
+            min=0,
+            help="Only rows declared more than this many days ago (default 30).",
+        ),
+    ] = 30,
 ) -> None:
     """Remove type catalog rows no stored sample uses (back up the database first)."""
-    result = prune_unreferenced_types(db, apply=apply)
+    result = prune_unreferenced_types(db, apply=apply, min_age_days=older_than_days)
     verb = "removed" if result.applied else "would remove"
     typer.echo(f"{verb}: health_types={result.type_rows}")
     typer.echo(f"{verb}: health_type_aliases={result.alias_rows}")

@@ -1,9 +1,16 @@
 """Prune stored type catalog rows no sample uses (RELAY-S14, #134).
 
 `health_types` and `health_type_aliases` only grow: every declaration adds rows
-and nothing removes them. A row is *unreferenced* when no stored sample carries
-its `(source_id, type_code)`. Dropping it loses no health data; the declaring
-source's next batch recreates it. Aliases of a dropped row go with it.
+and nothing removes them. A row is prunable when all of these hold:
+
+* no stored sample carries its `(source_id, type_code)`;
+* it was declared more than N days ago, because a later batch may still reuse a
+  type stored by an earlier one;
+* no deletion tombstone names the type, because intake evidence rebuilds the
+  alternate record ids of a deleted sample from the stored type codes.
+
+Dropping a row loses no health data; the declaring source's next batch recreates
+it. Aliases of a dropped row go with it.
 """
 
 import sqlite3
@@ -18,27 +25,49 @@ from health_bridge.storage.database import (
 )
 from health_bridge.storage.sqlite_rows import fetch_one_int
 
+DEFAULT_MIN_AGE_DAYS: Final = 30
+
 COUNT_TYPES_SQL: Final = """
 select count(*) from health_types as t
 where not exists (
-    select 1 from samples as s
-    where s.source_id = t.source_id and s.type_code = t.type_code
-)
+        select 1 from samples as s
+        where s.source_id = t.source_id and s.type_code = t.type_code
+    )
+  and t.created_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)
+  and not exists (
+        select 1 from deleted_records as d
+        where d.client_record_id like
+            'hk-quantity-' || replace(t.type_code, '_', '-') || '-%'
+    )
 """
 COUNT_ALIASES_SQL: Final = """
 select count(*) from health_type_aliases as a
+join health_types as t
+  on t.source_id = a.source_id and t.type_code = a.type_code
 where not exists (
-    select 1 from samples as s
-    where s.source_id = a.source_id and s.type_code = a.type_code
-)
+        select 1 from samples as s
+        where s.source_id = t.source_id and s.type_code = t.type_code
+    )
+  and t.created_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)
+  and not exists (
+        select 1 from deleted_records as d
+        where d.client_record_id like
+            'hk-quantity-' || replace(t.type_code, '_', '-') || '-%'
+    )
 """
 DELETE_TYPES_SQL: Final = """
 delete from health_types
 where not exists (
-    select 1 from samples as s
-    where s.source_id = health_types.source_id
-      and s.type_code = health_types.type_code
-)
+        select 1 from samples as s
+        where s.source_id = health_types.source_id
+          and s.type_code = health_types.type_code
+    )
+  and created_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)
+  and not exists (
+        select 1 from deleted_records as d
+        where d.client_record_id like
+            'hk-quantity-' || replace(health_types.type_code, '_', '-') || '-%'
+    )
 """
 
 
@@ -50,21 +79,27 @@ class PruneResult(BaseModel):
     alias_rows: int
 
 
-def prune_unreferenced_types(db_path: Path, *, apply: bool) -> PruneResult:
-    """Count (and with `apply`, delete) catalog rows no sample references.
+def prune_unreferenced_types(
+    db_path: Path,
+    *,
+    apply: bool,
+    min_age_days: int = DEFAULT_MIN_AGE_DAYS,
+) -> PruneResult:
+    """Count (and with `apply`, delete) prunable catalog rows.
 
     A dry run opens the database read-only and writes nothing. `apply` counts and
     deletes inside one write transaction, so the reported rows are the removed rows.
     """
+    cutoff = f"-{max(min_age_days, 0)} days"
     if not apply:
         with connect_readonly_database(db_path) as connection:
-            return _count(connection, applied=False)
+            return _count(connection, cutoff, applied=False)
     with connect_database(db_path) as connection:
         _ = connection.execute("begin immediate")
         try:
-            result = _count(connection, applied=True)
+            result = _count(connection, cutoff, applied=True)
             if result.type_rows:
-                _ = connection.execute(DELETE_TYPES_SQL)
+                _ = connection.execute(DELETE_TYPES_SQL, (cutoff,))
             connection.commit()
         except sqlite3.Error:
             connection.rollback()
@@ -72,9 +107,11 @@ def prune_unreferenced_types(db_path: Path, *, apply: bool) -> PruneResult:
         return result
 
 
-def _count(connection: sqlite3.Connection, *, applied: bool) -> PruneResult:
+def _count(
+    connection: sqlite3.Connection, cutoff: str, *, applied: bool
+) -> PruneResult:
     return PruneResult(
         applied=applied,
-        type_rows=fetch_one_int(connection, COUNT_TYPES_SQL),
-        alias_rows=fetch_one_int(connection, COUNT_ALIASES_SQL),
+        type_rows=fetch_one_int(connection, COUNT_TYPES_SQL, (cutoff,)),
+        alias_rows=fetch_one_int(connection, COUNT_ALIASES_SQL, (cutoff,)),
     )

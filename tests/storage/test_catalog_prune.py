@@ -49,7 +49,7 @@ def test_dry_run_counts_without_deleting(tmp_path: Path) -> None:
     _ingest_fixture(db_path)
     before = _count(db_path, COUNT_SQL)
 
-    result = prune_unreferenced_types(db_path, apply=False)
+    result = prune_unreferenced_types(db_path, apply=False, min_age_days=0)
 
     assert result.type_rows >= 1
     assert not result.applied
@@ -62,23 +62,23 @@ def test_apply_removes_only_unreferenced_rows_and_their_aliases(tmp_path: Path) 
     _ingest_fixture(db_path)
     used = _count(db_path, USED_SQL)
     samples = _count(db_path, "select count(*) from samples")
+    unused_sql = (
+        "select count(*) from health_types where type_code = 'synthetic_unused_type'"
+    )
+    assert _count(db_path, unused_sql) >= 1
 
-    result = prune_unreferenced_types(db_path, apply=True)
+    result = prune_unreferenced_types(db_path, apply=True, min_age_days=0)
 
     assert result.applied
-    assert _count(db_path, COUNT_SQL) == used
+    assert _count(db_path, unused_sql) == 0
+    assert _count(db_path, USED_SQL) == used
     assert _count(db_path, "select count(*) from samples") == samples
-    assert (
-        _count(
-            db_path,
-            """
-            select count(*) from health_type_aliases
-            where type_code = 'synthetic_unused_type'
-            """,
-        )
-        == 0
-    )
-    assert prune_unreferenced_types(db_path, apply=True).type_rows == 0
+    alias_sql = """
+        select count(*) from health_type_aliases
+        where type_code = 'synthetic_unused_type'
+        """
+    assert _count(db_path, alias_sql) == 0
+    assert prune_unreferenced_types(db_path, apply=True, min_age_days=0).type_rows == 0
 
 
 def test_dry_run_on_a_missing_database_creates_nothing(tmp_path: Path) -> None:
@@ -86,3 +86,49 @@ def test_dry_run_on_a_missing_database_creates_nothing(tmp_path: Path) -> None:
     with contextlib.suppress(OSError, sqlite3.Error):
         _ = prune_unreferenced_types(missing, apply=False)
     assert not missing.parent.exists()
+
+
+def test_recently_declared_types_are_kept_by_default(tmp_path: Path) -> None:
+    db_path = tmp_path / "prune.sqlite"
+    initialize_database(db_path)
+    _ingest_fixture(db_path)
+    before = _count(db_path, COUNT_SQL)
+
+    result = prune_unreferenced_types(db_path, apply=True)
+
+    assert result.type_rows == 0
+    assert _count(db_path, COUNT_SQL) == before
+
+
+def test_types_named_by_a_deletion_tombstone_are_kept(tmp_path: Path) -> None:
+    db_path = tmp_path / "prune.sqlite"
+    initialize_database(db_path)
+    _ingest_fixture(db_path)
+    with sqlite3.connect(db_path) as connection:
+        source_id = cast(
+            "int",
+            connection.execute("select min(source_id) from sources").fetchone()[0],
+        )
+        _ = connection.execute(
+            """
+            insert into deleted_records
+                (source_id, record_family, client_record_id, deleted_at)
+            values (?, 'sample', 'hk-quantity-synthetic-unused-type-abc', ?)
+            """,
+            (source_id, "2026-01-01T00:00:00Z"),
+        )
+
+    result = prune_unreferenced_types(db_path, apply=True, min_age_days=0)
+
+    with sqlite3.connect(db_path) as connection:
+        kept = cast(
+            "int",
+            connection.execute(
+                """
+                select count(*) from health_types
+                where type_code = 'synthetic_unused_type'
+                """
+            ).fetchone()[0],
+        )
+    assert kept >= 1
+    assert result.applied
