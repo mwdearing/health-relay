@@ -9,10 +9,10 @@ import pytest
 from health_bridge.storage import initialize_database
 
 SOURCE_SQL = "insert into sources (source_key, name, kind) values ('s', 'n', 'app')"
-TYPE_SQL = (
-    "insert into health_types (type_code, display_name, category, default_unit,"
-    " sensitivity) values ('t', 'T', 'other', 'u', 'low')"
-)
+TYPE_SQL = """
+      insert into health_types (type_code, display_name, category, default_unit,
+      sensitivity) values ('t', 'T', 'other', 'u', 'low')
+    """
 T1 = "2026-01-01T00:00:00Z"
 T2 = "2026-01-01T01:00:00Z"
 
@@ -30,9 +30,11 @@ def _conn(tmp_path: Path) -> sqlite3.Connection:
 def _workout(conn: sqlite3.Connection, **kw: object) -> None:
     row = {"start": T1, "end": T2, "dur": 10, "kcal": None, "dist": None} | kw
     _ = conn.execute(
-        "insert into workouts (source_id, client_record_id, workout_type,"
-        " start_time, end_time, duration_seconds, energy_kcal, distance_meters)"
-        " values (1, ?, 'run', ?, ?, ?, ?, ?)",
+        """
+          insert into workouts (source_id, client_record_id, workout_type,
+          start_time, end_time, duration_seconds, energy_kcal, distance_meters)
+          values (1, ?, 'run', ?, ?, ?, ?, ?)
+        """,
         (
             f"w{row['dur']}{row['kcal']}{row['dist']}{row['start']}",
             row["start"],
@@ -48,9 +50,11 @@ def test_valid_rows_are_accepted(tmp_path: Path) -> None:
     with closing(_conn(tmp_path)) as conn:
         _workout(conn, kcal=0, dist=0)
         _ = conn.execute(
-            "insert into samples (source_id, type_code, client_record_id,"
-            " start_time, end_time, value, unit, metadata_json)"
-            " values (1, 't', 'a', ?, ?, -5.0, 'u', '{}')",
+            """
+              insert into samples (source_id, type_code, client_record_id,
+              start_time, end_time, value, unit, metadata_json)
+              values (1, 't', 'a', ?, ?, -5.0, 'u', '{}')
+            """,
             (T1, T1),
         )
 
@@ -67,9 +71,11 @@ def test_workout_range_violations_abort(tmp_path: Path, kw: dict[str, object]) -
 def test_reversed_sample_interval_aborts(tmp_path: Path) -> None:
     with closing(_conn(tmp_path)) as conn, pytest.raises(sqlite3.IntegrityError):
         _ = conn.execute(
-            "insert into samples (source_id, type_code, client_record_id,"
-            " start_time, end_time, value, unit, metadata_json)"
-            " values (1, 't', 'a', ?, ?, 1.0, 'u', '{}')",
+            """
+              insert into samples (source_id, type_code, client_record_id,
+              start_time, end_time, value, unit, metadata_json)
+              values (1, 't', 'a', ?, ?, 1.0, 'u', '{}')
+            """,
             (T2, T1),
         )
 
