@@ -57,7 +57,7 @@ Migrations from `010_` on: `010_electrocardiograms`,
 
 `015_range_guards` adds BEFORE INSERT/UPDATE triggers that abort a write whose
 interval is reversed (`end_time < start_time`, on `samples`, `workouts`,
-`sleep_sessions`, `sleep_stage_intervals`) or whose workout duration, energy or
+`sleep_sessions`, `sleep_stage_intervals`, `electrocardiograms`) or whose workout duration, energy or
 distance is negative. They mirror what the batch contract already refuses;
 existing rows are not rescanned.
 
