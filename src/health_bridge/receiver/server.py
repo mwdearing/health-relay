@@ -113,6 +113,10 @@ INTAKE_RATE_LIMIT_MAX_TOKENS: Final = 1_024
 # batch budget its uploads need. The response is privately cacheable for five minutes.
 INTAKE_CAPABILITIES_RATE_LIMIT_COUNT: Final = 30
 INTAKE_CAPABILITIES_RATE_LIMIT_WINDOW_SECONDS: Final = 60.0
+# POST /v1/batches gets its own per-token budget, apart from the intake routes. The app
+# uploads a handful of batches a minute at most, so this only bounds a runaway client.
+BATCH_RATE_LIMIT_COUNT: Final = 60
+BATCH_RATE_LIMIT_WINDOW_SECONDS: Final = 60.0
 INTAKE_CAPABILITIES_CACHE_CONTROL: Final = "private, max-age=300"
 JsonPayloadValue: TypeAlias = (
     bool | int | str | list[str] | list[dict[str, str | int | None]] | dict[str, str]
@@ -269,6 +273,7 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
     max_connections_per_client = MAX_CONNECTIONS_PER_CLIENT
     intake_rate_limit_count: int = INTAKE_RATE_LIMIT_COUNT
     intake_rate_limit_window_seconds: float = INTAKE_RATE_LIMIT_WINDOW_SECONDS
+    batch_rate_limit_count: int = BATCH_RATE_LIMIT_COUNT
 
     def __init__(  # noqa: PLR0913 - explicit transport dependencies.
         self,
@@ -283,6 +288,7 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
         request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         intake_rate_limit_count: int = INTAKE_RATE_LIMIT_COUNT,
         intake_rate_limit_window_seconds: float = INTAKE_RATE_LIMIT_WINDOW_SECONDS,
+        batch_rate_limit_count: int = BATCH_RATE_LIMIT_COUNT,
         max_connections: int = MAX_CONCURRENT_CONNECTIONS,
         max_connections_per_client: int = MAX_CONNECTIONS_PER_CLIENT,
         request_deadline_seconds: float = DEFAULT_REQUEST_DEADLINE_SECONDS,
@@ -293,6 +299,11 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
         self.request_timeout_seconds: float = request_timeout_seconds
         self.intake_rate_limit_count = intake_rate_limit_count
         self.intake_rate_limit_window_seconds = intake_rate_limit_window_seconds
+        self.batch_rate_limit_count = batch_rate_limit_count
+        self.batch_limiter: IntakeRateLimiter = IntakeRateLimiter(
+            max_batches=batch_rate_limit_count,
+            window_seconds=BATCH_RATE_LIMIT_WINDOW_SECONDS,
+        )
         self.mailbox_key_store: MailboxKeyStore | None = mailbox_key_store
         self.mailbox_connection_store: MailboxConnectionStore | None = (
             mailbox_connection_store
@@ -434,6 +445,23 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
                         window_seconds=self.intake_rate_limit_window_seconds,
                     )
                     self.intake_limiter = limiter
+        return limiter
+
+    @property
+    def batches_limiter(self) -> IntakeRateLimiter:
+        """The /v1/batches limiter, built on first use if __init__ was bypassed."""
+        limiter = getattr(self, "batch_limiter", None)
+        if limiter is None:
+            with _INTAKE_LIMITER_LOCK:
+                limiter = getattr(self, "batch_limiter", None)
+                if limiter is None:
+                    limiter = IntakeRateLimiter(
+                        max_batches=getattr(
+                            self, "batch_rate_limit_count", BATCH_RATE_LIMIT_COUNT
+                        ),
+                        window_seconds=BATCH_RATE_LIMIT_WINDOW_SECONDS,
+                    )
+                    self.batch_limiter = limiter
         return limiter
 
     @property
@@ -724,6 +752,9 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
             return
         principal = self._authorize_batch_request()
         if principal is None:
+            return
+        # Counted per authenticated token after auth; the body is left unread on 429.
+        if not self._admit_intake_request(self.receiver_server.batches_limiter):
             return
         body = self._read_body()
         if body is None:
@@ -1151,6 +1182,7 @@ def build_receiver_server(  # noqa: PLR0913 - explicit transport dependencies.
     mailbox_worker: MailboxRuntimeWorker | None = None,
     intake_rate_limit_count: int = INTAKE_RATE_LIMIT_COUNT,
     intake_rate_limit_window_seconds: float = INTAKE_RATE_LIMIT_WINDOW_SECONDS,
+    batch_rate_limit_count: int = BATCH_RATE_LIMIT_COUNT,
 ) -> ReceiverHTTPServer:
     initialize_database(db_path)
     return ReceiverHTTPServer(
@@ -1164,6 +1196,7 @@ def build_receiver_server(  # noqa: PLR0913 - explicit transport dependencies.
         mailbox_worker=mailbox_worker,
         intake_rate_limit_count=intake_rate_limit_count,
         intake_rate_limit_window_seconds=intake_rate_limit_window_seconds,
+        batch_rate_limit_count=batch_rate_limit_count,
     )
 
 
