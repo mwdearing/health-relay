@@ -179,3 +179,57 @@ def test_aliases_are_bounded_per_owned_type(tmp_path: Path) -> None:
         )
     assert counts
     assert all(count <= 64 for (count,) in counts)
+
+
+def _filler_type() -> JsonObject:
+    return {
+        "type_code": "synthetic_filler",
+        "display_name": "Filler",
+        "category": "activity",
+        "default_unit": "count",
+        "sensitivity": "low",
+        "aliases": [],
+    }
+
+
+def _stripped(payload: JsonObject) -> JsonObject:
+    for key in (
+        "samples",
+        "workouts",
+        "sleep_sessions",
+        "deleted_records",
+        "electrocardiograms",
+        "medication_dose_events",
+        "lab_results",
+    ):
+        payload[key] = []
+    cast("JsonObject", payload["sync"])["cursors"] = []
+    return payload
+
+
+def test_known_source_and_known_type_inherit_without_rewrite(tmp_path: Path) -> None:
+    # Given a type stored for one source and a second source stored with no rows
+    db_path = tmp_path / "catalog.sqlite"
+    initialize_database(db_path)
+    first = _payload()
+    _ = _ingest(db_path, first)
+    second = _stripped(_payload())
+    second["sources"] = [{"source_key": "synthetic.late", "name": "L", "kind": "app"}]
+    second["health_types"] = [_filler_type()]
+    assert _ingest(db_path, second) == "succeeded"
+
+    # When a later batch has that source report a sample of the stored type
+    sample = dict(cast("list[JsonObject]", first["samples"])[0])
+    sample.update({"source_key": "synthetic.late", "client_record_id": "synthetic-late-1"})
+    third = _stripped(_payload())
+    third["sources"] = [{"source_key": "synthetic.late", "name": "L", "kind": "app"}]
+    third["health_types"] = [_filler_type()]
+    third["samples"] = [sample]
+    assert _ingest(db_path, third) == "succeeded"
+
+    # Then the source's own row exists with the stored metadata, unchanged
+    code = cast("str", sample["type_code"])
+    owner = cast("str", cast("list[JsonObject]", first["sources"])[0]["source_key"])
+    assert _source_scoped_row(db_path, "synthetic.late", code) == (
+        _source_scoped_row(db_path, owner, code)
+    )

@@ -26,6 +26,12 @@ INSERT_HEALTH_TYPE_SQL = (
     "default_unit, sensitivity) values (?, ?, ?, ?, ?, ?) "
     "on conflict(source_id, type_code) do nothing"
 )
+INHERIT_HEALTH_TYPE_SQL = (
+    "insert into health_types (source_id, type_code, display_name, category, "
+    "default_unit, sensitivity) select ?1, type_code, display_name, category, "
+    "default_unit, sensitivity from health_type_catalog where type_code = ?2 "
+    "on conflict(source_id, type_code) do nothing"
+)
 INSERT_ALIAS_SQL = (
     "insert into health_type_aliases (source_id, type_code, alias) "
     "select ?1, ?2, ?3 where (select count(*) from health_type_aliases "
@@ -82,13 +88,29 @@ def upsert_catalog(connection: sqlite3.Connection, batch: HealthBridgeBatchV1) -
                 source.device_model,
             ),
         )
-    source_ids = [
-        source_id(connection, key)
-        for key in sorted({source.source_key for source in batch.sources})
-    ]
+    keys = {source.source_key for source in batch.sources}
+    source_ids = [source_id(connection, key) for key in sorted(keys)]
+    # A declared type is stored for the sources whose samples use it in this batch
+    # (or the batch's first source when none does), so the work is bounded by the
+    # rows the batch carries, never by sources x types.
+    sample_pairs = {
+        (sample.source_key, canonical_sample_type_code(sample.type_code))
+        for sample in batch.samples
+    }
+    owners_by_type: dict[str, set[int]] = {}
+    known_sources = dict(zip(sorted(keys), source_ids, strict=True))
+    sample_pairs = {pair for pair in sample_pairs if pair[0] in known_sources}
+    for source_key, type_code in sample_pairs:
+        owners_by_type.setdefault(type_code, set()).add(known_sources[source_key])
     for health_type in batch.health_types:
         canonical_type_code = canonical_sample_type_code(health_type.type_code)
-        for owner_id in source_ids:
+        owners = sorted(owners_by_type.get(canonical_type_code, set()))
+        if not owners and source_ids:
+            owners = source_ids[:1]
+        aliases = set(health_type.aliases)
+        if canonical_type_code != health_type.type_code:
+            aliases.add(health_type.type_code)
+        for owner_id in owners:
             _ = connection.execute(
                 INSERT_HEALTH_TYPE_SQL,
                 (
@@ -100,15 +122,19 @@ def upsert_catalog(connection: sqlite3.Connection, batch: HealthBridgeBatchV1) -
                     health_type.sensitivity,
                 ),
             )
-        aliases = set(health_type.aliases)
-        if canonical_type_code != health_type.type_code:
-            aliases.add(health_type.type_code)
-        for owner_id in source_ids:
             for alias in sorted(aliases):
                 _ = connection.execute(
                     INSERT_ALIAS_SQL,
                     (owner_id, canonical_type_code, alias, MAX_STORED_ALIASES_PER_TYPE),
                 )
+    # A sample may name a source and a type that are each already stored, but not
+    # together; the source inherits the type's existing metadata without
+    # rewriting anything (the contract treats the two references as known).
+    for source_key, type_code in sorted(sample_pairs):
+        _ = connection.execute(
+            INHERIT_HEALTH_TYPE_SQL,
+            (known_sources[source_key], type_code),
+        )
 
 
 def source_id(connection: sqlite3.Connection, source_key: str) -> int:

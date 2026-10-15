@@ -46,7 +46,14 @@ create table health_type_aliases_v2 (
 insert into health_type_aliases_v2 (source_id, type_code, alias)
 select s.source_id, a.type_code, a.alias
 from health_type_aliases as a
-cross join sources as s;
+cross join sources as s
+-- Legacy databases may hold more aliases per type than the runtime cap of 64;
+-- carry the oldest 64 so each owned type starts within the bound.
+where (
+    select count(*)
+    from health_type_aliases as older
+    where older.type_code = a.type_code and older.alias_id <= a.alias_id
+) <= 64;
 
 create table samples_v2 (
     sample_id integer primary key,

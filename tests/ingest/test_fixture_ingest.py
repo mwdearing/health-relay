@@ -102,9 +102,8 @@ def test_ingest_fixture_stores_batch_records_when_fixture_is_valid(
     assert result.status == "succeeded"
     assert counts == {
         "sources": 2,
-        # types and aliases are stored once per source, and the fixture has two
-        "health_types": 8,
-        "health_type_aliases": 10,
+        "health_types": 4,
+        "health_type_aliases": 5,
         "samples": 3,
         "workouts": 1,
         "sleep_sessions": 1,
