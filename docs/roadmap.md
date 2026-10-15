@@ -13,6 +13,7 @@ Works today:
 - read-only CLI, JSON, Markdown, and MCP query surfaces;
 - iOS companion source for a self-build HealthKit path;
 - read-only sync support for steps, workouts, sleep, and direct quantity samples selected through the native Apple Health permission sheet;
+- read-only sync of Apple Watch electrocardiograms, medication dose events (iOS 26 and later, per-object medication authorization), and lab results from an Apple Health export file read on the phone;
 - public brand assets, security guidance, contribution rules, and release criteria.
 
 Current operational constraints:
@@ -20,7 +21,7 @@ Current operational constraints:
 - real Apple Health sync requires an iPhone and either a signed beta build or a self-build (Mac, Xcode and signing only for the self-build);
 - receiver setup is aimed at technical users or agent-assisted local setup;
 - background sync is best-effort and controlled by iOS;
-- broad non-quantity HealthKit families are not implemented yet.
+- other non-quantity HealthKit families are not implemented yet; the implemented set is listed in [supported health data](supported-health-data.md).
 - Encrypted iCloud Mailbox remains an explicit opt-in, Mac-only Beta; Direct remains the default and has no automatic fallback to mailbox delivery.
 
 ## Near term
