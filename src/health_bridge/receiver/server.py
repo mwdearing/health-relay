@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import json
 import logging
 import math
@@ -754,7 +755,9 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
         if principal is None:
             return
         # Counted per authenticated token after auth; the body is left unread on 429.
-        if not self._admit_intake_request(self.receiver_server.batches_limiter):
+        if not self._admit_intake_request(
+            self.receiver_server.batches_limiter, key_on_full_token=True
+        ):
             return
         body = self._read_body()
         if body is None:
@@ -964,10 +967,21 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
             },
         )
 
-    def _admit_intake_request(self, limiter: IntakeRateLimiter) -> bool:
-        """Count this request for its token; answer 429 and close when over."""
+    def _admit_intake_request(
+        self, limiter: IntakeRateLimiter, *, key_on_full_token: bool = False
+    ) -> bool:
+        """Count this request for its token; answer 429 and close when over.
+
+        Batch tokens may be operator-chosen, so their key is a digest of the whole
+        token and two tokens sharing a prefix never share a budget.
+        """
         token = self._bearer_token()
-        token_prefix = "" if token is None else token[:INTAKE_TOKEN_PREFIX_LENGTH]
+        if token is None:
+            token_prefix = ""
+        elif key_on_full_token:
+            token_prefix = hashlib.sha256(token.encode()).hexdigest()
+        else:
+            token_prefix = token[:INTAKE_TOKEN_PREFIX_LENGTH]
         if limiter.allow(token_prefix):
             return True
         self.close_connection = True

@@ -65,3 +65,13 @@ def test_failed_authentication_does_not_spend_the_budget(tmp_path: Path) -> None
 
 def test_default_limit_is_sixty_batches_a_minute() -> None:
     assert BATCH_RATE_LIMIT_COUNT == 60
+
+
+def test_tokens_sharing_a_prefix_do_not_share_a_budget(tmp_path: Path) -> None:
+    db = tmp_path / "r.sqlite"
+    one = create_receiver_token(db, "a", token="hb_sharedpfx-one").token
+    two = create_receiver_token(db, "b", token="hb_sharedpfx-two").token
+    with served(db, count=1) as base:
+        assert call(base, "POST", "/v1/batches", one, b"{}")[0] == 422
+        assert call(base, "POST", "/v1/batches", one, b"{}")[0] == 429
+        assert call(base, "POST", "/v1/batches", two, b"{}")[0] == 422
