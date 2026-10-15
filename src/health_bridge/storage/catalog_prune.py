@@ -51,7 +51,7 @@ with prunable as materialized (
 )
 """
 COUNT_TYPES_SQL: Final = PRUNABLE_CTE + "select count(*) from prunable"
-COUNT_ALIASES_SQL: Final = (  # noqa: S608
+COUNT_ALIASES_SQL: Final = (
     PRUNABLE_CTE
     + """
 select count(*) from health_type_aliases as a
@@ -59,7 +59,7 @@ join prunable as p
   on p.source_id = a.source_id and p.type_code = a.type_code
 """
 )
-DELETE_TYPES_SQL: Final = (  # noqa: S608
+DELETE_TYPES_SQL: Final = (
     PRUNABLE_CTE
     + """
 delete from health_types
