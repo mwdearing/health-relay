@@ -220,7 +220,9 @@ def test_known_source_and_known_type_inherit_without_rewrite(tmp_path: Path) -> 
 
     # When a later batch has that source report a sample of the stored type
     sample = dict(cast("list[JsonObject]", first["samples"])[0])
-    sample.update({"source_key": "synthetic.late", "client_record_id": "synthetic-late-1"})
+    sample.update(
+        {"source_key": "synthetic.late", "client_record_id": "synthetic-late-1"}
+    )
     third = _stripped(_payload())
     third["sources"] = [{"source_key": "synthetic.late", "name": "L", "kind": "app"}]
     third["health_types"] = [_filler_type()]
