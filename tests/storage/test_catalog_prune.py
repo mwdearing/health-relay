@@ -113,7 +113,9 @@ def test_types_named_by_a_deletion_tombstone_are_kept(tmp_path: Path) -> None:
             """
             insert into deleted_records
                 (source_id, record_family, client_record_id, deleted_at)
-            values (?, 'sample', 'hk-quantity-synthetic-unused-type-abc', ?)
+            values (?, 'sample',
+                'hk-quantity-synthetic-unused-type-'
+                || '12345678-1234-1234-1234-123456789012', ?)
             """,
             (source_id, "2026-01-01T00:00:00Z"),
         )
