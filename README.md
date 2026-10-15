@@ -154,7 +154,7 @@ Adding a client creates another process that can read the private health databas
 
 Direct is the default transport, including direct private HTTPS and trusted-LAN setups. Encrypted iCloud Mailbox is an explicit opt-in, Mac-only Beta; a Direct failure never switches transports automatically.
 
-The Beta applies application-layer encryption and signatures before an envelope reaches the user's iCloud container. The user's Mac receiver decrypts and commits accepted batches, then returns an encrypted, signed ACK; the app advances committed local progress only after validating a committed ACK. The iCloud container and receiver remain user-owned. Mailbox ACK publication also requires the exact signed, notarized macOS helper published with Receiver/CLI `1.1.1`; users verify and explicitly install it before the optional per-user LaunchAgent. Follow the [mailbox service guide](docs/icloud-mailbox-service.md).
+The Beta applies application-layer encryption and signatures before an envelope reaches the user's iCloud container. The user's Mac receiver decrypts and commits accepted batches, then returns an encrypted, signed ACK; the app advances committed local progress only after validating a committed ACK. The iCloud container and receiver remain user-owned. HealthRelay does not publish or attest the signed macOS helper that mailbox ACK publication requires; that helper comes from the upstream [apple-health-ai-bridge](https://github.com/roian6/apple-health-ai-bridge) project, and installing the upstream wheel replaces this repository's receiver. The Beta is therefore outside this repository's support scope; stay on Direct unless you accept that. See the [mailbox service guide](docs/icloud-mailbox-service.md).
 
 </details>
 
