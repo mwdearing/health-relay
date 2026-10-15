@@ -61,6 +61,12 @@ interval is reversed (`end_time < start_time`, on `samples`, `workouts`,
 distance is negative. They mirror what the batch contract already refuses;
 existing rows are not rescanned.
 
+`health-bridge prune-catalog --db PATH [--apply] [--older-than-days N]` removes `health_types` rows
+that no stored sample uses, that were declared more than N days ago (default 30) and that no deletion
+tombstone of any source names, plus their aliases. Without `--apply` it only counts, read-only. No
+sample or other health row is touched, and a source's next batch recreates a type it still declares.
+Back up the database first.
+
 Idempotency keys:
 
 - `sources.source_key`

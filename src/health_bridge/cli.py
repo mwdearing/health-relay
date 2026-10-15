@@ -279,8 +279,8 @@ def prune_catalog(
     """Remove type catalog rows no stored sample uses (back up the database first)."""
     try:
         result = prune_unreferenced_types(db, apply=apply, min_age_days=older_than_days)
-    except FileNotFoundError as exc:
-        typer.echo(str(exc), err=True)
+    except (OSError, sqlite3.Error) as exc:
+        typer.echo(f"prune-catalog failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
     verb = "removed" if result.applied else "would remove"
     typer.echo(f"{verb}: health_types={result.type_rows}")
