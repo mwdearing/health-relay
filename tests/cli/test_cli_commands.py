@@ -298,8 +298,8 @@ def test_cli_status_json_notes_optional_only_sync_without_core_daily_lanes(
     """
     insert_health_type_sql = """
         insert into health_types
-        (type_code, display_name, category, default_unit, sensitivity)
-        values (?, ?, ?, ?, ?)
+        (source_id, type_code, display_name, category, default_unit, sensitivity)
+        select source_id, ?, ?, ?, ?, ? from sources
     """
     insert_sample_sql = """
         insert into samples

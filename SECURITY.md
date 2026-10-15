@@ -49,11 +49,11 @@ In scope:
 - the iOS app;
 - the receiver, CLI and MCP server;
 - pairing and the setup page;
-- the iCloud Mailbox Beta;
 - this repository's release workflows.
 
 Out of scope:
 
+- the iCloud Mailbox Beta, whose required helper assets are published only by the upstream project (see the README transport section);
 - the upstream project (report it to [apple-health-ai-bridge](https://github.com/roian6/apple-health-ai-bridge) instead; upstream is credited for attribution and is not a channel for this project);
 - exposing your receiver to the public internet against the deployment guidance below;
 - a phone or computer that is already compromised;

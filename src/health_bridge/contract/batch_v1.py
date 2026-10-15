@@ -140,7 +140,7 @@ class Source(StrictModel):
     device_model: OmittableString = None
 
 
-# Declared health types are written to the global health_types and
+# Declared health types are written to the per-source health_types and
 # health_type_aliases tables and kept permanently, so each field is bounded.
 # The longest values the iOS catalog and repository fixtures send are 33
 # characters for type codes and display names, 18 for units and 58 for a
