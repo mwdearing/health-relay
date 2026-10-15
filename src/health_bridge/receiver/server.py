@@ -989,7 +989,7 @@ class ReceiverRequestHandler(BaseHTTPRequestHandler):
             HTTPStatus.TOO_MANY_REQUESTS,
             {"error": "rate_limited"},
             extra_headers={
-                "Retry-After": str(limiter.retry_after_seconds(token_prefix)),
+                "Retry-After": str(limiter.retry_after_seconds(limiter_key)),
                 "Connection": "close",
             },
         )
