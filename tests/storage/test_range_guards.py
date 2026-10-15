@@ -10,8 +10,9 @@ from health_bridge.storage import initialize_database
 
 SOURCE_SQL = "insert into sources (source_key, name, kind) values ('s', 'n', 'app')"
 TYPE_SQL = """
-      insert into health_types (type_code, display_name, category, default_unit,
-      sensitivity) values ('t', 'T', 'other', 'u', 'low')
+      insert into health_types (source_id, type_code, display_name, category,
+      default_unit,
+      sensitivity) select source_id, 't', 'T', 'other', 'u', 'low' from sources
     """
 T1 = "2026-01-01T00:00:00Z"
 T2 = "2026-01-01T01:00:00Z"

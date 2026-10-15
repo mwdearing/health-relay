@@ -133,7 +133,7 @@ cross join samples
 order by samples.sample_id
 """
 DISTINCT_TYPE_CODES_SQL: Final = """
-select type_code from health_types order by type_code
+select distinct type_code from health_types order by type_code
 """
 # Two owners are enough to tell "exactly one" from "several", so the probe is
 # bounded however many producers are registered.

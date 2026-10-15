@@ -533,8 +533,8 @@ def test_get_daily_summary_uses_calendar_day_metadata_for_daily_aggregates(
         _ = connection.execute(
             """
             insert or replace into health_types
-            (type_code, display_name, category, default_unit, sensitivity)
-            values (?, ?, ?, ?, ?)
+            (source_id, type_code, display_name, category, default_unit, sensitivity)
+            select source_id, ?, ?, ?, ?, ? from sources
             """,
             ("steps", "Step Count", "activity", "count", "low"),
         )
@@ -654,8 +654,8 @@ def _insert_activity_semantics_samples(db_path: Path) -> None:
         source_id = _sample_source_id(connection)
         upsert_health_type_sql = """
             insert or replace into health_types
-            (type_code, display_name, category, default_unit, sensitivity)
-            values (?, ?, ?, ?, ?)
+            (source_id, type_code, display_name, category, default_unit, sensitivity)
+            select source_id, ?, ?, ?, ?, ? from sources
         """
         _ = connection.executemany(
             upsert_health_type_sql,
@@ -785,8 +785,8 @@ def _insert_timeseries_catalog_metric_samples(db_path: Path) -> None:
         source_id = _sample_source_id(connection)
         upsert_health_type_sql = """
             insert or replace into health_types
-            (type_code, display_name, category, default_unit, sensitivity)
-            values (?, ?, ?, ?, ?)
+            (source_id, type_code, display_name, category, default_unit, sensitivity)
+            select source_id, ?, ?, ?, ?, ? from sources
         """
         _ = connection.executemany(
             upsert_health_type_sql,
@@ -937,8 +937,8 @@ def _sample_source_id(connection: sqlite3.Connection) -> int:
 def _upsert_sample_health_types(connection: sqlite3.Connection) -> None:
     upsert_health_type_sql = """
         insert or replace into health_types
-        (type_code, display_name, category, default_unit, sensitivity)
-        values (?, ?, ?, ?, ?)
+        (source_id, type_code, display_name, category, default_unit, sensitivity)
+        select source_id, ?, ?, ?, ?, ? from sources
     """
     _ = connection.executemany(
         upsert_health_type_sql,
