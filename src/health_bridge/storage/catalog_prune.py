@@ -1,4 +1,3 @@
-# ruff: noqa: S608 - the CTE is a module constant; values bind as parameters.
 """Prune stored type catalog rows no sample uses (RELAY-S14, #134).
 
 `health_types` and `health_type_aliases` only grow: every declaration adds rows
@@ -28,10 +27,11 @@ from health_bridge.storage.sqlite_rows import fetch_one_int
 
 DEFAULT_MIN_AGE_DAYS: Final = 30
 
-# One candidate set, evaluated once: unreferenced, old enough, and not named by a
-# sample tombstone of the same source whose id is exactly
-# `hk-quantity-<type with - for _>-<36-character uuid>`.
-PRUNABLE_CTE: Final = """
+# One candidate set per statement, evaluated once: unreferenced, old enough, and
+# not named by a sample tombstone of the same source whose id is exactly
+# `hk-quantity-<type with - for _>-<36-character uuid>`. The CTE is repeated
+# verbatim in each statement so every statement is one literal.
+COUNT_TYPES_SQL: Final = """
 with prunable as materialized (
     select t.source_id, t.type_code
     from health_types as t
@@ -50,23 +50,53 @@ with prunable as materialized (
                   length('hk-quantity-' || replace(t.type_code, '_', '-') || '-') + 36
         )
 )
+select count(*) from prunable
 """
-COUNT_TYPES_SQL: Final = PRUNABLE_CTE + "select count(*) from prunable"
-COUNT_ALIASES_SQL: Final = (
-    PRUNABLE_CTE
-    + """
+COUNT_ALIASES_SQL: Final = """
+with prunable as materialized (
+    select t.source_id, t.type_code
+    from health_types as t
+    where not exists (
+            select 1 from samples as s
+            where s.source_id = t.source_id and s.type_code = t.type_code
+        )
+      and t.created_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)
+      and not exists (
+            select 1 from deleted_records as d
+            where d.source_id = t.source_id
+              and d.record_family = 'sample'
+              and d.client_record_id like
+                  'hk-quantity-' || replace(t.type_code, '_', '-') || '-%'
+              and length(d.client_record_id) =
+                  length('hk-quantity-' || replace(t.type_code, '_', '-') || '-') + 36
+        )
+)
 select count(*) from health_type_aliases as a
 join prunable as p
   on p.source_id = a.source_id and p.type_code = a.type_code
 """
+DELETE_TYPES_SQL: Final = """
+with prunable as materialized (
+    select t.source_id, t.type_code
+    from health_types as t
+    where not exists (
+            select 1 from samples as s
+            where s.source_id = t.source_id and s.type_code = t.type_code
+        )
+      and t.created_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)
+      and not exists (
+            select 1 from deleted_records as d
+            where d.source_id = t.source_id
+              and d.record_family = 'sample'
+              and d.client_record_id like
+                  'hk-quantity-' || replace(t.type_code, '_', '-') || '-%'
+              and length(d.client_record_id) =
+                  length('hk-quantity-' || replace(t.type_code, '_', '-') || '-') + 36
+        )
 )
-DELETE_TYPES_SQL: Final = (
-    PRUNABLE_CTE
-    + """
 delete from health_types
 where (source_id, type_code) in (select source_id, type_code from prunable)
 """
-)
 
 
 class PruneResult(BaseModel):
