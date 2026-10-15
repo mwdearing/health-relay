@@ -32,7 +32,8 @@ INSERT_HEALTH_TYPE_SQL = (
 INHERIT_HEALTH_TYPE_SQL = (
     "insert into health_types (source_id, type_code, display_name, category, "
     "default_unit, sensitivity) select ?1, type_code, display_name, category, "
-    "default_unit, sensitivity from health_type_catalog where type_code = ?2 "
+    "default_unit, sensitivity from health_types where type_code = ?2 "
+    "order by rowid limit 1 "
     "on conflict(source_id, type_code) do nothing"
 )
 INSERT_ALIAS_SQL = (
