@@ -100,3 +100,17 @@ when new.end_time < new.start_time
 begin
     select raise(abort, 'sleep stage interval reversed');
 end;
+
+create trigger if not exists electrocardiograms_interval_order_insert
+before insert on electrocardiograms
+when new.end_time < new.start_time
+begin
+    select raise(abort, 'electrocardiogram interval reversed');
+end;
+
+create trigger if not exists electrocardiograms_interval_order_update
+before update on electrocardiograms
+when new.end_time < new.start_time
+begin
+    select raise(abort, 'electrocardiogram interval reversed');
+end;

@@ -80,6 +80,18 @@ def test_reversed_sample_interval_aborts(tmp_path: Path) -> None:
         )
 
 
+def test_reversed_ecg_interval_aborts(tmp_path: Path) -> None:
+    with closing(_conn(tmp_path)) as conn, pytest.raises(sqlite3.IntegrityError):
+        _ = conn.execute(
+            """
+              insert into electrocardiograms (source_id, client_record_id,
+              start_time, end_time, classification, symptoms_status)
+              values (1, 'e', ?, ?, 'c', 's')
+            """,
+            (T2, T1),
+        )
+
+
 def test_update_cannot_introduce_a_violation(tmp_path: Path) -> None:
     with closing(_conn(tmp_path)) as conn:
         _workout(conn)
