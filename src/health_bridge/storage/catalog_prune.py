@@ -29,7 +29,8 @@ from health_bridge.storage.sqlite_rows import fetch_one_int
 DEFAULT_MIN_AGE_DAYS: Final = 30
 
 # One candidate set per statement, evaluated once: unreferenced, old enough, and
-# not named by a sample tombstone of the same source whose id is exactly
+# not named by a sample tombstone of any source (intake evidence probes every
+# source's tombstones against every stored type) whose id is exactly
 # `hk-quantity-<type with - for _>-<36-character uuid>`. The CTE is repeated
 # verbatim in each statement so every statement is one literal.
 COUNT_TYPES_SQL: Final = """
@@ -43,8 +44,7 @@ with prunable as materialized (
       and t.created_at <= ?
       and not exists (
             select 1 from deleted_records as d
-            where d.source_id = t.source_id
-              and d.record_family = 'sample'
+            where d.record_family = 'sample'
               and d.client_record_id like
                   'hk-quantity-' || replace(t.type_code, '_', '-') || '-%'
               and length(d.client_record_id) =
@@ -64,8 +64,7 @@ with prunable as materialized (
       and t.created_at <= ?
       and not exists (
             select 1 from deleted_records as d
-            where d.source_id = t.source_id
-              and d.record_family = 'sample'
+            where d.record_family = 'sample'
               and d.client_record_id like
                   'hk-quantity-' || replace(t.type_code, '_', '-') || '-%'
               and length(d.client_record_id) =
@@ -87,8 +86,7 @@ with prunable as materialized (
       and t.created_at <= ?
       and not exists (
             select 1 from deleted_records as d
-            where d.source_id = t.source_id
-              and d.record_family = 'sample'
+            where d.record_family = 'sample'
               and d.client_record_id like
                   'hk-quantity-' || replace(t.type_code, '_', '-') || '-%'
               and length(d.client_record_id) =
