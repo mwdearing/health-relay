@@ -1,10 +1,11 @@
 """RELAY-S14: unreferenced type catalog rows can be pruned; referenced ones stay."""
 
-import contextlib
 import json
 import sqlite3
 from pathlib import Path
 from typing import cast
+
+import pytest
 
 from health_bridge.contract import HealthBridgeBatchV1
 from health_bridge.ingest import ingest_batch
@@ -83,7 +84,7 @@ def test_apply_removes_only_unreferenced_rows_and_their_aliases(tmp_path: Path) 
 
 def test_dry_run_on_a_missing_database_creates_nothing(tmp_path: Path) -> None:
     missing = tmp_path / "nested" / "missing.sqlite"
-    with contextlib.suppress(OSError, sqlite3.Error):
+    with pytest.raises((OSError, sqlite3.Error)):
         _ = prune_unreferenced_types(missing, apply=False)
     assert not missing.parent.exists()
 
@@ -138,6 +139,51 @@ def test_types_named_by_a_deletion_tombstone_are_kept(tmp_path: Path) -> None:
 
 def test_apply_on_a_missing_database_creates_nothing(tmp_path: Path) -> None:
     missing = tmp_path / "nested" / "missing.sqlite"
-    with contextlib.suppress(OSError):
+    with pytest.raises(FileNotFoundError):
         _ = prune_unreferenced_types(missing, apply=True)
     assert not missing.parent.exists()
+
+
+def test_tombstone_from_another_source_protects_the_type(tmp_path: Path) -> None:
+    db_path = tmp_path / "prune.sqlite"
+    initialize_database(db_path)
+    _ingest_fixture(db_path)
+    with sqlite3.connect(db_path) as connection:
+        other = cast(
+            "int",
+            connection.execute("select max(source_id) from sources").fetchone()[0],
+        )
+        owners = cast(
+            "list[tuple[int]]",
+            connection.execute(
+                """
+                select source_id from health_types
+                where type_code = 'synthetic_unused_type'
+                """
+            ).fetchall(),
+        )
+        assert other not in {row[0] for row in owners}
+        _ = connection.execute(
+            """
+            insert into deleted_records
+                (source_id, record_family, client_record_id, deleted_at)
+            values (?, 'sample',
+                'hk-quantity-synthetic-unused-type-'
+                || '12345678-1234-1234-1234-123456789012', ?)
+            """,
+            (other, "2026-01-01T00:00:00Z"),
+        )
+
+    _ = prune_unreferenced_types(db_path, apply=True, min_age_days=0)
+
+    with sqlite3.connect(db_path) as connection:
+        kept = cast(
+            "int",
+            connection.execute(
+                """
+                select count(*) from health_types
+                where type_code = 'synthetic_unused_type'
+                """
+            ).fetchone()[0],
+        )
+    assert kept >= 1
