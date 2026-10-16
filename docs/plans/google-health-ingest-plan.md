@@ -82,7 +82,7 @@ Spike outcomes:
 - The filter runs when the account's `apple_source_connected` setting (§4.5) is true. It does NOT depend on whether Apple rows for that hour have arrived yet: Google can deliver before the iPhone syncs, and a data-presence rule would keep the echo and then duplicate it when the Apple row lands.
 - What counts as Apple-origin: ONLY Apple-specific identifiers, taken as exact values from the spike (G2): the source app is Apple Health (or the Google Health app's Apple Health import, as Google labels it), or the device manufacturer is Apple. A generic origin such as "phone" or "mobile" without an Apple manufacturer is NEVER treated as Apple: it may be the Pixel. The allow-list of Apple values is a versioned file, covered by fixtures.
 - With `apple_source_connected` true: a Google-side record that matches the Apple allow-list is dropped by the puller and counted in a per-run "echoes skipped" metric (counts only). Records that do not match are kept.
-- Records with an origin the filter does not recognise are counted in a per-run "unrecognised origin" metric, so new Google labels are noticed. Handling of those records is an open build decision: hold them out of canonical totals until mapped (planner recommendation) or keep them.
+- Records with an origin the filter does not recognise are counted in a per-run "unrecognised origin" metric, so new Google labels are noticed. They are held out of canonical totals until the label is mapped (decided 2026-10-16: planner's choice, Mike delegated it).
 - With `apple_source_connected` false (Google-only account): nothing is dropped as an echo; Google data is the record.
 - Changing the setting triggers a full re-pull window for the Google source so the stored rows match the new rule.
 - On iOS, the Google Health app's bundle id is recorded as a bridge source; HealthKit rows written by it are treated as Google-origin and excluded from the Apple source if they would loop (G3).
@@ -235,10 +235,9 @@ Resolved by Mike (2026-10-16 19:16Z, 19:18Z and 22:39Z):
 | 9.13 | Supabase | Local Supabase in Docker (on this host) is a viable option; the Kynk-hosted instance must never hold health data. Not built. A short spike comparing SQLite and local Postgres-with-Supabase on the same fixtures is tracked for after the reconciliation layer works. |
 
 Still open:
-- 9.4a. Serving other people: needs full restricted-scope verification for production (not Testing status, likely a paid third-party security assessment), and a privacy decision on alert bodies and stored health data of other people. Not started.
-- 9.14. Pixel-window schedule: at least one overlap window and one Pixel-only window, dates and times picked by Mike in advance. BLOCKS the real-data part of §8 steps 9 and 10.
-- 9.15. Retire `pref-pr-review-gate` (o2b preference describing a Codex-only review gate on Kynk, now moot since Codex reviews are retired). Proposed; needs Mike's OK.
-- §4.1 open build decision: unrecognised origins held out of canonical totals (planner recommendation) or kept.
+- 9.4a. Serving other people (clarified 2026-10-16: the app's customers, not Mike): needs full restricted-scope verification for production (not Testing status, likely a paid third-party security assessment), and a privacy decision on alert bodies and stored health data of other people. Not started.
+- 9.14. Pixel test data (decided 2026-10-16): the test windows are treated as a separate test user (its own `account_key`). Their data goes into a database that is torn down later, so it never mixes with Mike's production data. Dates are still picked by Mike in advance.
+- 9.15. Retire `pref-pr-review-gate` (approved 2026-10-16; Mike has project agents for code reviews).
 
 ## 10. Constraints
 
