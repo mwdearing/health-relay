@@ -166,3 +166,30 @@ def test_a_new_real_name_still_replaces_the_stored_one(tmp_path: Path) -> None:
         row = _med_row(connection)
     assert row[0] == "Synthetic Renamed"
     assert row[1] == "synthetic-concept-0002"
+
+
+def test_a_real_name_repairs_a_stored_fallback(tmp_path: Path) -> None:
+    db_path = _db(tmp_path)
+    _ = ingest_fixture(db_path, FIXTURE_PATH)
+    _replay_with_name(db_path, "concept c0123456789ab", None)
+    # The first replay kept the real name; force a stored fallback, then repair it.
+    with sqlite3.connect(db_path) as connection:
+        _ = connection.execute(
+            "update medication_dose_events set medication_name = ?",
+            ("concept c0123456789ab",),
+        )
+
+    _replay_with_name(db_path, "Synthetic Vitamin", "synthetic-concept-0001")
+
+    with sqlite3.connect(db_path) as connection:
+        assert _med_row(connection)[0] == "Synthetic Vitamin"
+
+
+def test_a_name_that_only_looks_like_the_fallback_is_stored(tmp_path: Path) -> None:
+    db_path = _db(tmp_path)
+    _ = ingest_fixture(db_path, FIXTURE_PATH)
+
+    _replay_with_name(db_path, "concept cafe", None)
+
+    with sqlite3.connect(db_path) as connection:
+        assert _med_row(connection)[0] == "concept cafe"
