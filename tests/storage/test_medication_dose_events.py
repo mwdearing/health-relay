@@ -132,3 +132,64 @@ def test_migration_adds_table_and_sync_run_column_to_existing_database(
         )
         assert "medication_dose_event_count" in {row[1] for row in pragma_rows}
         assert fetch_one_int(connection, MIGRATION_ROW_SQL) == 1
+
+
+def _replay_with_name(db_path: Path, name: str, key: str | None) -> None:
+    batch = _fixture_batch()
+    event = batch.medication_dose_events[0].model_copy(
+        update={"medication_name": name, "medication_concept_key": key},
+    )
+    replay = batch.model_copy(update={"medication_dose_events": (event,)})
+    _ = ingest_batch(db_path, replay, "replay")
+
+
+def test_fallback_name_replay_keeps_the_stored_real_name(tmp_path: Path) -> None:
+    db_path = _db(tmp_path)
+    _ = ingest_fixture(db_path, FIXTURE_PATH)
+
+    _replay_with_name(db_path, "concept c0123456789ab", None)
+    _replay_with_name(db_path, "Unnamed medication", None)
+
+    with sqlite3.connect(db_path) as connection:
+        row = _med_row(connection)
+    assert row[0] == "Synthetic Vitamin"
+    assert row[1] == "synthetic-concept-0001"
+
+
+def test_a_new_real_name_still_replaces_the_stored_one(tmp_path: Path) -> None:
+    db_path = _db(tmp_path)
+    _ = ingest_fixture(db_path, FIXTURE_PATH)
+
+    _replay_with_name(db_path, "Synthetic Renamed", "synthetic-concept-0002")
+
+    with sqlite3.connect(db_path) as connection:
+        row = _med_row(connection)
+    assert row[0] == "Synthetic Renamed"
+    assert row[1] == "synthetic-concept-0002"
+
+
+def test_a_real_name_repairs_a_stored_fallback(tmp_path: Path) -> None:
+    db_path = _db(tmp_path)
+    _ = ingest_fixture(db_path, FIXTURE_PATH)
+    _replay_with_name(db_path, "concept c0123456789ab", None)
+    # The first replay kept the real name; force a stored fallback, then repair it.
+    with sqlite3.connect(db_path) as connection:
+        _ = connection.execute(
+            "update medication_dose_events set medication_name = ?",
+            ("concept c0123456789ab",),
+        )
+
+    _replay_with_name(db_path, "Synthetic Vitamin", "synthetic-concept-0001")
+
+    with sqlite3.connect(db_path) as connection:
+        assert _med_row(connection)[0] == "Synthetic Vitamin"
+
+
+def test_a_name_that_only_looks_like_the_fallback_is_stored(tmp_path: Path) -> None:
+    db_path = _db(tmp_path)
+    _ = ingest_fixture(db_path, FIXTURE_PATH)
+
+    _replay_with_name(db_path, "concept cafe", None)
+
+    with sqlite3.connect(db_path) as connection:
+        assert _med_row(connection)[0] == "concept cafe"
