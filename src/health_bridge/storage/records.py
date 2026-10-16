@@ -80,19 +80,38 @@ UPSERT_ELECTROCARDIOGRAM_SQL = (
     "electrocardiograms.voltages_json), "
     "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
 )
-UPSERT_MEDICATION_DOSE_EVENT_SQL = (
-    "insert into medication_dose_events (source_id, client_record_id, "
-    "medication_name, medication_concept_key, status, status_raw, "
-    "start_time, scheduled_time, dose, unit) "
-    "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-    "on conflict(source_id, client_record_id) do update set "
-    "medication_name = excluded.medication_name, "
-    "medication_concept_key = excluded.medication_concept_key, "
-    "status = excluded.status, status_raw = excluded.status_raw, "
-    "start_time = excluded.start_time, scheduled_time = excluded.scheduled_time, "
-    "dose = excluded.dose, unit = excluded.unit, "
-    "updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
-)
+# A failed medication-list join makes the app send `concept c<12 hex>` (or
+# "unnamed medication") for a dose it already reported under its real name; the
+# replayed fallback must not overwrite the stored name (RELAY-R3, #97).
+UPSERT_MEDICATION_DOSE_EVENT_SQL = """
+insert into medication_dose_events (source_id, client_record_id,
+    medication_name, medication_concept_key, status, status_raw,
+    start_time, scheduled_time, dose, unit)
+values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+on conflict(source_id, client_record_id) do update set
+    medication_name = case
+        when (substr(excluded.medication_name, 1, 9) = 'concept c' and length(excluded.medication_name) = 21
+              and substr(excluded.medication_name, 10) not glob '*[^0-9a-f]*'
+              or lower(excluded.medication_name) = 'unnamed medication')
+         and not (substr(medication_dose_events.medication_name, 1, 9) = 'concept c' and length(medication_dose_events.medication_name) = 21
+              and substr(medication_dose_events.medication_name, 10) not glob '*[^0-9a-f]*'
+              or lower(medication_dose_events.medication_name) = 'unnamed medication')
+        then medication_dose_events.medication_name
+        else excluded.medication_name end,
+    medication_concept_key = case
+        when (substr(excluded.medication_name, 1, 9) = 'concept c' and length(excluded.medication_name) = 21
+              and substr(excluded.medication_name, 10) not glob '*[^0-9a-f]*'
+              or lower(excluded.medication_name) = 'unnamed medication')
+         and not (substr(medication_dose_events.medication_name, 1, 9) = 'concept c' and length(medication_dose_events.medication_name) = 21
+              and substr(medication_dose_events.medication_name, 10) not glob '*[^0-9a-f]*'
+              or lower(medication_dose_events.medication_name) = 'unnamed medication')
+        then medication_dose_events.medication_concept_key
+        else excluded.medication_concept_key end,
+    status = excluded.status, status_raw = excluded.status_raw,
+    start_time = excluded.start_time, scheduled_time = excluded.scheduled_time,
+    dose = excluded.dose, unit = excluded.unit,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+"""  # noqa: E501
 UPSERT_LAB_RESULT_SQL = (
     "insert into lab_results (source_id, client_record_id, loinc, name, "
     "category, effective_date, value_num, unit, value_text, ref_low, "
