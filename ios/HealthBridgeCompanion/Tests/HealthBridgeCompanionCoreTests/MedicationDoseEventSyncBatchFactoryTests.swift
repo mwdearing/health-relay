@@ -221,4 +221,47 @@ final class MedicationDoseEventSyncBatchFactoryTests: XCTestCase {
     private func date(_ value: String) throws -> Date {
         try XCTUnwrap(HealthBridgeUTCFormatter.date(from: value))
     }
+
+    func testDeletionBatchTombstonesEachUUIDOnceAndCarriesTheAnchor() throws {
+        let first = try XCTUnwrap(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
+        let second = try XCTUnwrap(UUID(uuidString: "22222222-2222-2222-2222-222222222222"))
+        let windowStart = Date(timeIntervalSince1970: 1_780_000_000)
+        let windowEnd = Date(timeIntervalSince1970: 1_780_086_400)
+
+        let batch = MedicationDoseEventSyncBatchFactory.makeMedicationDoseEventDeletionBatch(
+            deletedUUIDs: [second, first, second],
+            anchorCursorValue: "anchor-1",
+            windowStart: windowStart,
+            windowEnd: windowEnd,
+            generatedAt: windowEnd
+        )
+
+        XCTAssertTrue(batch.medicationDoseEvents.isEmpty)
+        XCTAssertEqual(batch.deletedRecords.map(\.recordFamily), ["medication_dose_event", "medication_dose_event"])
+        XCTAssertEqual(
+            batch.deletedRecords.map(\.clientRecordID),
+            [
+                "hk-meddose-11111111-1111-1111-1111-111111111111",
+                "hk-meddose-22222222-2222-2222-2222-222222222222",
+            ]
+        )
+        XCTAssertEqual(batch.sync.cursors.count, 1)
+        XCTAssertEqual(
+            batch.sync.cursors.first?.cursorKind,
+            MedicationDoseEventSyncBatchFactory.deletionAnchorCursorKind
+        )
+        XCTAssertEqual(batch.sync.cursors.first?.cursorValue, "anchor-1")
+    }
+
+    func testDeletionLaneSendsOnlyForegroundAndOnlyWhenNeeded() {
+        let uuid = UUID()
+        XCTAssertTrue(MedicationDoseLanePolicy.shouldSendDeletionBatch(
+            mode: .foreground, deletedUUIDs: [uuid], hadStoredAnchor: true))
+        XCTAssertTrue(MedicationDoseLanePolicy.shouldSendDeletionBatch(
+            mode: .foreground, deletedUUIDs: [], hadStoredAnchor: false))
+        XCTAssertFalse(MedicationDoseLanePolicy.shouldSendDeletionBatch(
+            mode: .foreground, deletedUUIDs: [], hadStoredAnchor: true))
+        XCTAssertFalse(MedicationDoseLanePolicy.shouldSendDeletionBatch(
+            mode: .automatic, deletedUUIDs: [uuid], hadStoredAnchor: false))
+    }
 }

@@ -39,6 +39,58 @@ public enum MedicationDoseEventSyncBatchFactory {
         )
     }
 
+    /// Cursor kind that stores the HealthKit anchor of the deletion lane (RELAY-R2).
+    public static let deletionAnchorCursorKind = "foreground_medication_dose_event_anchor"
+    public static let deletedRecordFamily = "medication_dose_event"
+
+    /// A deletion-only batch: tombstones for dose events the user deleted or corrected, plus the
+    /// new anchor as its cursor so the receiver round-trips it.
+    public static func makeMedicationDoseEventDeletionBatch(
+        deletedUUIDs: [UUID],
+        anchorCursorValue: String,
+        windowStart: Date,
+        windowEnd: Date,
+        generatedAt: Date = Date()
+    ) -> HealthBridgeBatchV1 {
+        let source = HealthBridgeAppleHealthSource.phone
+        let window = HealthBridgeTimeWindow(
+            startTime: HealthBridgeUTCFormatter.string(from: windowStart),
+            endTime: HealthBridgeUTCFormatter.string(from: windowEnd)
+        )
+        let deletedAt = HealthBridgeUTCFormatter.string(from: windowEnd)
+        let deleted = Array(Set(deletedUUIDs))
+            .sorted { $0.uuidString < $1.uuidString }
+            .map { uuid in
+                HealthBridgeDeletedRecord(
+                    recordFamily: deletedRecordFamily,
+                    sourceKey: source.sourceKey,
+                    clientRecordID: clientRecordID(for: uuid),
+                    deletedAt: deletedAt
+                )
+            }
+        return HealthBridgeBatchV1(
+            generatedAt: HealthBridgeUTCFormatter.string(from: generatedAt),
+            exportWindow: window,
+            sources: [source],
+            healthTypes: [.medicationDoseEvents],
+            samples: [],
+            workouts: [],
+            medicationDoseEvents: [],
+            sleepSessions: [],
+            deletedRecords: deleted,
+            sync: HealthBridgeSyncContext(
+                syncWindow: window,
+                cursors: [
+                    HealthBridgeSyncCursor(
+                        sourceKey: source.sourceKey,
+                        cursorKind: deletionAnchorCursorKind,
+                        cursorValue: anchorCursorValue
+                    )
+                ]
+            )
+        )
+    }
+
     static func medicationDoseEventRecords(
         from events: [HealthKitMedicationDoseEventSummary],
         source: HealthBridgeSource
@@ -126,6 +178,18 @@ public enum MedicationDoseLanePolicy {
         end: Date
     ) -> Bool {
         mode == .foreground
+    }
+
+    /// The deletion lane runs only in the foreground, like the shared time cursor, because only
+    /// that lane persists cursors. It uploads when something was deleted, or once to store the
+    /// first anchor; later anchor moves without deletions are not worth an upload.
+    public static func shouldSendDeletionBatch(
+        mode: HealthBridgeSyncExecutionMode,
+        deletedUUIDs: [UUID],
+        hadStoredAnchor: Bool
+    ) -> Bool {
+        guard mode == .foreground else { return false }
+        return !deletedUUIDs.isEmpty || !hadStoredAnchor
     }
 
     public static func shouldUpload(_ batch: HealthBridgeBatchV1, mode: HealthBridgeSyncExecutionMode) -> Bool {
