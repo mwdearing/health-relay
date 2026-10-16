@@ -5082,6 +5082,52 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 generatedAt: now
             )
 
+            // Deleted or corrected doses only surface through an anchored query (RELAY-R2). This
+            // runs in the foreground lane and never fails the dose sync itself.
+            if executionMode == .foreground {
+                do {
+                    let storedAnchor = try cursorStore.cursorValue(
+                        receiverBindingID: receiverBindingID,
+                        sourceKey: "apple_health.phone",
+                        cursorKind: MedicationDoseEventSyncBatchFactory.deletionAnchorCursorKind
+                    )
+                    let hadStoredAnchor = storedAnchor?.isEmpty == false
+                    let deletions = try await reader.readMedicationDoseEventDeletions(
+                        anchorCursorValue: storedAnchor
+                    )
+                    if MedicationDoseLanePolicy.shouldSendDeletionBatch(
+                        mode: executionMode,
+                        deletedUUIDs: deletions.deletedUUIDs,
+                        hadStoredAnchor: hadStoredAnchor
+                    ) {
+                        let deletionBatch = MedicationDoseEventSyncBatchFactory
+                            .makeMedicationDoseEventDeletionBatch(
+                                deletedUUIDs: deletions.deletedUUIDs,
+                                anchorCursorValue: deletions.anchorCursorValue,
+                                windowStart: start,
+                                windowEnd: end,
+                                generatedAt: now
+                            )
+                        let deletionData = try encoder.encode(deletionBatch)
+                        try requireCurrentReceiverSyncProgressScope(progressScope)
+                        _ = try await uploadPayloadsWithOutbox(
+                            [deletionData],
+                            to: url,
+                            cursorCheckpoint: FileOutboxCursorCheckpoint(
+                                receiverIdentity: receiverBindingID,
+                                sourceKey: "apple_health.phone",
+                                cursorKind: MedicationDoseEventSyncBatchFactory.deletionAnchorCursorKind,
+                                cursorValue: deletions.anchorCursorValue
+                            ),
+                            executionMode: executionMode,
+                            pendingGenerationRetirements: [:]
+                        )
+                    }
+                } catch {
+                    // Deletions are retried from the stored anchor on the next foreground sync.
+                }
+            }
+
             guard MedicationDoseLanePolicy.shouldUpload(batch, mode: executionMode) else {
                 statusIsError = false
                 statusMessage = executionMode == .automatic

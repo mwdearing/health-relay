@@ -44,6 +44,20 @@ public enum HealthKitMedicationDoseEventReaderError: Error, Equatable {
     case healthDataUnavailable
     case invalidWindow
     case perObjectAuthorizationDeclined
+    case anchorUnavailable
+}
+
+/// Dose events the user deleted since the stored anchor, plus the anchor to store once the
+/// deletions are delivered (RELAY-R2). `deletedUUIDs` is empty when no anchor existed yet: the
+/// first read only establishes the anchor.
+public struct HealthKitMedicationDoseEventDeletions: Equatable, Sendable {
+    public let deletedUUIDs: [UUID]
+    public let anchorCursorValue: String
+
+    public init(deletedUUIDs: [UUID], anchorCursorValue: String) {
+        self.deletedUUIDs = deletedUUIDs
+        self.anchorCursorValue = anchorCursorValue
+    }
 }
 
 /// Stable key for a HealthKit health concept: "c" + first 12 hex digits of the SHA-256 of the
@@ -142,6 +156,46 @@ public final class HealthKitMedicationDoseEventReader: @unchecked Sendable {
                 dose: event.doseQuantity,
                 unit: event.unit.unitString
             )
+        }
+    }
+
+    /// Dose events deleted since `anchorCursorValue`. HealthKit reports deletions only through an
+    /// anchored query; a plain window read never sees them. A corrected log replaces the object,
+    /// so the old uuid arrives here as a deletion.
+    public func readMedicationDoseEventDeletions(
+        anchorCursorValue: String?
+    ) async throws -> HealthKitMedicationDoseEventDeletions {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            throw HealthKitMedicationDoseEventReaderError.healthDataUnavailable
+        }
+        let anchor = try HealthKitAnchorCursorCodec.decodeOptional(anchorCursorValue)
+        return try await executeCancellableHealthKitQuery(healthStore: healthStore) { completion in
+            let query = HKAnchoredObjectQuery(
+                type: HKObjectType.medicationDoseEventType(),
+                predicate: nil,
+                anchor: anchor,
+                limit: HKObjectQueryNoLimit
+            ) { _, _, deletedObjects, newAnchor, error in
+                if let error {
+                    completion(.failure(error))
+                    return
+                }
+                guard let newAnchor else {
+                    completion(.failure(HealthKitMedicationDoseEventReaderError.anchorUnavailable))
+                    return
+                }
+                do {
+                    let cursorValue = try HealthKitAnchorCursorCodec.encode(newAnchor)
+                    let uuids = anchor == nil ? [] : (deletedObjects ?? []).map(\.uuid)
+                    completion(.success(HealthKitMedicationDoseEventDeletions(
+                        deletedUUIDs: uuids,
+                        anchorCursorValue: cursorValue
+                    )))
+                } catch {
+                    completion(.failure(error))
+                }
+            }
+            return query
         }
     }
 
