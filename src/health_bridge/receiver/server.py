@@ -115,7 +115,8 @@ INTAKE_RATE_LIMIT_MAX_TOKENS: Final = 1_024
 INTAKE_CAPABILITIES_RATE_LIMIT_COUNT: Final = 30
 INTAKE_CAPABILITIES_RATE_LIMIT_WINDOW_SECONDS: Final = 60.0
 # POST /v1/batches gets its own per-token budget, apart from the intake routes. The app
-# drains a backlog in bursts (a 2026-10-20 flush sent 79 in one minute), so the cap is set well above that.
+# drains a backlog in bursts (a 2026-10-20 flush sent 79 in one minute), so the cap sits
+# well above that.
 BATCH_RATE_LIMIT_COUNT: Final = 600
 BATCH_RATE_LIMIT_WINDOW_SECONDS: Final = 60.0
 INTAKE_CAPABILITIES_CACHE_CONTROL: Final = "private, max-age=300"
