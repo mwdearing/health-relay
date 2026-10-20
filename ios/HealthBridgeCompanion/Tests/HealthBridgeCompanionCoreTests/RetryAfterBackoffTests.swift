@@ -43,7 +43,7 @@ final class RetryAfterBackoffTests: XCTestCase {
 
     func testSchedulerHonoursNotBeforeFloorOnlyWhenLater() {
         let now = Date(timeIntervalSince1970: 1_000)
-        let floor = now.addingTimeInterval(600)
+        let floor = now.addingTimeInterval(3600)
         XCTAssertEqual(
             HealthBridgeBackgroundSync.nextEarliestBeginDate(enabled: true, now: now, notBefore: floor),
             floor
