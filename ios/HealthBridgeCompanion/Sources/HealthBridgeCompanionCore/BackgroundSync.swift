@@ -570,10 +570,13 @@ public enum HealthBridgeBackgroundSync {
     public static func nextEarliestBeginDate(
         enabled: Bool,
         now: Date = Date(),
-        minimumInterval: TimeInterval = defaultMinimumInterval
+        minimumInterval: TimeInterval = defaultMinimumInterval,
+        notBefore: Date? = nil
     ) -> Date? {
         guard enabled else { return nil }
-        return now.addingTimeInterval(minimumInterval)
+        let regular = now.addingTimeInterval(minimumInterval)
+        guard let notBefore else { return regular }
+        return max(regular, notBefore)
     }
 
     private static func automaticQuantityHealthTypes(
