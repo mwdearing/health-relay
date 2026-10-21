@@ -562,13 +562,18 @@ public enum BackgroundOutboxUploadCompletionPolicy {
               let headerValue else {
             return nil
         }
-        // Parsed as a Double so an oversized value clamps to the ceiling instead of failing to parse.
-        guard let seconds = Double(headerValue.trimmingCharacters(in: .whitespaces)),
-              seconds.isFinite,
-              seconds >= 1 else {
+        // RFC 9110 delta-seconds are ASCII digits only; exponent, sign and hex forms are malformed.
+        let digits = headerValue.trimmingCharacters(in: .whitespaces)
+        guard !digits.isEmpty,
+              digits.allSatisfy({ $0.isASCII && $0.isNumber }) else {
             return nil
         }
-        return Int(min(seconds, 3600))
+        // A long digit string is far above the ceiling, so it clamps without overflowing Int.
+        guard digits.count <= 6, let seconds = Int(digits) else {
+            return digits.allSatisfy({ $0 == "0" }) ? nil : 3600
+        }
+        guard seconds > 0 else { return nil }
+        return min(seconds, 3600)
     }
 
     public static func sleepBaselineConflictMinimumResetEpoch(

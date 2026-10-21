@@ -28,6 +28,15 @@ final class RetryAfterBackoffTests: XCTestCase {
         )
     }
 
+    func testRetryAfterRejectsNonDeltaSecondForms() {
+        for value in ["1e3", "+5", "0x10", "5.0", "5 s"] {
+            XCTAssertNil(
+                BackgroundOutboxUploadCompletionPolicy.retryAfterSeconds(statusCode: 429, headerValue: value),
+                value
+            )
+        }
+    }
+
     func testRetryAfterIgnoresOtherStatusesAndUnusableValues() {
         XCTAssertNil(BackgroundOutboxUploadCompletionPolicy.retryAfterSeconds(statusCode: 503, headerValue: "30"))
         XCTAssertNil(BackgroundOutboxUploadCompletionPolicy.retryAfterSeconds(statusCode: 429, headerValue: nil))
