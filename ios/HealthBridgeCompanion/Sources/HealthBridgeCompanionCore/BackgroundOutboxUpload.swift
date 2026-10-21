@@ -559,12 +559,16 @@ public enum BackgroundOutboxUploadCompletionPolicy {
     /// and anything else (an HTTP date, a negative or non-numeric value) is ignored.
     public static func retryAfterSeconds(statusCode: Int?, headerValue: String?) -> Int? {
         guard statusCode == 429,
-              let headerValue,
-              let seconds = Int(headerValue.trimmingCharacters(in: .whitespaces)),
-              seconds > 0 else {
+              let headerValue else {
             return nil
         }
-        return min(seconds, 3600)
+        // Parsed as a Double so an oversized value clamps to the ceiling instead of failing to parse.
+        guard let seconds = Double(headerValue.trimmingCharacters(in: .whitespaces)),
+              seconds.isFinite,
+              seconds >= 1 else {
+            return nil
+        }
+        return Int(min(seconds, 3600))
     }
 
     public static func sleepBaselineConflictMinimumResetEpoch(

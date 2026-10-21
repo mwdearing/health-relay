@@ -19,6 +19,13 @@ final class RetryAfterBackoffTests: XCTestCase {
             BackgroundOutboxUploadCompletionPolicy.retryAfterSeconds(statusCode: 429, headerValue: "86400"),
             3600
         )
+        XCTAssertEqual(
+            BackgroundOutboxUploadCompletionPolicy.retryAfterSeconds(
+                statusCode: 429,
+                headerValue: "99999999999999999999"
+            ),
+            3600
+        )
     }
 
     func testRetryAfterIgnoresOtherStatusesAndUnusableValues() {
