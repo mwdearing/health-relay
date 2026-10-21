@@ -864,10 +864,18 @@ final class BackgroundURLSessionOutboxUploader: NSObject, @unchecked Sendable, U
                 httpStatusCode: statusCode,
                 responseBody: responseBody
             )
+        let retryAfterSeconds = BackgroundOutboxUploadCompletionPolicy.retryAfterSeconds(
+            statusCode: statusCode,
+            headerValue: (task.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After")
+        )
+        if let retryAfterSeconds {
+            BackgroundUploadRetryDeadline.note(retryAfterSeconds: retryAfterSeconds, now: Date())
+        }
         let completion = BackgroundUploadTaskCompletion(
             statusCode: statusCode,
             hadTransportError: error != nil,
-            sleepMinimumResetEpoch: minimumResetEpoch
+            sleepMinimumResetEpoch: minimumResetEpoch,
+            retryAfterSeconds: retryAfterSeconds
         )
         let completionMetadataPersisted: Bool
         if ownershipRecord == nil {

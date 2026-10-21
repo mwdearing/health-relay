@@ -280,15 +280,19 @@ public struct BackgroundUploadTaskCompletion: Codable, Equatable, Sendable {
     public let statusCode: Int?
     public let hadTransportError: Bool
     public let sleepMinimumResetEpoch: UInt64?
+    /// Seconds the receiver asked us to wait after HTTP 429, if it sent a usable `Retry-After`.
+    public let retryAfterSeconds: Int?
 
     public init(
         statusCode: Int?,
         hadTransportError: Bool,
-        sleepMinimumResetEpoch: UInt64?
+        sleepMinimumResetEpoch: UInt64?,
+        retryAfterSeconds: Int? = nil
     ) {
         self.statusCode = statusCode
         self.hadTransportError = hadTransportError
         self.sleepMinimumResetEpoch = sleepMinimumResetEpoch
+        self.retryAfterSeconds = retryAfterSeconds
     }
 }
 
@@ -551,6 +555,27 @@ public enum BackgroundOutboxUploadCompletionPolicy {
         return shouldMarkUploaded(error: error, httpStatusCode: httpStatusCode)
     }
 
+    /// Only HTTP 429 asks for a wait. The value is whole seconds, clamped to one second up to one hour,
+    /// and anything else (an HTTP date, a negative or non-numeric value) is ignored.
+    public static func retryAfterSeconds(statusCode: Int?, headerValue: String?) -> Int? {
+        guard statusCode == 429,
+              let headerValue else {
+            return nil
+        }
+        // RFC 9110 delta-seconds are ASCII digits only; exponent, sign and hex forms are malformed.
+        let digits = headerValue.trimmingCharacters(in: .whitespaces)
+        guard !digits.isEmpty,
+              digits.allSatisfy({ $0.isASCII && $0.isNumber }) else {
+            return nil
+        }
+        // A long digit string is far above the ceiling, so it clamps without overflowing Int.
+        guard digits.count <= 6, let seconds = Int(digits) else {
+            return digits.allSatisfy({ $0 == "0" }) ? nil : 3600
+        }
+        guard seconds > 0 else { return nil }
+        return min(seconds, 3600)
+    }
+
     public static func sleepBaselineConflictMinimumResetEpoch(
         error: Error?,
         httpStatusCode: Int?,
@@ -663,5 +688,29 @@ public final class BackgroundEventFinalizationCoordinator<ID: Hashable>: @unchec
         return {
             readyHandlers.forEach { $0() }
         }
+    }
+}
+
+/// The earliest time the next background upload may be attempted after the receiver asked us to back off.
+/// Stored in UserDefaults so the background refresh scheduler can honour it after the app is relaunched.
+public enum BackgroundUploadRetryDeadline {
+    public static let defaultsKey = "healthbridge.backgroundUpload.retryNotBefore"
+
+    /// Keeps the later of the stored deadline and the new one, so a shorter `Retry-After` from a
+    /// later response never shortens a wait the receiver already asked for.
+    public static func note(retryAfterSeconds: Int, now: Date, defaults: UserDefaults = .standard) {
+        let requested = now.addingTimeInterval(TimeInterval(retryAfterSeconds))
+        if let existing = defaults.object(forKey: defaultsKey) as? Date, existing > requested {
+            return
+        }
+        defaults.set(requested, forKey: defaultsKey)
+    }
+
+    /// The deadline if it is still in the future; a past deadline is cleared.
+    public static func pending(now: Date, defaults: UserDefaults = .standard) -> Date? {
+        guard let deadline = defaults.object(forKey: defaultsKey) as? Date else { return nil }
+        if deadline > now { return deadline }
+        defaults.removeObject(forKey: defaultsKey)
+        return nil
     }
 }
