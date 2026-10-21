@@ -55,6 +55,20 @@ final class RetryAfterBackoffTests: XCTestCase {
         )
     }
 
+    func testShorterRetryAfterDoesNotShortenAnExistingDeadline() throws {
+        let suite = "retry-deadline-keep-later-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let now = Date(timeIntervalSince1970: 3_000)
+
+        BackgroundUploadRetryDeadline.note(retryAfterSeconds: 600, now: now, defaults: defaults)
+        BackgroundUploadRetryDeadline.note(retryAfterSeconds: 30, now: now, defaults: defaults)
+        XCTAssertEqual(
+            BackgroundUploadRetryDeadline.pending(now: now, defaults: defaults),
+            now.addingTimeInterval(600)
+        )
+    }
+
     func testRetryDeadlineIsStoredThenClearedOncePast() throws {
         let suite = "retry-deadline-tests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

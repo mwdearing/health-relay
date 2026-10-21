@@ -687,8 +687,14 @@ public final class BackgroundEventFinalizationCoordinator<ID: Hashable>: @unchec
 public enum BackgroundUploadRetryDeadline {
     public static let defaultsKey = "healthbridge.backgroundUpload.retryNotBefore"
 
+    /// Keeps the later of the stored deadline and the new one, so a shorter `Retry-After` from a
+    /// later response never shortens a wait the receiver already asked for.
     public static func note(retryAfterSeconds: Int, now: Date, defaults: UserDefaults = .standard) {
-        defaults.set(now.addingTimeInterval(TimeInterval(retryAfterSeconds)), forKey: defaultsKey)
+        let requested = now.addingTimeInterval(TimeInterval(retryAfterSeconds))
+        if let existing = defaults.object(forKey: defaultsKey) as? Date, existing > requested {
+            return
+        }
+        defaults.set(requested, forKey: defaultsKey)
     }
 
     /// The deadline if it is still in the future; a past deadline is cleared.
