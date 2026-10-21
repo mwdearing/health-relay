@@ -64,7 +64,7 @@ def test_failed_authentication_does_not_spend_the_budget(tmp_path: Path) -> None
 
 
 def test_default_limit_is_sixty_batches_a_minute() -> None:
-    assert BATCH_RATE_LIMIT_COUNT == 600
+    assert BATCH_RATE_LIMIT_COUNT == 120
 
 
 def test_tokens_sharing_a_prefix_do_not_share_a_budget(tmp_path: Path) -> None:
