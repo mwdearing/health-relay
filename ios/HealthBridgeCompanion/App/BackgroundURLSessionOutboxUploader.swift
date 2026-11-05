@@ -782,12 +782,11 @@ final class BackgroundURLSessionOutboxUploader: NSObject, @unchecked Sendable, U
               !candidates.isEmpty else {
             return
         }
-        let latch = BoundedAsyncValueLatch<[URLSessionTask]>()
-        session.getAllTasks { tasks in
-            latch.resolve(tasks)
-        }
         // If the session cannot be enumerated, keep every record.
-        guard let liveTasks = await latch.wait(timeout: Self.cancellationCompletionTimeout) else {
+        guard let liveTasks = await tasks(
+            in: session,
+            coordinator: eventFinalizationCoordinator
+        ) else {
             return
         }
         let orphans = BackgroundUploadLedgerReconciler.orphans(
