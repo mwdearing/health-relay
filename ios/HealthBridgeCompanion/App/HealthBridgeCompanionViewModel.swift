@@ -4995,6 +4995,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                     )
                     sentDeletionCount = deletions.deletedUUIDs.count
                 }
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 // Deletions are retried from the stored anchor on the next foreground sync.
             }
