@@ -424,6 +424,81 @@ final class StepCountSyncBatchFactoryTests: XCTestCase {
     }
 }
 
+final class StepCountSyncBatchBoundingTests: XCTestCase {
+    func testLargeAnchoredBacklogSplitsIntoBatchesUnderReceiverLimit() throws {
+        let start = try date("2026-05-01T00:00:00Z")
+        let provenance = HealthKitSampleProvenance(
+            sourceName: "Synthetic Watch",
+            sourceBundleIdentifier: "com.example.synthetic",
+            deviceName: "Synthetic Device",
+            deviceModel: "Synthetic1,1",
+            deviceManufacturer: "Synthetic Maker"
+        )
+        let samples = (0..<20_000).map { index in
+            HealthKitStepSampleSummary(
+                uuid: UUID(),
+                start: start.addingTimeInterval(Double(index) * 60),
+                end: start.addingTimeInterval(Double(index) * 60 + 45),
+                count: Double(index % 90 + 1),
+                provenance: provenance
+            )
+        }
+        let deletions = (0..<1_200).map { index in
+            HealthKitDeletedStepSample(
+                uuid: UUID(),
+                deletedAt: start.addingTimeInterval(Double(index))
+            )
+        }
+        let changes = HealthKitAnchoredStepChanges(
+            stepSamples: samples,
+            deletedStepSamples: deletions,
+            anchorCursorValue: "opaque-anchor-large",
+            windowStart: start,
+            windowEnd: try date("2026-06-01T00:00:00Z")
+        )
+        let single = StepCountSyncBatchFactory.makeAnchoredStepBatch(
+            changes: changes,
+            generatedAt: try date("2026-06-01T00:00:00Z")
+        )
+
+        let batches = StepCountSyncBatchFactory.boundedAnchoredStepBatches(from: single)
+
+        XCTAssertGreaterThan(batches.count, 1)
+        for batch in batches {
+            XCTAssertLessThanOrEqual(
+                try HealthBridgeBatchEncoder().encode(batch).count,
+                OutboundBatchSizePolicy.receiverMaxBatchBytes
+            )
+            XCTAssertLessThanOrEqual(
+                batch.samples.count + batch.deletedRecords.count,
+                StepCountSyncBatchFactory.maxRecordsPerAnchoredBatch
+            )
+        }
+        XCTAssertEqual(batches.flatMap(\.samples), single.samples)
+        XCTAssertEqual(batches.flatMap(\.deletedRecords), single.deletedRecords)
+        XCTAssertEqual(batches.dropLast().map(\.sync.cursors), Array(repeating: [], count: batches.count - 1))
+        XCTAssertEqual(batches.last?.sync.cursors, [
+            HealthBridgeSyncCursor(
+                sourceKey: "apple_health.phone",
+                cursorKind: "anchored_step_sync",
+                cursorValue: "opaque-anchor-large"
+            )
+        ])
+    }
+
+    func testCursorOnlyAnchoredBatchIsNotSplit() throws {
+        let single = StepCountSyncBatchFactory.makeAnchoredStepBatch(
+            stepSamples: [],
+            deletedStepSamples: [],
+            anchorCursorValue: "opaque-anchor-next",
+            windowStart: try date("2026-06-01T00:00:00Z"),
+            windowEnd: try date("2026-06-02T00:00:00Z")
+        )
+
+        XCTAssertEqual(StepCountSyncBatchFactory.boundedAnchoredStepBatches(from: single), [single])
+    }
+}
+
 private func utcCalendar() -> Calendar {
     var calendar = Calendar(identifier: .gregorian)
     calendar.locale = Locale(identifier: "en_US_POSIX")

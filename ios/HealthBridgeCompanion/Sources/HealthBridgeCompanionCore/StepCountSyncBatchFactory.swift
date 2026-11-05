@@ -240,6 +240,17 @@ public enum StepCountSyncBatchFactory {
         )
     }
 
+    public static let maxRecordsPerAnchoredBatch = GenericQuantitySyncBatchFactory.defaultMaxSamplesPerBatch
+
+    /// Splits an anchored step batch (samples, deletions and legacy daily tombstones) so
+    /// every upload stays under the receiver body limit. The anchor cursor is only on the
+    /// last batch; enqueue them together with one cursor checkpoint.
+    public static func boundedAnchoredStepBatches(
+        from batch: HealthBridgeBatchV1
+    ) -> [HealthBridgeBatchV1] {
+        OutboundBatchSizePolicy.bounded(batch, maxRecordsPerBatch: maxRecordsPerAnchoredBatch)
+    }
+
     public static func makeAnchoredStepBatch(
         changes: HealthKitAnchoredStepChanges,
         generatedAt: Date = Date()

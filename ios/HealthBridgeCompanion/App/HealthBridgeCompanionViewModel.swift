@@ -4582,7 +4582,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 : "\(batch.samples.count) step add/update(s), \(changes.deletedStepSamples.count) step deletion(s)"
             statusMessage = "Uploading \(uploadDescription) to \(url.host() ?? url.absoluteString)..."
             failureStage = .encoding
-            let data = try encoder.encode(batch)
+            let payloads = try StepCountSyncBatchFactory
+                .boundedAnchoredStepBatches(from: batch)
+                .map { try encoder.encode($0) }
             let shouldPersistAnchorCursor = shouldPersistSharedProgress
                 && CoreLaneSyncCursorPolicy.shouldPersistCursor(
                     uploadedRecords: uploadedRecords,
@@ -4600,7 +4602,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             failureStage = .transport
             try requireCurrentReceiverSyncProgressScope(progressScope)
             let deliveryResult = try await uploadPayloadsWithOutbox(
-                [data],
+                payloads,
                 to: url,
                 cursorCheckpoint: cursorCheckpoint,
                 executionMode: executionMode,
@@ -4966,7 +4968,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 ? "ECG cursor-only sync"
                 : "\(batch.electrocardiograms.count) ECG recordings"
             statusMessage = "[ECG] Uploading \(uploadDescription) to \(url.host() ?? url.absoluteString)..."
-            let data = try encoder.encode(batch)
+            let payloads = try ElectrocardiogramSyncBatchFactory
+                .boundedBatches(from: batch)
+                .map { try encoder.encode($0) }
             let cursor = batch.sync.cursors.first(where: {
                 $0.sourceKey == "apple_health.phone"
                     && $0.cursorKind == ElectrocardiogramSyncBatchFactory.foregroundCursorKind
@@ -4981,7 +4985,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             }
             try requireCurrentReceiverSyncProgressScope(progressScope)
             let deliveryResult = try await uploadPayloadsWithOutbox(
-                [data],
+                payloads,
                 to: url,
                 cursorCheckpoint: cursorCheckpoint
             )
@@ -5302,8 +5306,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         do {
             let batch = LabResultImportBatchFactory.makeLabResultBatch(results: summary.labResults)
             statusMessage = "[Export] Uploading \(CompanionCopy.count(summary.labResults.count, "lab result")) to \(url.host() ?? url.absoluteString)..."
-            let data = try encoder.encode(batch)
-            let deliveryResult = try await uploadPayloadsWithOutbox([data], to: url)
+            let payloads = try LabResultImportBatchFactory
+                .boundedBatches(from: batch)
+                .map { try encoder.encode($0) }
+            let deliveryResult = try await uploadPayloadsWithOutbox(payloads, to: url)
             let outboxNotice = lastOutboxNotice
             statusIsError = false
             pendingExportImportSummary = nil

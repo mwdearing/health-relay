@@ -3,6 +3,15 @@ import Foundation
 /// Builds a foreground ECG batch (HealthRelay addition). Mirrors `WorkoutSyncBatchFactory`.
 public enum ElectrocardiogramSyncBatchFactory {
     public static let foregroundCursorKind = "foreground_electrocardiogram_sync"
+    /// Upper bound on recordings per batch. Each recording can carry about 15k voltage
+    /// values, so the encoded-size cap in `OutboundBatchSizePolicy` is what usually binds.
+    public static let maxRecordingsPerBatch = 25
+
+    /// Splits `batch` so every upload stays under the receiver body limit. The cursor is
+    /// only on the last batch; enqueue them together with one cursor checkpoint.
+    public static func boundedBatches(from batch: HealthBridgeBatchV1) -> [HealthBridgeBatchV1] {
+        OutboundBatchSizePolicy.bounded(batch, maxRecordsPerBatch: maxRecordingsPerBatch)
+    }
 
     public static func makeElectrocardiogramBatch(
         recordings: [HealthKitElectrocardiogramSummary],
