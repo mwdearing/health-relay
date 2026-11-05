@@ -2741,7 +2741,13 @@ def smoke(
     ] = None,
     url: Annotated[
         str,
-        typer.Option("--url", help="Receiver /v1/batches endpoint."),
+        typer.Option(
+            "--url",
+            help=(
+                "Receiver /v1/batches endpoint. Connects directly: HTTP(S)_PROXY "
+                "is not used and redirects are not followed."
+            ),
+        ),
     ] = "http://127.0.0.1:8765/v1/batches",
 ) -> None:
     _validate_receiver_url(url)
@@ -2771,7 +2777,10 @@ def smoke(
         typer.echo(f"Receiver smoke failed: HTTP {exc.code}.", err=True)
         raise typer.Exit(code=1) from exc
     except (URLError, HTTPException, TimeoutError, OSError) as exc:
-        typer.echo("Receiver smoke failed: receiver was not reachable.", err=True)
+        typer.echo(
+            "Receiver smoke failed: receiver not reachable (proxies are not used).",
+            err=True,
+        )
         raise typer.Exit(code=1) from exc
     try:
         body = SMOKE_RESPONSE_ADAPTER.validate_json(raw_body)

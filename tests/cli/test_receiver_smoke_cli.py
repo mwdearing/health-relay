@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import socket
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import pytest
 from typer.testing import CliRunner
@@ -135,6 +136,28 @@ def test_smoke_ignores_proxy_environment(
     assert result.exit_code == 0
     assert proxy_handler.seen_authorization == []
     assert origin_handler.seen_authorization == [f"Bearer {SYNTHETIC_TOKEN}"]
+
+
+def test_smoke_unreachable_receiver_says_proxies_are_not_used(
+    batch_file: Path, token_file: Path
+) -> None:
+    closed = socket.socket()
+    closed.bind(("127.0.0.1", 0))
+    port = cast("tuple[str, int]", closed.getsockname())[1]
+    closed.close()
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "receiver", "smoke", "--input", str(batch_file),
+            "--token-file", str(token_file),
+            "--url", f"http://127.0.0.1:{port}/v1/batches",
+        ],
+    )  # fmt: skip
+
+    assert result.exit_code == 1
+    assert "not reachable" in result.stderr
+    assert "proxies are not used" in result.stderr
 
 
 def test_smoke_non_json_200_is_a_clean_error(
