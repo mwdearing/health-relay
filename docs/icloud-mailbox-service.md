@@ -110,10 +110,20 @@ Complete mailbox setup first. You need these existing paths:
 - the private receiver SQLite database;
 - the selected iCloud container's `HealthBridgeMailbox/v1` directory.
 
-The executable, database, mailbox directory, and their parent directories must
-not use symlink traversal or group/world-writable permissions. The database and
+The database, mailbox directory, and their parent directories must not use
+symlink traversal or group/world-accessible permissions. The database and
 mailbox must belong to the current user. Validation fails closed without
 repairing or replacing unsafe paths.
+
+`uv tool install` places a symlink to the executable in `~/.local/bin`. The
+service commands resolve the `--executable` symlink once, validate the real
+file it points to, and record the resolved path in the LaunchAgent, so
+`"$(command -v health-bridge)"` works as given. The resolved file and its
+parent directories must still meet the same ownership and permission rules.
+
+When validation fails, the message names the rejected input and the failed
+check, for example `(db: group_or_world_access)`. With `--json` the output also
+carries `field` and `reason`. Neither includes a path.
 
 Validate the inputs without installing or starting anything:
 
