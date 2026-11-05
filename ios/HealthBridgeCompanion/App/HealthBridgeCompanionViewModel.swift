@@ -6760,6 +6760,16 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                     minimumResetEpoch: minimumResetEpoch,
                     expectedGeneration: expectedGeneration
                 )
+            } catch ReceiverClientError.rateLimited(let retryAfterSeconds) {
+                try requireCurrentConnectionGeneration(expectedGeneration)
+                // Share the deadline with the background scheduler so it does not retry sooner.
+                BackgroundUploadRetryDeadline.note(retryAfterSeconds: retryAfterSeconds, now: Date())
+                outbox.noteDiagnosticDelivery(itemID: item.id, outcome: .failed)
+                failedItemIDs.append(item.id)
+                failedDescriptions.append(
+                    "Your server asked the app to wait \(retryAfterSeconds) seconds before sending more. | domain=ReceiverClientError | code=rate_limited"
+                )
+                break
             } catch {
                 outbox.noteDiagnosticDelivery(itemID: item.id, outcome: .failed)
                 failedItemIDs.append(item.id)
@@ -7128,6 +7138,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 return "Your server's response was too large for the app to read. | domain=ReceiverClientError | code=response_too_large"
             case .sleepBaselineResetEpochConflict(let minimumResetEpoch):
                 return "Your server requires a Sleep reset epoch above \(minimumResetEpoch). | domain=ReceiverClientError | code=sleep_epoch_conflict"
+            case .rateLimited(let retryAfterSeconds):
+                return "Your server asked the app to wait \(retryAfterSeconds) seconds before sending more. | domain=ReceiverClientError | code=rate_limited"
             case .unsuccessfulStatusCode(let statusCode, _):
                 if statusCode == 401 {
                     return "Your server rejected the saved connection key. Reconnect from a fresh setup link. | domain=ReceiverClientError | code=http_401"
