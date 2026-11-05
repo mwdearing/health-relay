@@ -2649,7 +2649,7 @@ def start(  # noqa: PLR0913 -- Typer exposes independent receiver options.
     ] = None,
     host: Annotated[
         str,
-        typer.Option("--host", help="Bind host. Keep 127.0.0.1 for local-only."),
+        typer.Option("--host", help="Bind host (IPv4 or IPv6 address). Keep 127.0.0.1 for local-only."),
     ] = DEFAULT_RECEIVER_HOST,
     port: Annotated[
         int,

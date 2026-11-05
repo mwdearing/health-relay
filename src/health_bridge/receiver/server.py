@@ -267,6 +267,14 @@ _INTAKE_LIMITER_LOCK = Lock()
 _CLIENT_CONNECTIONS_LOCK = Lock()
 
 
+class ReceiverBindError(OSError):
+    """The receiver could not bind its listening socket."""
+
+    def __init__(self, host: str, port: int, cause: OSError) -> None:
+        reason = cause.strerror or str(cause)
+        super().__init__(f"Could not listen on {host}:{port}: {reason.lower()}")
+
+
 class ReceiverHTTPServer(ThreadingHTTPServer):
     # Class-level defaults so a subclass that skips __init__ still works.
     request_timeout_seconds = DEFAULT_REQUEST_TIMEOUT_SECONDS
@@ -329,7 +337,12 @@ class ReceiverHTTPServer(ThreadingHTTPServer):
         self._rejection_counter: RejectionCounter = (
             RejectionCounter() if rejection_counter is None else rejection_counter
         )
-        super().__init__((host, port), ReceiverRequestHandler)
+        if ":" in host:
+            self.address_family = socket.AF_INET6
+        try:
+            super().__init__((host, port), ReceiverRequestHandler)
+        except OSError as exc:
+            raise ReceiverBindError(host, port, exc) from exc
 
     @override
     def process_request(
@@ -1257,6 +1270,7 @@ def serve_receiver(  # noqa: PLR0913 - transport dependencies are explicit.
     mailbox_root: Path | None = None,
     intake_context_enabled: bool = False,
     request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    on_listening: Callable[[str, int], None] | None = None,
 ) -> None:
     worker = (
         MailboxRuntimeWorker(db_path=db_path, mailbox_root=mailbox_root)
@@ -1276,6 +1290,9 @@ def serve_receiver(  # noqa: PLR0913 - transport dependencies are explicit.
         ) as server,
         database_lifecycle_lock(db_path, exclusive=False, create=False),
     ):
+        if on_listening is not None:
+            bound_host, bound_port = server.server_address[:2]
+            on_listening(str(bound_host), int(bound_port))
         if worker is not None:
             worker.start()
         try:
