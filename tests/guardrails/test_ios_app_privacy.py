@@ -635,6 +635,9 @@ def test_public_release_audit_passes_its_real_tracked_tree() -> None:
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "strict_blockers=0" in completed.stdout
+    assert "built-in patterns ran" in completed.stdout or (
+        "local denylist patterns" in completed.stdout
+    )
     assert "local_denylist_consulted=" in completed.stdout
     assert "unreviewed_binaryish_tracked_files=0" in completed.stdout
 
