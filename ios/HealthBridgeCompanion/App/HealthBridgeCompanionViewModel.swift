@@ -4997,8 +4997,15 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 }
             } catch is CancellationError {
                 throw CancellationError()
+            } catch is HealthKitAnchorCursorCodecError {
+                // A stored anchor that cannot be read fails every sync, so do not promise a retry.
+                appendActivityLog(
+                    "[ECG] Deletion check skipped: the stored deletion anchor could not be read. "
+                        + "Deleted ECG recordings are not being synced.",
+                    isError: true
+                )
             } catch {
-                // Deletions are retried from the stored anchor on the next foreground sync.
+                // Other failures are retried from the stored anchor on the next foreground sync.
                 appendActivityLog(
                     "[ECG] Deletion check failed: \(describe(error)). It retries on the next sync.",
                     isError: true

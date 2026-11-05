@@ -24,3 +24,15 @@ def test_ecg_deletion_lane_logs_non_cancellation_errors() -> None:
     generic = lane.index("} catch {")
     assert "appendActivityLog(" in lane[generic:]
     assert "[ECG] Deletion check failed" in lane[generic:]
+
+
+def test_ecg_deletion_lane_does_not_promise_a_retry_for_an_unreadable_anchor() -> None:
+    source = VIEW_MODEL.read_text(encoding="utf-8")
+    start = source.index("var sentDeletionCount = 0")
+    end = source.index("guard ForegroundSyncUploadPolicy.shouldUpload(batch)", start)
+    lane = source[start:end]
+
+    anchor = lane.index("catch is HealthKitAnchorCursorCodecError")
+    generic = lane.index("} catch {")
+    assert anchor < generic
+    assert "retries" not in lane[anchor:generic]
