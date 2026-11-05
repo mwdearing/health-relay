@@ -190,9 +190,12 @@ public final class HealthKitMedicationDoseEventReader: @unchecked Sendable {
         }
         let anchor = try HealthKitAnchorCursorCodec.decodeOptional(anchorCursorValue)
         // Names are only needed to map added samples, which are ignored without a stored anchor.
-        var namesByConceptKey: [String: String] = [:]
+        // A `let`, because the query's result handler is a concurrently executing closure.
+        let namesByConceptKey: [String: String]
         if anchor != nil {
             namesByConceptKey = try await medicationNamesByConceptKey()
+        } else {
+            namesByConceptKey = [:]
         }
         return try await executeCancellableHealthKitQuery(healthStore: healthStore) { completion in
             let query = HKAnchoredObjectQuery(
