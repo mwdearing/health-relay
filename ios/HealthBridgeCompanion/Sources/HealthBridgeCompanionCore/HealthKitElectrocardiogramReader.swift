@@ -42,6 +42,20 @@ public struct HealthKitElectrocardiogramSummary: Equatable, Sendable {
 public enum HealthKitElectrocardiogramReaderError: Error, Equatable {
     case healthDataUnavailable
     case invalidWindow
+    case anchorUnavailable
+}
+
+/// Recordings the user deleted since the stored anchor, plus the anchor to store once the
+/// tombstones are delivered. `deletedUUIDs` is empty when no anchor existed yet: the first
+/// read only establishes the anchor.
+public struct HealthKitElectrocardiogramDeletions: Equatable, Sendable {
+    public let deletedUUIDs: [UUID]
+    public let anchorCursorValue: String
+
+    public init(deletedUUIDs: [UUID], anchorCursorValue: String) {
+        self.deletedUUIDs = deletedUUIDs
+        self.anchorCursorValue = anchorCursorValue
+    }
 }
 
 #if canImport(HealthKit)
@@ -93,6 +107,45 @@ public final class HealthKitElectrocardiogramReader: @unchecked Sendable {
             summaries.append(summary(for: sample, voltages: voltages))
         }
         return summaries
+    }
+
+    /// ECG recordings deleted since `anchorCursorValue`. HealthKit reports deletions only through
+    /// an anchored query; the window read above never sees them.
+    public func readElectrocardiogramDeletions(
+        anchorCursorValue: String?
+    ) async throws -> HealthKitElectrocardiogramDeletions {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            throw HealthKitElectrocardiogramReaderError.healthDataUnavailable
+        }
+        let anchor = try HealthKitAnchorCursorCodec.decodeOptional(anchorCursorValue)
+        return try await executeCancellableHealthKitQuery(healthStore: healthStore) { completion in
+            let query = HKAnchoredObjectQuery(
+                type: HKObjectType.electrocardiogramType(),
+                predicate: nil,
+                anchor: anchor,
+                limit: HKObjectQueryNoLimit
+            ) { _, _, deletedObjects, newAnchor, error in
+                if let error {
+                    completion(.failure(error))
+                    return
+                }
+                guard let newAnchor else {
+                    completion(.failure(HealthKitElectrocardiogramReaderError.anchorUnavailable))
+                    return
+                }
+                do {
+                    let cursorValue = try HealthKitAnchorCursorCodec.encode(newAnchor)
+                    let uuids = anchor == nil ? [] : (deletedObjects ?? []).map(\.uuid)
+                    completion(.success(HealthKitElectrocardiogramDeletions(
+                        deletedUUIDs: uuids,
+                        anchorCursorValue: cursorValue
+                    )))
+                } catch {
+                    completion(.failure(error))
+                }
+            }
+            return query
+        }
     }
 
     private func readVoltages(for sample: HKElectrocardiogram) async throws -> [Double] {

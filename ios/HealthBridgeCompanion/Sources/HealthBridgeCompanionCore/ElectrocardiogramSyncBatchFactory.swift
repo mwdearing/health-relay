@@ -39,6 +39,58 @@ public enum ElectrocardiogramSyncBatchFactory {
         )
     }
 
+    /// Cursor kind that stores the HealthKit anchor of the ECG deletion lane.
+    public static let deletionAnchorCursorKind = "foreground_electrocardiogram_anchor"
+    public static let deletedRecordFamily = "electrocardiogram"
+
+    /// A deletion-only batch: tombstones for recordings the user deleted from Health, plus the
+    /// new anchor as its cursor so the outbox applies it only after the receiver accepts the batch.
+    public static func makeElectrocardiogramDeletionBatch(
+        deletedUUIDs: [UUID],
+        anchorCursorValue: String,
+        windowStart: Date,
+        windowEnd: Date,
+        generatedAt: Date = Date()
+    ) -> HealthBridgeBatchV1 {
+        let source = HealthBridgeAppleHealthSource.phone
+        let window = HealthBridgeTimeWindow(
+            startTime: HealthBridgeUTCFormatter.string(from: windowStart),
+            endTime: HealthBridgeUTCFormatter.string(from: windowEnd)
+        )
+        let deletedAt = HealthBridgeUTCFormatter.string(from: windowEnd)
+        let deleted = Array(Set(deletedUUIDs))
+            .sorted { $0.uuidString < $1.uuidString }
+            .map { uuid in
+                HealthBridgeDeletedRecord(
+                    recordFamily: deletedRecordFamily,
+                    sourceKey: source.sourceKey,
+                    clientRecordID: clientRecordID(for: uuid),
+                    deletedAt: deletedAt
+                )
+            }
+        return HealthBridgeBatchV1(
+            generatedAt: HealthBridgeUTCFormatter.string(from: generatedAt),
+            exportWindow: window,
+            sources: [source],
+            healthTypes: [.electrocardiogram],
+            samples: [],
+            workouts: [],
+            electrocardiograms: [],
+            sleepSessions: [],
+            deletedRecords: deleted,
+            sync: HealthBridgeSyncContext(
+                syncWindow: window,
+                cursors: [
+                    HealthBridgeSyncCursor(
+                        sourceKey: source.sourceKey,
+                        cursorKind: deletionAnchorCursorKind,
+                        cursorValue: anchorCursorValue
+                    )
+                ]
+            )
+        )
+    }
+
     static func electrocardiogramRecords(
         from recordings: [HealthKitElectrocardiogramSummary],
         source: HealthBridgeSource
@@ -77,5 +129,14 @@ public enum ElectrocardiogramSyncBatchFactory {
 
     static func clientRecordID(for uuid: UUID) -> String {
         "hk-ecg-\(uuid.uuidString.lowercased())"
+    }
+}
+
+/// Rules for the foreground ECG deletion lane (HealthRelay addition).
+public enum ElectrocardiogramLanePolicy {
+    /// Uploads when something was deleted, or once to store the first anchor; later anchor
+    /// moves without deletions are not worth an upload.
+    public static func shouldSendDeletionBatch(deletedUUIDs: [UUID], hadStoredAnchor: Bool) -> Bool {
+        !deletedUUIDs.isEmpty || !hadStoredAnchor
     }
 }

@@ -4911,7 +4911,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         #endif
     }
 
-    /// HealthRelay addition: foreground ECG lane (no background/anchored variant yet).
+    /// HealthRelay addition: foreground ECG lane (no background variant; deletions via an anchored query).
     func syncRecentElectrocardiograms() async {
         guard let url = URL(string: receiverURLString) else {
             statusIsError = true
@@ -4955,6 +4955,47 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 windowEnd: end,
                 generatedAt: now
             )
+
+            // Recordings deleted in Health only surface through an anchored query. Tombstones go in
+            // their own batch whose anchor is applied only after the receiver accepts it. This
+            // never fails the recording sync itself; deletions retry from the stored anchor.
+            do {
+                let storedAnchor = try cursorStore.cursorValue(
+                    receiverBindingID: receiverBindingID,
+                    sourceKey: "apple_health.phone",
+                    cursorKind: ElectrocardiogramSyncBatchFactory.deletionAnchorCursorKind
+                )
+                let hadStoredAnchor = storedAnchor?.isEmpty == false
+                let deletions = try await HealthKitElectrocardiogramReader().readElectrocardiogramDeletions(
+                    anchorCursorValue: storedAnchor
+                )
+                if ElectrocardiogramLanePolicy.shouldSendDeletionBatch(
+                    deletedUUIDs: deletions.deletedUUIDs,
+                    hadStoredAnchor: hadStoredAnchor
+                ) {
+                    let deletionBatch = ElectrocardiogramSyncBatchFactory.makeElectrocardiogramDeletionBatch(
+                        deletedUUIDs: deletions.deletedUUIDs,
+                        anchorCursorValue: deletions.anchorCursorValue,
+                        windowStart: start,
+                        windowEnd: end,
+                        generatedAt: now
+                    )
+                    let deletionData = try encoder.encode(deletionBatch)
+                    try requireCurrentReceiverSyncProgressScope(progressScope)
+                    _ = try await uploadPayloadsWithOutbox(
+                        [deletionData],
+                        to: url,
+                        cursorCheckpoint: FileOutboxCursorCheckpoint(
+                            receiverIdentity: receiverBindingID,
+                            sourceKey: "apple_health.phone",
+                            cursorKind: ElectrocardiogramSyncBatchFactory.deletionAnchorCursorKind,
+                            cursorValue: deletions.anchorCursorValue
+                        )
+                    )
+                }
+            } catch {
+                // Deletions are retried from the stored anchor on the next foreground sync.
+            }
 
             guard ForegroundSyncUploadPolicy.shouldUpload(batch) else {
                 statusIsError = false

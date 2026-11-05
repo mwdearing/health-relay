@@ -132,6 +132,48 @@ final class ElectrocardiogramSyncBatchFactoryTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(HealthBridgeBatchV1.self, from: populatedData), populated)
     }
 
+    func testDeletionBatchTombstonesEachUUIDOnceAndCarriesTheAnchor() throws {
+        let first = try XCTUnwrap(UUID(uuidString: "AAAAAAAA-1111-1111-1111-111111111111"))
+        let second = try XCTUnwrap(UUID(uuidString: "BBBBBBBB-2222-2222-2222-222222222222"))
+        let windowStart = Date(timeIntervalSince1970: 1_780_000_000)
+        let windowEnd = Date(timeIntervalSince1970: 1_780_086_400)
+
+        let batch = ElectrocardiogramSyncBatchFactory.makeElectrocardiogramDeletionBatch(
+            deletedUUIDs: [second, first, second],
+            anchorCursorValue: "anchor-1",
+            windowStart: windowStart,
+            windowEnd: windowEnd,
+            generatedAt: windowEnd
+        )
+
+        XCTAssertTrue(batch.electrocardiograms.isEmpty)
+        XCTAssertEqual(batch.deletedRecords.map(\.recordFamily), ["electrocardiogram", "electrocardiogram"])
+        XCTAssertEqual(
+            batch.deletedRecords.map(\.clientRecordID),
+            [
+                "hk-ecg-aaaaaaaa-1111-1111-1111-111111111111",
+                "hk-ecg-bbbbbbbb-2222-2222-2222-222222222222",
+            ]
+        )
+        XCTAssertEqual(batch.deletedRecords.map(\.sourceKey), ["apple_health.phone", "apple_health.phone"])
+        XCTAssertEqual(batch.sync.cursors.count, 1)
+        XCTAssertEqual(
+            batch.sync.cursors.first?.cursorKind,
+            ElectrocardiogramSyncBatchFactory.deletionAnchorCursorKind
+        )
+        XCTAssertEqual(batch.sync.cursors.first?.cursorValue, "anchor-1")
+    }
+
+    func testDeletionLaneSendsWhenSomethingWasDeletedOrToStoreTheFirstAnchor() {
+        let uuid = UUID()
+        XCTAssertTrue(ElectrocardiogramLanePolicy.shouldSendDeletionBatch(
+            deletedUUIDs: [uuid], hadStoredAnchor: true))
+        XCTAssertTrue(ElectrocardiogramLanePolicy.shouldSendDeletionBatch(
+            deletedUUIDs: [], hadStoredAnchor: false))
+        XCTAssertFalse(ElectrocardiogramLanePolicy.shouldSendDeletionBatch(
+            deletedUUIDs: [], hadStoredAnchor: true))
+    }
+
     private func date(_ value: String) throws -> Date {
         try XCTUnwrap(HealthBridgeUTCFormatter.date(from: value))
     }

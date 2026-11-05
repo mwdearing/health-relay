@@ -31,6 +31,7 @@ receiver-specific parts stay here.
 - Version: do not bump the iOS version by hand. The `Build unsigned IPA` workflow stamps both the marketing version and the build number as `1.2.<run number>`; the tracked values (`MARKETING_VERSION` 1.2.0, `CURRENT_PROJECT_VERSION` 50, `component-versions.json` `ios_companion`) are placeholders that never change on an app change.
 
 ## Modifications (newest first)
+- 2026-11-05: ECG deletions. The foreground ECG lane now reads an `HKAnchoredObjectQuery` on the ECG type (cursor `foreground_electrocardiogram_anchor`) and sends `electrocardiogram` tombstones (`hk-ecg-<uuid>`) in a deletion-only batch whose anchor is checkpointed only after acceptance. The first anchorless read only stores the anchor. Mirrors the medication lane (#174).
 - 2026-10-14: retired the `Publish IPA release` and `Promote IPA release` workflows (#127), so
   no workflow here attaches an unsigned IPA to a GitHub Release or promotes one to Latest, and
   a guardrail limits the workflow token's write scopes so only the receiver release pipeline
@@ -196,7 +197,7 @@ receiver-specific parts stay here.
   30-day fallback window, 3-day replay overlap, cursor `foreground_electrocardiogram_sync`),
   run as a manual-sync lane after sleep; `electrocardiogram` is now a dedicated sync type, so it
   is part of the unified read authorization set and listed in `docs/supported-health-data.md`.
-  Upload policy counts ECG records. No background/anchored ECG lane yet.
+  Upload policy counts ECG records. No background ECG lane; deletions use an anchored query (see the 2026-11-05 entry).
 - 2026-09-28: 38 HealthKit dietary quantity types (all but water, which is `hydration`) added to
   the receiver timeseries catalog, the Swift catalog expansion entries, the disclosure doc and the
   pinned tests; units g/mg/mcg/kcal as in health-insights `dietary_types.py`. Delivered as a
