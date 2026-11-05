@@ -13,3 +13,14 @@ def test_ecg_deletion_lane_does_not_swallow_cancellation() -> None:
     cancellation = lane.index("catch is CancellationError")
     assert "throw" in lane[cancellation : cancellation + 120]
     assert cancellation < lane.index("} catch {")
+
+
+def test_ecg_deletion_lane_logs_non_cancellation_errors() -> None:
+    source = VIEW_MODEL.read_text(encoding="utf-8")
+    start = source.index("var sentDeletionCount = 0")
+    end = source.index("guard ForegroundSyncUploadPolicy.shouldUpload(batch)", start)
+    lane = source[start:end]
+
+    generic = lane.index("} catch {")
+    assert "appendActivityLog(" in lane[generic:]
+    assert "[ECG] Deletion check failed" in lane[generic:]

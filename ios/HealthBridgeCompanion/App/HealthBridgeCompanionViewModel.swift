@@ -4999,6 +4999,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 throw CancellationError()
             } catch {
                 // Deletions are retried from the stored anchor on the next foreground sync.
+                appendActivityLog(
+                    "[ECG] Deletion check failed: \(describe(error)). It retries on the next sync.",
+                    isError: true
+                )
             }
 
             guard ForegroundSyncUploadPolicy.shouldUpload(batch) else {
