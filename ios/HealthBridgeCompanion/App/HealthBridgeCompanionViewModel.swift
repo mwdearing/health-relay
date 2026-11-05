@@ -2477,6 +2477,20 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         }
     }
 
+    /// Empties the stored ECG deletion anchor. An empty value reads as "no anchor", so the next
+    /// sync establishes a fresh one. This never advances a cursor past undelivered data.
+    private func resetElectrocardiogramDeletionAnchor(
+        in cursorStore: FileSyncCursorStore,
+        receiverBindingID: String
+    ) {
+        try? cursorStore.saveCursorValue(
+            "",
+            receiverBindingID: receiverBindingID,
+            sourceKey: "apple_health.phone",
+            cursorKind: ElectrocardiogramSyncBatchFactory.deletionAnchorCursorKind
+        )
+    }
+
     private func requireCurrentConnectionGeneration(_ expectedGeneration: String) throws {
         try Task.checkCancellation()
         guard connectionTerminalBarrier.allowsPostResponseMutation(
@@ -4911,7 +4925,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         #endif
     }
 
-    /// HealthRelay addition: foreground ECG lane (no background/anchored variant yet).
+    /// HealthRelay addition: foreground ECG lane (no background variant; deletions via an anchored query).
     func syncRecentElectrocardiograms() async {
         guard let url = URL(string: receiverURLString) else {
             statusIsError = true
@@ -4956,9 +4970,72 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 generatedAt: now
             )
 
+            // Recordings deleted in Health only surface through an anchored query. Tombstones go in
+            // their own batch whose anchor is applied only after the receiver accepts it. This
+            // never fails the recording sync itself; deletions retry from the stored anchor.
+            var sentDeletionCount = 0
+            do {
+                let storedAnchor = try cursorStore.cursorValue(
+                    receiverBindingID: receiverBindingID,
+                    sourceKey: "apple_health.phone",
+                    cursorKind: ElectrocardiogramSyncBatchFactory.deletionAnchorCursorKind
+                )
+                let hadStoredAnchor = storedAnchor?.isEmpty == false
+                let deletions = try await HealthKitElectrocardiogramReader().readElectrocardiogramDeletions(
+                    anchorCursorValue: storedAnchor
+                )
+                if ElectrocardiogramLanePolicy.shouldSendDeletionBatch(
+                    deletedUUIDs: deletions.deletedUUIDs,
+                    hadStoredAnchor: hadStoredAnchor
+                ) {
+                    let deletionBatch = ElectrocardiogramSyncBatchFactory.makeElectrocardiogramDeletionBatch(
+                        deletedUUIDs: deletions.deletedUUIDs,
+                        anchorCursorValue: deletions.anchorCursorValue,
+                        windowStart: start,
+                        windowEnd: end,
+                        generatedAt: now
+                    )
+                    let deletionData = try encoder.encode(deletionBatch)
+                    try requireCurrentReceiverSyncProgressScope(progressScope)
+                    _ = try await uploadPayloadsWithOutbox(
+                        [deletionData],
+                        to: url,
+                        cursorCheckpoint: FileOutboxCursorCheckpoint(
+                            receiverIdentity: receiverBindingID,
+                            sourceKey: "apple_health.phone",
+                            cursorKind: ElectrocardiogramSyncBatchFactory.deletionAnchorCursorKind,
+                            cursorValue: deletions.anchorCursorValue
+                        )
+                    )
+                    sentDeletionCount = deletions.deletedUUIDs.count
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch is HealthKitAnchorCursorCodecError {
+                // A stored anchor that cannot be read would fail every sync. Clear it so the next
+                // sync establishes a fresh one; deletions made in between are not recoverable.
+                resetElectrocardiogramDeletionAnchor(
+                    in: cursorStore,
+                    receiverBindingID: receiverBindingID
+                )
+                appendActivityLog(
+                    "[ECG] The stored deletion anchor could not be read and was reset. "
+                        + "ECG deletions made until the next sync cannot be reported.",
+                    isError: true
+                )
+            } catch {
+                // Other failures are retried from the stored anchor on the next foreground sync.
+                appendActivityLog(
+                    "[ECG] Deletion check failed: \(describe(error)). It retries on the next sync.",
+                    isError: true
+                )
+            }
+
             guard ForegroundSyncUploadPolicy.shouldUpload(batch) else {
                 statusIsError = false
-                statusMessage = "[ECG] HealthKit returned no ECG sync payload for the selected sync window. Nothing sent."
+                statusMessage = sentDeletionCount > 0
+                    ? "[ECG] No new ECG recordings. Sent \(sentDeletionCount) deletion(s)."
+                    : "[ECG] HealthKit returned no ECG sync payload for the selected sync window. Nothing sent."
                 return
             }
 
