@@ -2477,6 +2477,20 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         }
     }
 
+    /// Empties the stored ECG deletion anchor. An empty value reads as "no anchor", so the next
+    /// sync establishes a fresh one. This never advances a cursor past undelivered data.
+    private func resetElectrocardiogramDeletionAnchor(
+        in cursorStore: FileSyncCursorStore,
+        receiverBindingID: String
+    ) {
+        try? cursorStore.saveCursorValue(
+            "",
+            receiverBindingID: receiverBindingID,
+            sourceKey: "apple_health.phone",
+            cursorKind: ElectrocardiogramSyncBatchFactory.deletionAnchorCursorKind
+        )
+    }
+
     private func requireCurrentConnectionGeneration(_ expectedGeneration: String) throws {
         try Task.checkCancellation()
         guard connectionTerminalBarrier.allowsPostResponseMutation(
@@ -4998,10 +5012,15 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             } catch is CancellationError {
                 throw CancellationError()
             } catch is HealthKitAnchorCursorCodecError {
-                // A stored anchor that cannot be read fails every sync, so do not promise a retry.
+                // A stored anchor that cannot be read would fail every sync. Clear it so the next
+                // sync establishes a fresh one; deletions made in between are not recoverable.
+                resetElectrocardiogramDeletionAnchor(
+                    in: cursorStore,
+                    receiverBindingID: receiverBindingID
+                )
                 appendActivityLog(
-                    "[ECG] Deletion check skipped: the stored deletion anchor could not be read. "
-                        + "Deleted ECG recordings are not being synced.",
+                    "[ECG] The stored deletion anchor could not be read and was reset. "
+                        + "ECG deletions made until the next sync cannot be reported.",
                     isError: true
                 )
             } catch {
