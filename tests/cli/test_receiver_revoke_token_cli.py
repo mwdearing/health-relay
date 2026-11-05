@@ -114,7 +114,7 @@ def test_revoke_token_cli_refuses_ambiguous_prefix(tmp_path: Path) -> None:
 
     # Then
     assert result.exit_code == 1
-    assert "More than one" in result.output
+    assert "Several active" in result.output
     assert "revoked_token_prefix" not in result.stdout
     assert authenticate_receiver_token(db_path, "hb_samepref_one")
     assert authenticate_receiver_token(db_path, "hb_samepref_two")

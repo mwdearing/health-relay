@@ -1179,7 +1179,7 @@ def revoke_token(
         revoked_count = revoke_active_receiver_token(db, prefix)
     except AmbiguousReceiverTokenPrefixError as exc:
         typer.echo(
-            "More than one active receiver token carries that prefix; nothing was revoked.",
+            "Several active receiver tokens carry that prefix; nothing was revoked.",
             err=True,
         )
         raise typer.Exit(code=1) from exc
