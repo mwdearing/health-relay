@@ -1,4 +1,5 @@
 import sqlite3
+import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -155,6 +156,31 @@ def initialize_database(db_path: Path) -> None:
             _apply_pre_receipt_migrations(connection, db_path)
         _apply_migration(connection, DELIVERY_RECEIPT_MIGRATION_ID, db_path)
         _apply_post_receipt_migrations(connection, db_path)
+
+
+_INITIALIZED_DATABASES: dict[str, tuple[int, int]] = {}
+_INITIALIZED_DATABASES_LOCK: Final = threading.Lock()
+
+
+def ensure_database_initialized(db_path: Path) -> None:
+    """Run ``initialize_database`` once per process for each database file.
+
+    The key is the file's device and inode, so a replaced or recreated file
+    is initialized again. Request-time auth calls use this instead of
+    re-walking the migration ledger on every request.
+    """
+    key = str(db_path.resolve())
+    with _INITIALIZED_DATABASES_LOCK:
+        try:
+            stat_result = db_path.stat()
+        except FileNotFoundError:
+            stat_result = None
+        identity = (stat_result.st_dev, stat_result.st_ino) if stat_result else None
+        if identity is not None and _INITIALIZED_DATABASES.get(key) == identity:
+            return
+        initialize_database(db_path)
+        stat_result = db_path.stat()
+        _INITIALIZED_DATABASES[key] = (stat_result.st_dev, stat_result.st_ino)
 
 
 def _apply_pre_receipt_migrations(
