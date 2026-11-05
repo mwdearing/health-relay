@@ -1462,8 +1462,12 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 noteManualDeliveryFailure(summary.failedDescriptions.first)
                 statusIsError = true
                 statusMessage = "Some queued uploads did not finish: attempted \(summary.attemptedCount), uploaded \(summary.uploadedCount), failed \(summary.failedCount). \(Self.firstFailureSentence(summary)) Queued uploads: \(pendingOutboxCount)."
-                // Sync Now stops here so the reason stays visible instead of being overwritten.
-                return false
+                // A server rejection stops Sync Now so the reason stays visible. A transport
+                // failure leaves the uploads queued and the run continues, as the summary reports.
+                if let firstFailure = summary.failedDescriptions.first,
+                   CompanionSyncNowCompletion.isServerRejection(firstFailure) {
+                    return false
+                }
             } else {
                 statusIsError = false
                 statusMessage = "Queued uploads sent: \(summary.uploadedCount). Remaining: \(pendingOutboxCount)."
