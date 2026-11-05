@@ -154,6 +154,19 @@ def revoke_receiver_token(db_path: Path, token_prefix: str) -> None:
         )
 
 
+def revoke_active_receiver_token(db_path: Path, token_prefix: str) -> int:
+    """Revoke the active token with this prefix and report how many changed.
+
+    ``revoke_receiver_token`` stays the fire-and-forget form used by rollback
+    paths. A caller that must fail when the prefix matched nothing needs the
+    affected row count, which an unknown or already-revoked prefix reports as
+    zero.
+    """
+    initialize_database(db_path)
+    with connect_database(db_path) as connection:
+        return int(connection.execute(REVOKE_TOKEN_SQL, (token_prefix,)).rowcount)
+
+
 def _generate_token() -> str:
     return f"{TOKEN_PREFIX}{secrets.token_urlsafe(GENERATED_TOKEN_BYTES)}"
 

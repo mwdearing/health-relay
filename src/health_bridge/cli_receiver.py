@@ -86,7 +86,11 @@ from health_bridge.receiver.server import (
     INTAKE_CONTEXT_CAPABILITIES_PATH,
     serve_receiver,
 )
-from health_bridge.receiver.tokens import create_receiver_token, revoke_receiver_token
+from health_bridge.receiver.tokens import (
+    create_receiver_token,
+    revoke_active_receiver_token,
+    revoke_receiver_token,
+)
 from health_bridge.receiver.transports import (
     PublicReceiverTransport,
     ReceiverTransport,
@@ -1158,8 +1162,27 @@ def revoke_token(
         typer.Option("--token-prefix", help="Prefix returned by create-token."),
     ],
 ) -> None:
-    revoke_receiver_token(db, token_prefix)
-    typer.echo(json.dumps({"revoked_token_prefix": token_prefix}, sort_keys=True))
+    prefix = token_prefix.strip()
+    if not db.is_file():
+        # Never create a database here: a mistyped path must not look like a
+        # store that simply holds no matching token.
+        typer.echo(
+            "Receiver database was not found; nothing was revoked.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    try:
+        revoked_count = revoke_active_receiver_token(db, prefix)
+    except (sqlite3.Error, OSError) as exc:
+        typer.echo("Receiver token storage is unavailable.", err=True)
+        raise typer.Exit(code=1) from exc
+    if revoked_count == 0:
+        typer.echo(
+            "No active receiver token carries that prefix; nothing was revoked.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    typer.echo(json.dumps({"revoked_token_prefix": prefix}, sort_keys=True))
 
 
 @receiver_app.command("intake-register-producer")
