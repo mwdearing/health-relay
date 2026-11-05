@@ -175,6 +175,10 @@ def revoke_active_receiver_token(db_path: Path, token_prefix: str) -> int:
     """
     initialize_database(db_path)
     with connect_database(db_path) as connection:
+        # sqlite3 only opens an implicit transaction before DML, so the count
+        # SELECT would run unlocked. Take the write lock first so a concurrent
+        # insert cannot slip in between the count and the UPDATE.
+        _ = connection.execute("BEGIN IMMEDIATE")
         count_row = TOKEN_COUNT_ROW_ADAPTER.validate_python(
             connection.execute(COUNT_ACTIVE_PREFIX_SQL, (token_prefix,)).fetchone(),
         )
