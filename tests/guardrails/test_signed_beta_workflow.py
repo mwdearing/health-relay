@@ -7,6 +7,7 @@ reads secrets outside its own steps, and it never writes a secret to a log or an
 artifact.
 """
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -362,7 +363,7 @@ def _quiet_source(step_name: str) -> str:
 
 def _categories(step_name: str, log_text: str, tmp_path: Path) -> list[str]:
     fixture = tmp_path / "fixture.log"
-    fixture.write_text(log_text)
+    _ = fixture.write_text(log_text)
     script = (
         "set -euo pipefail\n"
         f"{_quiet_source(step_name)}\n"
@@ -485,3 +486,44 @@ def test_the_archive_check_prints_only_pass_or_fail_lines_and_the_checksum() -> 
             )
     assert "set -x" not in run
     assert "cat " not in run
+
+
+def test_both_ipa_workflows_default_to_the_recorded_marketing_version() -> None:
+    build = Path(".github/workflows/build-ipa.yml").read_text()
+    assert "1.2.$GITHUB_RUN_NUMBER" not in build
+    assert "component-versions.json" in build
+    assert "ios_companion" in build
+
+
+def test_the_marketing_version_has_one_recorded_source_that_fork_md_names() -> None:
+    recorded = cast(
+        "dict[str, dict[str, str]]",
+        json.loads(Path("component-versions.json").read_text()),
+    )
+    version = recorded["ios_companion"]["marketing_version"]
+    pbxproj = Path(
+        "ios/HealthBridgeCompanion/HealthBridgeCompanion.xcodeproj/project.pbxproj"
+    ).read_text()
+    assert set(re.findall(r"\bMARKETING_VERSION = ([^;]+);", pbxproj)) == {version}
+    fork = Path("FORK.md").read_text()
+    (rule,) = [line for line in fork.splitlines() if line.startswith("- Version:")]
+    assert f"currently {version}" in rule
+    assert "1.2.<run number>" not in rule
+    assert "do not bump" not in rule
+
+
+def test_the_docs_do_not_claim_which_release_is_latest() -> None:
+    for name in (
+        "README.md",
+        "SECURITY.md",
+        "docs/versioning.md",
+        ".github/release/README.md",
+    ):
+        text = Path(name).read_text()
+        assert "including the one marked Latest" not in text, name
+        assert "including the one currently marked Latest" not in text, name
+        assert "stays on the last app release" not in text, name
+        assert "never marked Latest" not in text, name
+    versioning = Path("docs/versioning.md").read_text()
+    assert "--latest=false" in versioning
+    assert "gh release view" in versioning
