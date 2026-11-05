@@ -38,6 +38,15 @@ nonce bind the exact canonical receipt bytes, so regenerating a committed,
 retryable, or terminal ACK produces identical bytes. Published error codes are
 closed and carry no free text.
 
+One terminal code carries a number. `sleep_baseline_reset_epoch_stale` means the
+receiver already stores a newer ordered Sleep baseline reset epoch than the
+batch carries, so the same bytes can never be accepted. Only this receipt adds
+a `minimum_reset_epoch` field, the stored epoch the device must exceed with a
+fresh reset. Every other receipt keeps the six-field form. Older clients treat
+the unknown code as an unauthenticated ACK and keep waiting, as they did before
+the code existed; clients that know it run the same Sleep baseline recovery as
+the direct HTTP `409 sleep_baseline_reset_epoch_conflict` response.
+
 The public structural schema is
 `schemas/health_bridge.delivery.v1.schema.json`. Canonical-byte, key-trust,
 signature, AEAD, and receiver parsing requirements are enforced by the protocol
