@@ -186,13 +186,19 @@ jobs:
           APP=$(find "$ARCHIVE/Products/Applications" -maxdepth 1 -name '*.app' -type d | head -1)
           [[ -n "$APP" ]] || fail "no app bundle in the archive"
           plist() { /usr/libexec/PlistBuddy -c "Print :$1" "$APP/Info.plist" 2> /dev/null || true; }
-          [[ "$(plist CFBundleIdentifier)" == "$BUNDLE_ID" ]] || fail "CFBundleIdentifier is not the bundle id"
+          # An empty expected or archived value fails, so an unset secret and an unreadable key can't match.
+          same() {
+            local actual
+            actual=$(plist "$1")
+            [[ -n "$2" && -n "$actual" && "$actual" == "$2" ]] || fail "$3"
+          }
+          same CFBundleIdentifier "$BUNDLE_ID" "CFBundleIdentifier is not the bundle id"
           echo "ok: CFBundleIdentifier"
-          [[ "$(plist CFBundleShortVersionString)" == "$MARKETING_VERSION" ]] || fail "CFBundleShortVersionString is not the marketing version"
+          same CFBundleShortVersionString "$MARKETING_VERSION" "CFBundleShortVersionString is not the marketing version"
           echo "ok: CFBundleShortVersionString"
-          [[ "$(plist CFBundleVersion)" == "$BUILD_NUMBER" ]] || fail "CFBundleVersion is not the build number"
+          same CFBundleVersion "$BUILD_NUMBER" "CFBundleVersion is not the build number"
           echo "ok: CFBundleVersion"
-          [[ "$(plist HealthBridgeSourceCommit)" == "$GITHUB_SHA" ]] || fail "HealthBridgeSourceCommit is not this commit"
+          same HealthBridgeSourceCommit "$GITHUB_SHA" "HealthBridgeSourceCommit is not this commit"
           echo "ok: HealthBridgeSourceCommit"
           codesign --verify --strict "$APP" > /dev/null 2>&1 || fail "the app signature does not verify"
           echo "ok: codesign --verify --strict"

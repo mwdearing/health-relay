@@ -527,3 +527,17 @@ def test_the_docs_do_not_claim_which_release_is_latest() -> None:
     versioning = Path("docs/versioning.md").read_text()
     assert "--latest=false" in versioning
     assert "gh release view" in versioning
+
+
+def test_the_archive_check_refuses_empty_values() -> None:
+    """An unset secret and an unreadable plist key must not compare equal."""
+    step = next(s for s in _steps() if str(s["name"]) == VERIFY_STEP)
+    run = str(step["run"])
+    assert '[[ -n "$2" && -n "$actual" && "$actual" == "$2" ]]' in run
+    for key in (
+        "CFBundleIdentifier",
+        "CFBundleShortVersionString",
+        "CFBundleVersion",
+        "HealthBridgeSourceCommit",
+    ):
+        assert f"same {key} " in run, key
