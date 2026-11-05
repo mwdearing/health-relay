@@ -454,6 +454,23 @@ public final class FileBackgroundUploadTaskOwnershipStore: @unchecked Sendable {
         }
     }
 
+    /// Removes the record only while no completion has been saved for it, under one lock hold.
+    /// Returns false when the record is gone or a delegate callback saved a completion first,
+    /// in which case that callback owns finalizing the record.
+    @discardableResult
+    public func removeIfCompletionUnrecorded(taskID: Int) throws -> Bool {
+        var removed = false
+        try mutate { manifest in
+            guard let index = manifest.records.firstIndex(where: { $0.taskID == taskID }),
+                  manifest.records[index].completion == nil else {
+                return
+            }
+            manifest.records.remove(at: index)
+            removed = true
+        }
+        return removed
+    }
+
     private func mutate(_ update: (inout Manifest) throws -> Void) throws {
         lock.lock()
         defer { lock.unlock() }

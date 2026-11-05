@@ -800,8 +800,15 @@ final class BackgroundURLSessionOutboxUploader: NSObject, @unchecked Sendable, U
                 continue
             }
             await cancellationBarrier.complete(orphan.taskID)
+            // The barrier await suspends, so a callback may have saved its completion since the
+            // check above. Remove only while the record still has none; otherwise that callback
+            // finalizes it.
             do {
-                try taskOwnershipStore.remove(taskID: orphan.taskID)
+                guard try taskOwnershipStore.removeIfCompletionUnrecorded(
+                    taskID: orphan.taskID
+                ) else {
+                    continue
+                }
             } catch {
                 continue
             }

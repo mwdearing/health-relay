@@ -371,6 +371,37 @@ final class BackgroundOutboxUploadTests: XCTestCase {
 
         XCTAssertTrue(try store.records().isEmpty)
     }
+
+    func testConditionalRemovalKeepsRecordsWithSavedCompletion() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FileBackgroundUploadTaskOwnershipStore(
+            fileURL: directory.appendingPathComponent("background-task-ownership.json")
+        )
+        for taskID in [4, 5] {
+            try store.begin(
+                BackgroundUploadTaskOwnership(
+                    taskID: taskID,
+                    itemID: "0000000000000000000\(taskID)-payload.json",
+                    receiverGeneration: "g1",
+                    receiverBindingID: "binding-a"
+                )
+            )
+        }
+        try store.recordCompletion(
+            BackgroundUploadTaskCompletion(
+                statusCode: 200,
+                hadTransportError: false,
+                sleepMinimumResetEpoch: nil
+            ),
+            forTaskID: 4
+        )
+
+        XCTAssertFalse(try store.removeIfCompletionUnrecorded(taskID: 4))
+        XCTAssertTrue(try store.removeIfCompletionUnrecorded(taskID: 5))
+        XCTAssertFalse(try store.removeIfCompletionUnrecorded(taskID: 5))
+        XCTAssertEqual(try store.records().map(\.taskID), [4])
+    }
 }
 
 private func temporaryDirectory() throws -> URL {
