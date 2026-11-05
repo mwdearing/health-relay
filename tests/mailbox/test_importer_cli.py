@@ -230,13 +230,15 @@ def test_import_transient_mailbox_file_errors_stay_retryable(
     assert json.loads(result.stdout)["retryable"] == 1
 
 
+@pytest.mark.parametrize(
+    "message", ["database is locked", "disk I/O error", "database or disk is full"]
+)
 def test_import_locked_database_during_setup_is_retryable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, message: str
 ) -> None:
     value = environment(tmp_path)
 
     def locked(_db: Path, _mailbox: Path) -> MailboxImporter:
-        message = "database is locked"
         raise sqlite3.OperationalError(message)
 
     monkeypatch.setattr("health_bridge.cli_mailbox.production_importer", locked)

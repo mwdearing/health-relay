@@ -172,13 +172,25 @@ def _require_initialized_database(db: Path, json_output: bool) -> None:
         _fail_import("database_uninitialized", json_output)
 
 
+_TRANSIENT_SQLITE_CODES: Final = frozenset(
+    {
+        sqlite3.SQLITE_BUSY,
+        sqlite3.SQLITE_LOCKED,
+        sqlite3.SQLITE_IOERR,
+        sqlite3.SQLITE_FULL,
+    }
+)
+
+
 def _is_transient_sqlite_error(error: sqlite3.OperationalError) -> bool:
-    """True for a busy or locked database, which a later run can read."""
+    """True for a busy, locked, I/O-failing or full database: a rerun can work."""
     code = getattr(error, "sqlite_errorcode", None)
     if isinstance(code, int):
-        return code & 0xFF in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+        return code & 0xFF in _TRANSIENT_SQLITE_CODES
     message = str(error).lower()
-    return "locked" in message or "busy" in message
+    return any(
+        marker in message for marker in ("locked", "busy", "disk i/o", "disk is full")
+    )
 
 
 def production_importer(
