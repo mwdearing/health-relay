@@ -498,6 +498,11 @@ def test_setup_rejects_documentation_hosts_before_private_side_effects(
     assert completed.returncode == 1
     assert "documentation or testing hostname" in completed.stderr
     assert "docs/setup.md" in completed.stderr
+    assert "roian6" not in completed.stderr
+    assert (
+        "https://github.com/mwdearing/health-relay/blob/main/docs/setup.md"
+        in completed.stderr
+    )
     assert not db_path.parent.exists()
     assert not db_path.exists()
     assert not setup_page.exists()
