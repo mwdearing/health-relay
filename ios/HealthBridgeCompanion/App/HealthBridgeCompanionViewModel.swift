@@ -7230,9 +7230,13 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         return describe(error)
     }
 
-    private func publishPairingFailure(_ message: String) {
+    private func publishPairingFailure(_ message: String, status: CompanionStatus = .notice) {
         statusIsError = true
-        statusMessage = message
+        if status == .notice {
+            statusMessage = message
+        } else {
+            setStatus(status, message)
+        }
         guard hasPendingPairing else { return }
         pairingFailurePresentation = CompanionPairingFailurePresentationState(
             rawFailure: message
@@ -7240,6 +7244,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     }
 
     private func publishPairingFailure(_ prefix: String, error: Error) {
-        publishPairingFailure("\(prefix): \(describePairingFailure(error))")
+        // Bundle errors are raised by local validation, before any server is contacted.
+        publishPairingFailure(
+            "\(prefix): \(describePairingFailure(error))",
+            status: error is ReceiverPairingBundleError ? .pairingInputInvalid : .notice
+        )
     }
 }

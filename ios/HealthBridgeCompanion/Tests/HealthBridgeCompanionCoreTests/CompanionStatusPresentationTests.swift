@@ -254,4 +254,43 @@ final class CompanionStatusPresentationTests: XCTestCase {
             "Data sharing is off. Open Settings > Data Sharing to agree before testing the connection."
         )
     }
+
+    private func rawReviewFailure(_ prefix: String, _ error: ReceiverPairingBundleError) -> String {
+        let nsError = error as NSError
+        return "\(prefix): \(error.localizedDescription) | domain=\(nsError.domain) | code=\(nsError.code)"
+    }
+
+    func testPairingInputErrorsAreNotShownAsServerFailures() {
+        for error in ReceiverPairingBundleError.allCases {
+            let raw = rawReviewFailure("Manual pairing could not be reviewed", error)
+            let text = CompanionPrimaryStatusMessage.sanitized(from: raw, isError: true)
+            XCTAssertEqual(text, error.userMessage, raw)
+            XCTAssertFalse(text.contains("your server returned an error"), raw)
+            XCTAssertNotEqual(text, "Connection needs attention", raw)
+            XCTAssertNotEqual(text, "Something needs attention", raw)
+            XCTAssertFalse(text.contains("domain="), raw)
+        }
+        XCTAssertEqual(
+            ReceiverPairingBundleError.invalidReceiverURL.userMessage,
+            "Server address must start with http:// or https:// and include a host."
+        )
+        XCTAssertEqual(
+            ReceiverPairingBundleError.invalidInvitationCode.userMessage,
+            "Invitation code must be 15 letters or numbers."
+        )
+    }
+
+    func testPairingInputStatusGetsItsOwnTitleAndNotice() {
+        let raw = rawReviewFailure("Setup link could not be reviewed", .invalidDeepLink)
+        XCTAssertEqual(
+            CompanionStatusPresentation.syncErrorTitle(status: .pairingInputInvalid, message: raw),
+            "Check Setup Details"
+        )
+        XCTAssertEqual(
+            CompanionStatusPresentation.connectionNotice(status: .pairingInputInvalid, message: raw, isError: true),
+            ReceiverPairingBundleError.invalidDeepLink.userMessage
+        )
+        let presentation = CompanionPairingFailurePresentationState(rawFailure: raw)
+        XCTAssertEqual(presentation.message, ReceiverPairingBundleError.invalidDeepLink.userMessage)
+    }
 }
