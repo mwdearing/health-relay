@@ -1186,41 +1186,42 @@ private struct PairingDestinationReviewView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("Review where this iPhone will connect")
-                    .font(.title2.weight(.semibold))
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Receiver")
-                        .font(.caption.weight(.semibold))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("Review where this iPhone will connect")
+                        .font(.title2.weight(.semibold))
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Receiver")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.relaySecondaryText)
+                        Text(destination.receiverAuthority)
+                            .font(.body.monospaced())
+                            .accessibilityHint("Canonical server host and non-default port")
+                    }
+                    Label(
+                        appBuildShowsMailboxPairing(destination.transport) ? "Mailbox delivery" : "Direct delivery",
+                        systemImage: appBuildShowsMailboxPairing(destination.transport) ? "envelope" : "arrow.up.right"
+                    )
+                    Text(
+                        destination.transport == .direct || appBuildShowsMailboxPairing(destination.transport)
+                            ? destination.privacySummary
+                            : "Direct delivery is used in this build. Check the receiver address above before you continue."
+                    )
+                        .font(.subheadline)
                         .foregroundStyle(.relaySecondaryText)
-                    Text(destination.receiverAuthority)
-                        .font(.body.monospaced())
-                        .accessibilityLabel("Receiver destination")
-                        .accessibilityHint("Canonical server host and non-default port")
+                    Spacer(minLength: 12)
+                    Button(action: onContinue) {
+                        Text("Continue").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityLabel("Continue with this receiver")
+                    .accessibilityHint("Confirms this destination and continues pairing")
+                    Button("Cancel", role: .cancel, action: onCancel)
+                        .frame(maxWidth: .infinity)
+                        .accessibilityLabel("Cancel destination review")
                 }
-                Label(
-                    appBuildShowsMailboxPairing(destination.transport) ? "Mailbox delivery" : "Direct delivery",
-                    systemImage: appBuildShowsMailboxPairing(destination.transport) ? "envelope" : "arrow.up.right"
-                )
-                Text(
-                    destination.transport == .direct || appBuildShowsMailboxPairing(destination.transport)
-                        ? destination.privacySummary
-                        : "Direct delivery is used in this build. Check the receiver address above before you continue."
-                )
-                    .font(.subheadline)
-                    .foregroundStyle(.relaySecondaryText)
-                Spacer()
-                Button(action: onContinue) {
-                    Text("Continue").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityLabel("Continue with this receiver")
-                .accessibilityHint("Confirms this destination and continues pairing")
-                Button("Cancel", role: .cancel, action: onCancel)
-                    .frame(maxWidth: .infinity)
-                    .accessibilityLabel("Cancel destination review")
+                .padding(24)
             }
-            .padding(24)
             .navigationTitle("Confirm destination")
             .navigationBarTitleDisplayMode(.inline)
         }
