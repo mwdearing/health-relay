@@ -228,3 +228,38 @@ def test_import_transient_mailbox_file_errors_stay_retryable(
 
     assert result.exit_code == 2
     assert json.loads(result.stdout)["retryable"] == 1
+
+
+def test_import_locked_database_during_setup_is_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    value = environment(tmp_path)
+
+    def locked(_db: Path, _mailbox: Path) -> MailboxImporter:
+        message = "database is locked"
+        raise sqlite3.OperationalError(message)
+
+    monkeypatch.setattr("health_bridge.cli_mailbox.production_importer", locked)
+    result = _run_import(value.db_path, value.mailbox_path, "--json")
+
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["retryable"] == 1
+
+
+def test_import_other_sqlite_error_during_setup_is_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    value = environment(tmp_path)
+
+    def corrupt(_db: Path, _mailbox: Path) -> MailboxImporter:
+        message = "file is not a database"
+        raise sqlite3.DatabaseError(message)
+
+    monkeypatch.setattr("health_bridge.cli_mailbox.production_importer", corrupt)
+    result = _run_import(value.db_path, value.mailbox_path, "--json")
+
+    assert result.exit_code == 3
+    assert json.loads(result.stdout) == {
+        "error_code": "database_unreadable",
+        "status": "error",
+    }

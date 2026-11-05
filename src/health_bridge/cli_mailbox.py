@@ -114,6 +114,15 @@ def import_mailbox(
     except (MailboxKeyStoreError, OSError):
         _emit_import_result(MailboxImportResult(retryable=1), json_output)
         raise typer.Exit(code=2) from None
+    except sqlite3.Error as exc:
+        # Opening the importer migrates the database; a busy or locked file
+        # is retryable, anything else is reported like the probe's failure.
+        if isinstance(exc, sqlite3.OperationalError) and _is_transient_sqlite_error(
+            exc
+        ):
+            _emit_import_result(MailboxImportResult(retryable=1), json_output)
+            raise typer.Exit(code=2) from None
+        _fail_import("database_unreadable", json_output)
     _emit_import_result(result, json_output)
 
 
