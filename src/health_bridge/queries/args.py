@@ -18,6 +18,11 @@ from pydantic import (
 
 from health_bridge.contract.batch_v1 import UtcTimestamp, utc_datetime
 
+# One more than a leap year: a full year of days plus the boundary day.
+MAX_DAILY_SUMMARY_DAYS: Final = 366
+DAILY_SPAN_MESSAGE: Final = (
+    f"date range must not exceed {MAX_DAILY_SUMMARY_DAYS} days; narrow the range"
+)
 TIMESTAMP_HINT: Final = "must look like 2026-06-01T00:00:00Z (UTC, ending in Z)"
 DATE_HINT: Final = "must be a date like 2026-06-01 (YYYY-MM-DD)"
 TIMESTAMP_FIELDS: Final = frozenset({"start_time", "end_time"})
@@ -65,6 +70,26 @@ class DateRangeArgs(ArgsModel):
             message = "start_date must not be after end_date"
             raise ValueError(message)
         return self
+
+
+class DailySummaryArgs(DateRangeArgs):
+    """A date range that also stays within `MAX_DAILY_SUMMARY_DAYS`."""
+
+    @model_validator(mode="after")
+    def require_bounded_span(self) -> Self:
+        require_daily_span(self.start_date, self.end_date)
+        return self
+
+
+def require_daily_span(start_date: str, end_date: str) -> None:
+    """Reject a daily-summary range longer than `MAX_DAILY_SUMMARY_DAYS`.
+
+    The daily summary builds one entry per calendar day, so its size follows
+    the span rather than the data.
+    """
+    span = date.fromisoformat(end_date) - date.fromisoformat(start_date)
+    if span.days > MAX_DAILY_SUMMARY_DAYS:
+        raise ValueError(DAILY_SPAN_MESSAGE)
 
 
 def summarize_validation_error(error: ValidationError) -> str:

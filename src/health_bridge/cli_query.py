@@ -14,6 +14,7 @@ from health_bridge.queries import (
     list_synced_metrics,
 )
 from health_bridge.queries.args import (
+    DailySummaryArgs,
     DateRangeArgs,
     TimeseriesArgs,
     summarize_validation_error,
@@ -160,7 +161,7 @@ def daily_summary(
     ],
 ) -> None:
     try:
-        args = DateRangeArgs(start_date=start_date, end_date=end_date)
+        args = DailySummaryArgs(start_date=start_date, end_date=end_date)
     except ValidationError as error:
         _exit_with_error(f"Invalid arguments: {summarize_validation_error(error)}")
     echo_json(get_daily_summary(db, start_date=args.start_date, end_date=args.end_date))

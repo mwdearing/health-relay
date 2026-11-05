@@ -246,3 +246,28 @@ def test_query_cli_rejects_timestamps_with_an_offset(tmp_path: Path) -> None:
     assert result.stdout == ""
     assert "start_time: must look like 2026-06-01T00:00:00Z" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+def test_query_cli_rejects_daily_summary_span_over_the_cap(tmp_path: Path) -> None:
+    # Given
+    db_path = initialized_fixture_db(tmp_path)
+
+    # When
+    result = _run_health_bridge(
+        [
+            "query",
+            "daily-summary",
+            "--db",
+            str(db_path),
+            "--start-date",
+            "2016-01-01",
+            "--end-date",
+            "2026-01-01",
+        ],
+    )
+
+    # Then
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "must not exceed 366 days" in result.stderr
+    assert "Traceback" not in result.stderr

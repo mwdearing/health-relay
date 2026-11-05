@@ -16,7 +16,9 @@ from health_bridge.queries import (
     list_synced_metrics,
 )
 from health_bridge.queries.args import (
+    MAX_DAILY_SUMMARY_DAYS,
     ArgsModel,
+    DailySummaryArgs,
     DateRangeArgs,
     TimeseriesArgs,
 )
@@ -229,6 +231,8 @@ MCP_TOOL_DEFINITIONS: Final[tuple[ToolDefinition, ...]] = (
             "recorded one, otherwise the UTC day.",
             "The best tool for week or month questions.",
             _DATE_RULES,
+            f"The range may span at most {MAX_DAILY_SUMMARY_DAYS} days; longer",
+            "ranges are rejected, so ask for a year at a time.",
         ),
         input_schema=DATE_RANGE_INPUT_SCHEMA,
     ),
@@ -265,7 +269,7 @@ TOOL_ARGUMENT_MODELS: Final[dict[str, type[ArgsModel]]] = {
     "get_timeseries": TimeseriesArgs,
     "get_workouts": DateRangeArgs,
     "get_sleep_summary": DateRangeArgs,
-    "get_daily_summary": DateRangeArgs,
+    "get_daily_summary": DailySummaryArgs,
     "explain_sources": EmptyArgs,
     "get_intake_evidence_v1": IntakeEvidenceArgs,
 }
