@@ -134,7 +134,7 @@ jobs:
               echo "::error::$name failed. The xcodebuild output is not published."
               local errs
               errs=$(grep -iE '(^|[^[:alnum:]_])error:' "$log" || true)
-              probe() { if printf '%s\n' "$errs" | grep -qiE "$1"; then echo "::error::  category: $2"; fi; }
+              probe() { if grep -qiE -- "$1" <<< "$errs"; then echo "::error::  category: $2"; fi; }
               probe '\.swift:[0-9]+(:[0-9]+)?: error:' "a Swift compile error"
               probe 'unable to authenticate|authentication credentials|authentication failed|status code:? ?40[13]' "the App Store Connect key was rejected"
               probe 'no signing certificate|signing certificate|no certificate|code signing identit' "a signing certificate problem"
@@ -224,7 +224,7 @@ jobs:
               echo "::error::$name failed. The xcodebuild output is not published."
               local errs
               errs=$(grep -iE '(^|[^[:alnum:]_])error:' "$log" || true)
-              probe() { if printf '%s\n' "$errs" | grep -qiE "$1"; then echo "::error::  category: $2"; fi; }
+              probe() { if grep -qiE -- "$1" <<< "$errs"; then echo "::error::  category: $2"; fi; }
               probe '\.swift:[0-9]+(:[0-9]+)?: error:' "a Swift compile error"
               probe 'unable to authenticate|authentication credentials|authentication failed|status code:? ?40[13]' "the App Store Connect key was rejected"
               probe 'no signing certificate|signing certificate|no certificate|code signing identit' "a signing certificate problem"
