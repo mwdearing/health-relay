@@ -635,9 +635,11 @@ def test_public_release_audit_passes_its_real_tracked_tree() -> None:
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "strict_blockers=0" in completed.stdout
-    assert "built-in patterns ran" in completed.stdout or (
-        "local denylist patterns" in completed.stdout
-    )
+    if Path(".public-release-denylist.local").exists():
+        expected = "PASS: no strict public-surface blockers found ("
+    else:
+        expected = "PASS: built-in patterns ran on the tracked tree with no blockers;"
+    assert expected in completed.stdout
     assert "local_denylist_consulted=" in completed.stdout
     assert "unreviewed_binaryish_tracked_files=0" in completed.stdout
 
