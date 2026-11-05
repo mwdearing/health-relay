@@ -137,10 +137,24 @@ def _require_initialized_database(db: Path, json_output: bool) -> None:
             )
         finally:
             connection.close()
+    except sqlite3.OperationalError as exc:
+        if _is_transient_sqlite_error(exc):
+            _emit_import_result(MailboxImportResult(retryable=1), json_output)
+            raise typer.Exit(code=2) from None
+        initialized = False
     except sqlite3.Error:
         initialized = False
     if not initialized:
         _fail_import("database_uninitialized", json_output)
+
+
+def _is_transient_sqlite_error(error: sqlite3.OperationalError) -> bool:
+    """True for a busy or locked database, which a later run can read."""
+    code = getattr(error, "sqlite_errorcode", None)
+    if isinstance(code, int):
+        return code & 0xFF in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+    message = str(error).lower()
+    return "locked" in message or "busy" in message
 
 
 def production_importer(

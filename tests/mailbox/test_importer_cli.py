@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import TYPE_CHECKING
 
 import pytest
@@ -90,6 +91,24 @@ def test_import_refuses_uninitialized_database_and_leaves_it_untouched(
         "02" * 16,
         "empty.sqlite",
     ]
+
+
+def test_import_locked_database_probe_is_retryable_not_uninitialized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    value = environment(tmp_path)
+
+    error = sqlite3.OperationalError("database is locked")
+
+    def locked(*_args: object, **_kwargs: object) -> sqlite3.Connection:
+        raise error
+
+    monkeypatch.setattr("health_bridge.cli_mailbox.sqlite3.connect", locked)
+    result = _run_import(value.db_path, value.mailbox_path, "--json")
+
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["retryable"] == 1
+    assert "database_uninitialized" not in result.output
 
 
 def test_import_reports_malformed_mailbox_path_as_permanent(tmp_path: Path) -> None:
