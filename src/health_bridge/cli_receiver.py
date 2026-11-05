@@ -87,6 +87,7 @@ from health_bridge.receiver.server import (
     serve_receiver,
 )
 from health_bridge.receiver.tokens import (
+    AmbiguousReceiverTokenPrefixError,
     create_receiver_token,
     revoke_active_receiver_token,
     revoke_receiver_token,
@@ -1163,6 +1164,9 @@ def revoke_token(
     ],
 ) -> None:
     prefix = token_prefix.strip()
+    if not prefix:
+        typer.echo("--token-prefix must not be empty; nothing was revoked.", err=True)
+        raise typer.Exit(code=1)
     if not db.is_file():
         # Never create a database here: a mistyped path must not look like a
         # store that simply holds no matching token.
@@ -1173,6 +1177,12 @@ def revoke_token(
         raise typer.Exit(code=1)
     try:
         revoked_count = revoke_active_receiver_token(db, prefix)
+    except AmbiguousReceiverTokenPrefixError as exc:
+        typer.echo(
+            "More than one active receiver token carries that prefix; nothing was revoked.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
     except (sqlite3.Error, OSError) as exc:
         typer.echo("Receiver token storage is unavailable.", err=True)
         raise typer.Exit(code=1) from exc
