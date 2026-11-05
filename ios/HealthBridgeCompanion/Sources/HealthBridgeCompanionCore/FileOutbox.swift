@@ -1189,10 +1189,13 @@ public final class FileOutbox {
 
         // The cursor is not advanced past a quarantined item, so the next sync rebuilds the
         // same rejected bytes. Keep one copy of identical payloads instead of one per sync.
+        // A failed read is never a match: only two successful reads of equal bytes count.
+        let itemData = try Data(contentsOf: item.fileURL)
         let duplicate = try quarantinedItems().first { existing in
-            existing.byteCount == record.byteCount
-                && (try? Data(contentsOf: quarantinedPayloadURL(for: existing.itemID)))
-                    == (try? Data(contentsOf: item.fileURL))
+            guard existing.byteCount == record.byteCount,
+                  let existingData = try? Data(contentsOf: quarantinedPayloadURL(for: existing.itemID))
+            else { return false }
+            return existingData == itemData
         }
         if duplicate == nil {
             try fileManager.createDirectory(at: quarantineDirectory, withIntermediateDirectories: true)

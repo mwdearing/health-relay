@@ -59,8 +59,9 @@ public enum OutboundBatchSizePolicy {
     /// Only the sample, ECG, lab-result and deletion arrays are split. A batch that also
     /// carries workouts, sleep sessions or medication dose events, or that already fits,
     /// is returned unchanged. The sync cursors ride only on the last batch, so the cursor
-    /// checkpoint can apply only after the final batch is accepted. A single ECG recording
-    /// that alone exceeds the byte budget is sent summary-only (no voltage series).
+    /// checkpoint can apply only after the final batch is accepted. A single record that alone
+    /// exceeds the byte budget is never trimmed: it goes out as a batch of its own, so a
+    /// receiver 413 reaches the quarantine path and the cursor is not advanced past it.
     public static func bounded(
         _ batch: HealthBridgeBatchV1,
         maxRecordsPerBatch: Int,
@@ -74,17 +75,11 @@ public enum OutboundBatchSizePolicy {
         let recordLimit = max(1, maxRecordsPerBatch)
         let byteLimit = max(1, maxRecordBytesPerBatch)
         let encoder = HealthBridgeBatchEncoder()
-        let recordings = batch.electrocardiograms.map { recording in
-            encoder.encodedByteCount(of: recording) > byteLimit
-                ? recording.summaryOnly()
-                : recording
-        }
-
         var pieces: [Piece] = []
         for chunk in chunks(of: batch.samples, recordLimit: recordLimit, byteLimit: byteLimit, encoder: encoder) {
             pieces.append(Piece(samples: chunk))
         }
-        for chunk in chunks(of: recordings, recordLimit: recordLimit, byteLimit: byteLimit, encoder: encoder) {
+        for chunk in chunks(of: batch.electrocardiograms, recordLimit: recordLimit, byteLimit: byteLimit, encoder: encoder) {
             pieces.append(Piece(electrocardiograms: chunk))
         }
         for chunk in chunks(of: batch.labResults, recordLimit: recordLimit, byteLimit: byteLimit, encoder: encoder) {
@@ -93,8 +88,7 @@ public enum OutboundBatchSizePolicy {
         for chunk in chunks(of: batch.deletedRecords, recordLimit: recordLimit, byteLimit: byteLimit, encoder: encoder) {
             pieces.append(Piece(deletedRecords: chunk))
         }
-        let shrankARecording = zip(recordings, batch.electrocardiograms).contains { $0 != $1 }
-        if pieces.count <= 1 && !shrankARecording {
+        if pieces.count <= 1 {
             return [batch]
         }
         if pieces.isEmpty {
@@ -157,24 +151,5 @@ public enum OutboundBatchSizePolicy {
             result.append(current)
         }
         return result
-    }
-}
-
-extension HealthBridgeElectrocardiogram {
-    /// The same recording without its voltage series. The receiver accepts a summary-only
-    /// recording and keeps `voltage_count`.
-    func summaryOnly() -> HealthBridgeElectrocardiogram {
-        HealthBridgeElectrocardiogram(
-            clientRecordID: clientRecordID,
-            sourceKey: sourceKey,
-            startTime: startTime,
-            endTime: endTime,
-            classification: classification,
-            symptomsStatus: symptomsStatus,
-            averageHeartRateBPM: averageHeartRateBPM,
-            samplingFrequencyHz: samplingFrequencyHz,
-            voltageCount: voltageCount,
-            voltagesMicrovolts: nil
-        )
     }
 }

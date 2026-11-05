@@ -174,7 +174,7 @@ final class ElectrocardiogramSyncBatchFactoryTests: XCTestCase {
         XCTAssertEqual(batches.last?.sync.cursors, single.sync.cursors)
     }
 
-    func testSingleRecordingOverTheByteBudgetIsSentSummaryOnly() throws {
+    func testSingleRecordingOverTheByteBudgetIsSentAloneWithItsVoltages() throws {
         let windowStart = try date("2020-01-01T00:00:00Z")
         let windowEnd = try date("2026-06-10T08:00:00Z")
         let oversized = syntheticRecording(
@@ -195,17 +195,15 @@ final class ElectrocardiogramSyncBatchFactoryTests: XCTestCase {
 
         let batches = ElectrocardiogramSyncBatchFactory.boundedBatches(from: single)
 
-        for batch in batches {
-            XCTAssertLessThanOrEqual(
-                try HealthBridgeBatchEncoder().encode(batch).count,
-                OutboundBatchSizePolicy.receiverMaxBatchBytes
-            )
-        }
+        // The oversized recording is never trimmed; it travels alone so a receiver 413
+        // is visible to the quarantine path instead of silently losing the voltage series.
         let records = batches.flatMap(\.electrocardiograms)
-        XCTAssertEqual(records.count, 2)
-        XCTAssertNil(records[0].voltagesMicrovolts)
-        XCTAssertEqual(records[0].voltageCount, 400_000)
+        XCTAssertEqual(records.map(\.clientRecordID), single.electrocardiograms.map(\.clientRecordID))
+        XCTAssertEqual(records[0].voltagesMicrovolts?.count, 400_000)
         XCTAssertEqual(records[1].voltagesMicrovolts?.count, 8)
+        XCTAssertEqual(batches.count, 2)
+        XCTAssertEqual(batches[0].electrocardiograms.count, 1)
+        XCTAssertEqual(batches.dropLast().map(\.sync.cursors), [[]])
         XCTAssertEqual(batches.last?.sync.cursors, single.sync.cursors)
     }
 
