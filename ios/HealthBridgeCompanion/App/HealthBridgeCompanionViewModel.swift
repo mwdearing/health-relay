@@ -1211,7 +1211,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     func checkConnection() async {
         guard syncConsentAdmitsSend else {
             statusIsError = true
-            statusMessage = "Accept the data-sharing disclosure in Settings before testing the connection."
+            setStatus(.consentRequired, "Accept the data-sharing disclosure in Settings before testing the connection.")
             return
         }
         guard terminalPayloadActionAdmissionIsOpen else { return }
@@ -1284,7 +1284,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     func syncAllNow() async {
         guard syncConsentAdmitsSend else {
             statusIsError = true
-            statusMessage = "Accept the data-sharing disclosure in Settings before syncing."
+            setStatus(.consentRequired, "Accept the data-sharing disclosure in Settings before syncing.")
             return
         }
         guard terminalPayloadActionAdmissionIsOpen else { return }
@@ -1368,7 +1368,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     private func flushPendingOutbox() async -> Bool {
         guard syncConsentAdmitsSend else {
             statusIsError = true
-            statusMessage = "Queued uploads stay on this iPhone until you accept the data-sharing disclosure."
+            setStatus(.consentRequired, "Queued uploads stay on this iPhone until you accept the data-sharing disclosure.")
             return false
         }
         guard !hasPendingPairing, !Task.isCancelled else {
@@ -4405,7 +4405,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     func sendConnectionTestBatch() async {
         guard syncConsentAdmitsSend else {
             statusIsError = true
-            statusMessage = "Accept the data-sharing disclosure in Settings before testing the connection."
+            setStatus(.consentRequired, "Accept the data-sharing disclosure in Settings before testing the connection.")
             return
         }
         do {

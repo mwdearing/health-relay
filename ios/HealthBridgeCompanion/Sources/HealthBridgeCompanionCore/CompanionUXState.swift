@@ -234,6 +234,16 @@ public enum CompanionPrimaryStatusMessage {
         }
 
         let message = trimmed.lowercased()
+        // Consent refusals are written for people; keep them out of every substring heuristic below.
+        if message.contains("data-sharing disclosure") {
+            if message.contains("testing the connection") {
+                return "Data sharing is off. Open Settings > Data Sharing to agree before testing the connection."
+            }
+            if message.contains("queued uploads") {
+                return "Data sharing is off. Queued uploads stay on this iPhone until you agree in Settings > Data Sharing."
+            }
+            return "Data sharing is off. Open Settings > Data Sharing to agree before syncing."
+        }
         let mailboxPreflightMessages = [
             "mailbox_key_lost": "Mailbox connection key lifecycle: lost. Pairing stopped before contacting your server.",
             "mailbox_key_revoked": "Mailbox connection key lifecycle: revoked. Pairing stopped before contacting your server.",
@@ -806,6 +816,8 @@ public enum CompanionStatus: Equatable, Sendable {
     case mailboxFolderReady
     case connectionFailed
     case syncFailed(CompanionSyncArea)
+    /// A send was refused because the data-sharing disclosure has not been accepted.
+    case consentRequired
 }
 
 /// The status card's and connection card's decisions about the current status text.
@@ -864,6 +876,8 @@ public enum CompanionStatusPresentation {
             return "Sync Failed"
         case .connectionFailed:
             return "Connection Failed"
+        case .consentRequired:
+            return "Data Sharing Is Off"
         case .notice, .connectionVerified, .mailboxFolderReady:
             // The single remaining substring fallback for unclassified text.
             return syncErrorTitle(message: message)
@@ -882,7 +896,7 @@ public enum CompanionStatusPresentation {
 
     public static func connectionNotice(status: CompanionStatus, message: String, isError: Bool) -> String {
         switch status {
-        case .connectionVerified, .mailboxFolderReady, .connectionFailed:
+        case .connectionVerified, .mailboxFolderReady, .connectionFailed, .consentRequired:
             let raw = message.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !raw.isEmpty else { return "" }
             return CompanionPrimaryStatusMessage.sanitized(from: raw, isError: isError)

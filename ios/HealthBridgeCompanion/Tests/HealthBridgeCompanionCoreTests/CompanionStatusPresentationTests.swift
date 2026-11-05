@@ -224,4 +224,34 @@ final class CompanionStatusPresentationTests: XCTestCase {
             XCTAssertEqual(typedReady, legacyReady, message)
         }
     }
+
+    func testConsentRefusalNamesSettingsInsteadOfGenericSyncFailure() {
+        let refusals = [
+            "Accept the data-sharing disclosure in Settings before syncing.",
+            "Accept the data-sharing disclosure in Settings before testing the connection.",
+            "Queued uploads stay on this iPhone until you accept the data-sharing disclosure.",
+        ]
+        for message in refusals {
+            let text = CompanionPrimaryStatusMessage.sanitized(from: message, isError: true)
+            XCTAssertTrue(text.contains("Settings > Data Sharing"), message)
+            XCTAssertNotEqual(text, "Something needs attention", message)
+            // Both the status card and the connection card show the sanitized text.
+            XCTAssertEqual(
+                CompanionStatusPresentation.connectionNotice(status: .consentRequired, message: message, isError: true),
+                text
+            )
+            XCTAssertEqual(
+                CompanionStatusPresentation.syncErrorTitle(status: .consentRequired, message: message),
+                "Data Sharing Is Off"
+            )
+        }
+        // Without a typed status the text rule still applies (activity log, legacy callers).
+        XCTAssertEqual(
+            CompanionStatusPresentation.connectionNotice(
+                message: "Accept the data-sharing disclosure in Settings before testing the connection.",
+                isError: true
+            ),
+            "Data sharing is off. Open Settings > Data Sharing to agree before testing the connection."
+        )
+    }
 }
