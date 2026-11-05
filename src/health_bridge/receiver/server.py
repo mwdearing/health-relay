@@ -276,6 +276,7 @@ class ReceiverBindError(OSError):
 
 
 class ReceiverHTTPServer(ThreadingHTTPServer):
+    address_family: int = socket.AF_INET
     # Class-level defaults so a subclass that skips __init__ still works.
     request_timeout_seconds = DEFAULT_REQUEST_TIMEOUT_SECONDS
     request_deadline_seconds = DEFAULT_REQUEST_DEADLINE_SECONDS

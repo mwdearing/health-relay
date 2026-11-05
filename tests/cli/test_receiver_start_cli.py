@@ -278,7 +278,7 @@ def test_receiver_start_reports_a_taken_port_without_claiming_to_listen(
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as taken:
         taken.bind(("127.0.0.1", 0))
         taken.listen(1)
-        port = taken.getsockname()[1]
+        port = int(cast("tuple[str, int]", taken.getsockname())[1])
         result = CliRunner().invoke(
             app,
             [
