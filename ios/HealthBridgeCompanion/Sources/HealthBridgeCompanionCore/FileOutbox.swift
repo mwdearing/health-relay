@@ -285,6 +285,83 @@ public struct FileOutboxItem: Equatable, Identifiable, Sendable {
     }
 }
 
+/// A receiver response that resending the same bytes can never turn into a success.
+///
+/// 401, other 403s, 409, 429 and 5xx stay retryable. A permanent rejection of the FIFO head
+/// would otherwise block every later upload, so the outbox moves that item aside
+/// (`FileOutbox.quarantineItem`) and keeps delivering.
+public enum PermanentUploadRejection: String, Codable, Equatable, Sendable {
+    /// 413: the body is over the receiver's batch limit.
+    case payloadTooLarge = "payload_too_large"
+    /// 400 `invalid_json` / `invalid_batch`, or 422 (schema validation failed).
+    case invalidPayload = "invalid_payload"
+    /// 403 `source_principal_mismatch`: the batch names a source this connection does not own.
+    case sourcePrincipalMismatch = "source_principal_mismatch"
+
+    public static func classify(statusCode: Int, errorCode: String?) -> PermanentUploadRejection? {
+        switch statusCode {
+        case 413:
+            return .payloadTooLarge
+        case 422:
+            return .invalidPayload
+        case 400 where errorCode == "invalid_json" || errorCode == "invalid_batch":
+            return .invalidPayload
+        case 403 where errorCode == "source_principal_mismatch":
+            return .sourcePrincipalMismatch
+        default:
+            return nil
+        }
+    }
+
+    /// The `error` string of a receiver JSON error body, if there is one.
+    public static func errorCode(fromResponseBody body: Data?) -> String? {
+        guard let body,
+              let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            return nil
+        }
+        return object["error"] as? String
+    }
+
+    /// Short, value-free description for the status card and activity log.
+    public var userDescription: String {
+        switch self {
+        case .payloadTooLarge:
+            return "the server said the upload was too large"
+        case .invalidPayload:
+            return "the server said the upload was not valid"
+        case .sourcePrincipalMismatch:
+            return "the server said the upload came from a different source"
+        }
+    }
+}
+
+/// Local record of an upload the receiver permanently rejected and the outbox moved aside.
+/// Holds no Health values: the payload itself stays in the outbox's quarantine folder until
+/// the user discards it.
+public struct FileOutboxQuarantineRecord: Codable, Equatable, Identifiable, Sendable {
+    public let itemID: String
+    public let reason: PermanentUploadRejection
+    public let statusCode: Int
+    public let quarantinedAt: Date
+    public let byteCount: Int
+
+    public var id: String { itemID }
+
+    public init(
+        itemID: String,
+        reason: PermanentUploadRejection,
+        statusCode: Int,
+        quarantinedAt: Date,
+        byteCount: Int
+    ) {
+        self.itemID = itemID
+        self.reason = reason
+        self.statusCode = statusCode
+        self.quarantinedAt = quarantinedAt
+        self.byteCount = byteCount
+    }
+}
+
 public struct FileOutboxMailboxBindingV1: Codable, Equatable, Sendable {
     public let payloadSHA256: String
     public let envelopeSHA256: String
@@ -597,6 +674,8 @@ public final class FileOutbox {
     private static let terminalResetRequestFilename = ".terminal-reset-request"
     private static let enqueueTransactionFilename = ".enqueue-transaction"
     private static let mailboxEnvelopeIntentFilename = ".mailbox-envelope-intent"
+    private static let quarantineDirectoryName = "quarantine"
+    private static let quarantineRecordExtension = "record"
     private let directory: URL
     private let fileManager: FileManager
 
@@ -1067,6 +1146,106 @@ public final class FileOutbox {
             try requireDirectRetirementAllowed(itemID: item.id)
         }
         return uploadable
+    }
+
+    /// Moves a permanently rejected item out of the FIFO so the items behind it can send.
+    ///
+    /// The payload is kept in a quarantine folder with a small record (reason, status code,
+    /// time, size) until `discardQuarantinedItem` removes it. The enqueue transaction that
+    /// owns the item is dropped without applying its cursor checkpoint, so the lane's cursor
+    /// does not advance past data the receiver never accepted and the next sync rebuilds it.
+    /// Items of the same transaction that are still queued stay and send normally. Returns
+    /// nil when the item is no longer pending.
+    @discardableResult
+    public func quarantineItem(
+        id: String,
+        reason: PermanentUploadRejection,
+        statusCode: Int,
+        at now: Date = Date()
+    ) throws -> FileOutboxQuarantineRecord? {
+        try requireUploadAdmission()
+        guard Self.isSafeItemID(id) else { return nil }
+        try requireDirectRetirementAllowed(itemID: id)
+        guard let item = try pendingItem(id: id),
+              fileManager.fileExists(atPath: item.fileURL.path) else {
+            return nil
+        }
+        let attributes = try fileManager.attributesOfItem(atPath: item.fileURL.path)
+        let record = FileOutboxQuarantineRecord(
+            itemID: id,
+            reason: reason,
+            statusCode: statusCode,
+            quarantinedAt: now,
+            byteCount: (attributes[.size] as? NSNumber)?.intValue ?? 0
+        )
+
+        try fileManager.createDirectory(at: quarantineDirectory, withIntermediateDirectories: true)
+        try Self.applySensitiveFileAttributes(to: quarantineDirectory, fileManager: fileManager)
+        let recordURL = quarantineRecordURL(for: id)
+        try JSONEncoder().encode(record).write(to: recordURL, options: [.atomic])
+        try Self.applySensitiveFileAttributes(to: recordURL, fileManager: fileManager)
+
+        // Drop the owning transaction first: if the payload moved first, recovery would
+        // treat the transaction as incomplete and delete its remaining payloads.
+        var transactions = try loadEnqueueTransactions()
+        if let index = transactions.firstIndex(where: { $0.entries.contains { $0.id == id } }) {
+            transactions.remove(at: index)
+            try persistEnqueueTransactions(transactions)
+        }
+
+        let quarantinedPayloadURL = quarantinedPayloadURL(for: id)
+        try removeIfExists(quarantinedPayloadURL)
+        try fileManager.moveItem(at: item.fileURL, to: quarantinedPayloadURL)
+        try Self.applySensitiveFileAttributes(to: quarantinedPayloadURL, fileManager: fileManager)
+        _ = try reconciledManifest()
+        return record
+    }
+
+    /// Quarantined uploads that still have their payload, oldest first.
+    public func quarantinedItems() throws -> [FileOutboxQuarantineRecord] {
+        guard fileManager.fileExists(atPath: quarantineDirectory.path) else { return [] }
+        let decoder = JSONDecoder()
+        return try fileManager
+            .contentsOfDirectory(at: quarantineDirectory, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == Self.quarantineRecordExtension }
+            .compactMap { try? decoder.decode(FileOutboxQuarantineRecord.self, from: Data(contentsOf: $0)) }
+            .filter { fileManager.fileExists(atPath: quarantinedPayloadURL(for: $0.itemID).path) }
+            .sorted { lhs, rhs in
+                lhs.quarantinedAt == rhs.quarantinedAt
+                    ? lhs.itemID < rhs.itemID
+                    : lhs.quarantinedAt < rhs.quarantinedAt
+            }
+    }
+
+    /// Permanently deletes one quarantined upload and its record. This is the user's
+    /// "discard" action; nothing else removes quarantined data.
+    public func discardQuarantinedItem(id: String) throws {
+        guard Self.isSafeItemID(id) else { return }
+        try removeIfExists(quarantinedPayloadURL(for: id))
+        try removeIfExists(quarantineRecordURL(for: id))
+    }
+
+    /// Discards every quarantined upload. Returns how many were removed.
+    @discardableResult
+    public func discardAllQuarantinedItems() throws -> Int {
+        let records = try quarantinedItems()
+        for record in records {
+            try discardQuarantinedItem(id: record.itemID)
+        }
+        return records.count
+    }
+
+    private var quarantineDirectory: URL {
+        directory.appendingPathComponent(Self.quarantineDirectoryName, isDirectory: true)
+    }
+
+    private func quarantinedPayloadURL(for id: String) -> URL {
+        quarantineDirectory.appendingPathComponent(id).appendingPathExtension("json")
+    }
+
+    private func quarantineRecordURL(for id: String) -> URL {
+        quarantineDirectory.appendingPathComponent(id)
+            .appendingPathExtension(Self.quarantineRecordExtension)
     }
 
     public func pendingItem(id: String) throws -> FileOutboxItem? {
