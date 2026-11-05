@@ -113,7 +113,9 @@ If no suitable private route exists, the agent must stop and present the infrast
 
 Use this route only for development, evaluation, or a deliberate same-LAN installation. Sync stops whenever the iPhone leaves that LAN. The phone-facing connection is plain HTTP, so health payloads and the device credential are visible to that LAN while in transit. Use only a trusted, isolated network; never forward receiver port `8765` from the router to the public internet.
 
-Set `HEALTH_BRIDGE_LAN_HOST` to the receiver's real, stable LAN hostname or private address. On macOS, a Bonjour hostname can be derived without inventing a sample endpoint:
+The app's transport policy allows plain HTTP only to an IP address, a single-label name (no dots), or a Bonjour `.local` name. Plain HTTP to any other hostname, such as `receiver.lan`, `nas.home.arpa`, or a Tailscale MagicDNS `*.ts.net` name, is blocked by iOS and pairing fails even though the same URL loads in Safari. Use an IP address or `.local` name here, or use HTTPS (Route A or B) for qualified names.
+
+Set `HEALTH_BRIDGE_LAN_HOST` to the receiver's private IP address or a `.local` Bonjour name. On macOS, a Bonjour hostname can be derived without inventing a sample endpoint:
 
 ```bash
 export HEALTH_BRIDGE_LAN_HOST="$(scutil --get LocalHostName).local"
@@ -122,7 +124,7 @@ export HEALTH_BRIDGE_LAN_HOST="$(scutil --get LocalHostName).local"
 On Linux, have the installer select and verify the actual LAN address that belongs to the receiver's intended interface; do not blindly choose the first address when VPN, container, or multiple network interfaces exist. Numeric LAN IPs are supported, but DHCP may change them, so reserve the address or update and re-pair after a change. Then set the exact URL locally:
 
 ```bash
-: "${HEALTH_BRIDGE_LAN_HOST:?Set this to the receiver's verified LAN hostname or private address}"
+: "${HEALTH_BRIDGE_LAN_HOST:?Set this to the receiver's verified LAN IP address or .local name}"
 export HEALTH_BRIDGE_RECEIVER_URL="http://${HEALTH_BRIDGE_LAN_HOST}:8765/v1/batches"
 ```
 
