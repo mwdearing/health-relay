@@ -769,6 +769,46 @@ final class BackgroundURLSessionOutboxUploader: NSObject, @unchecked Sendable, U
             }
             Self.dispatchCompletionHandler(systemCompletionHandler)
         }
+        await reconcileOrphanedOwnershipRecords()
+    }
+
+    /// Drops ledger records whose completion could not be saved and whose task is gone from the
+    /// session. Without this a failed save leaves the ledger non-empty on every launch, which
+    /// blocks scheduling, cancellation certification, reset and reconnect.
+    @MainActor
+    private func reconcileOrphanedOwnershipRecords() async {
+        guard let taskOwnershipStore,
+              let candidates = try? taskOwnershipStore.records().filter({ $0.completion == nil }),
+              !candidates.isEmpty else {
+            return
+        }
+        let latch = BoundedAsyncValueLatch<[URLSessionTask]>()
+        session.getAllTasks { tasks in
+            latch.resolve(tasks)
+        }
+        // If the session cannot be enumerated, keep every record.
+        guard let liveTasks = await latch.wait(timeout: Self.cancellationCompletionTimeout) else {
+            return
+        }
+        let orphans = BackgroundUploadLedgerReconciler.orphans(
+            records: candidates,
+            liveTaskIDs: Set(liveTasks.map(\.taskIdentifier))
+        )
+        for orphan in orphans {
+            // A callback may have saved its completion while the session was enumerated.
+            guard let current = try? taskOwnershipStore.record(forTaskID: orphan.taskID),
+                  current.completion == nil else {
+                continue
+            }
+            await cancellationBarrier.complete(orphan.taskID)
+            do {
+                try taskOwnershipStore.remove(taskID: orphan.taskID)
+            } catch {
+                continue
+            }
+            let systemCompletionHandler = eventFinalizationCoordinator.complete(orphan.taskID)
+            Self.dispatchCompletionHandler(systemCompletionHandler)
+        }
     }
 
     private static func dispatchCompletionHandler(_ completionHandler: (() -> Void)?) {

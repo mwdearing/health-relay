@@ -309,6 +309,68 @@ final class BackgroundOutboxUploadTests: XCTestCase {
             try FileBackgroundUploadTaskOwnershipStore(fileURL: fileURL).records().isEmpty
         )
     }
+
+    func testLedgerReconcilerReturnsOnlyCompletionlessRecordsWithoutLiveTask() throws {
+        let stale = BackgroundUploadTaskOwnership(
+            taskID: 1,
+            itemID: "00000000000000000001-payload.json",
+            receiverGeneration: "g1",
+            receiverBindingID: "binding-a"
+        )
+        let live = BackgroundUploadTaskOwnership(
+            taskID: 2,
+            itemID: "00000000000000000002-payload.json",
+            receiverGeneration: "g1",
+            receiverBindingID: "binding-a"
+        )
+        let completed = BackgroundUploadTaskOwnership(
+            taskID: 3,
+            itemID: "00000000000000000003-payload.json",
+            receiverGeneration: "g1",
+            receiverBindingID: "binding-a",
+            completion: BackgroundUploadTaskCompletion(
+                statusCode: 200,
+                hadTransportError: false,
+                sleepMinimumResetEpoch: nil
+            )
+        )
+
+        XCTAssertEqual(
+            BackgroundUploadLedgerReconciler.orphans(
+                records: [stale, live, completed],
+                liveTaskIDs: [2]
+            ),
+            [stale]
+        )
+        XCTAssertTrue(
+            BackgroundUploadLedgerReconciler.orphans(records: [], liveTaskIDs: []).isEmpty
+        )
+    }
+
+    func testRemovingReconciledOrphansEmptiesTheLedger() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FileBackgroundUploadTaskOwnershipStore(
+            fileURL: directory.appendingPathComponent("background-task-ownership.json")
+        )
+        try store.begin(
+            BackgroundUploadTaskOwnership(
+                taskID: 9,
+                itemID: "00000000000000000001-payload.json",
+                receiverGeneration: "g1",
+                receiverBindingID: "binding-a"
+            )
+        )
+
+        let orphans = BackgroundUploadLedgerReconciler.orphans(
+            records: try store.records(),
+            liveTaskIDs: []
+        )
+        XCTAssertEqual(orphans.map(\.taskID), [9])
+        for orphan in orphans { try store.remove(taskID: orphan.taskID) }
+
+        XCTAssertTrue(try store.records().isEmpty)
+    }
 }
 
 private func temporaryDirectory() throws -> URL {

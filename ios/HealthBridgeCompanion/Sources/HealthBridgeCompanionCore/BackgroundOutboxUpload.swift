@@ -517,6 +517,20 @@ public final class FileBackgroundUploadTaskOwnershipStore: @unchecked Sendable {
     }
 }
 
+/// Finds ownership records that no live background task can ever complete. A record
+/// without a saved completion whose task has left the session is stale: the completion
+/// callback ran but could not be saved (for example, storage was full), so nothing will
+/// remove the record. The outbox already reflects the real outcome, so dropping the record
+/// is safe; leaving it blocks every gate that needs an empty ledger.
+public enum BackgroundUploadLedgerReconciler {
+    public static func orphans(
+        records: [BackgroundUploadTaskOwnership],
+        liveTaskIDs: Set<Int>
+    ) -> [BackgroundUploadTaskOwnership] {
+        records.filter { $0.completion == nil && !liveTaskIDs.contains($0.taskID) }
+    }
+}
+
 public enum BackgroundOutboxUploadCompletionPolicy {
     private struct SleepEpochConflictResponse: Decodable {
         let error: String
