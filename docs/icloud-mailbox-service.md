@@ -210,7 +210,9 @@ unopenable WAL `-shm` file; fix access, do not run `init`), `connection_unavaila
 is not a receiver and device directory pair, or its record is invalid),
 `connection_storage_unsafe`, `connection_conflict`, `helper_not_ready` (the
 signed ACK helper is missing or not ready on macOS), and `mailbox_unavailable`
-(the mailbox directory is unsafe or missing).
+(a mailbox entry is unsafe or larger than the import limit). Mailbox storage
+I/O errors, a failed delivery, or an entry replaced while it was being read
+exit 2 instead, since a later run can succeed.
 
 Check the service with:
 

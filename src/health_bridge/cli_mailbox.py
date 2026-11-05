@@ -17,7 +17,7 @@ from health_bridge.mailbox.connections import (
     MailboxConnectionError,
     MailboxConnectionStore,
 )
-from health_bridge.mailbox.filesystem import MailboxFileError
+from health_bridge.mailbox.filesystem import MailboxFileError, MailboxFileErrorCode
 from health_bridge.mailbox.importer import (
     MailboxBusyError,
     MailboxImportConfig,
@@ -106,12 +106,22 @@ def import_mailbox(
         _fail_import(exc.code.value, json_output)
     except NativeAckPublicationError:
         _fail_import("helper_not_ready", json_output)
-    except MailboxFileError:
-        _fail_import("mailbox_unavailable", json_output)
+    except MailboxFileError as exc:
+        if exc.code in _PERMANENT_MAILBOX_FILE_ERRORS:
+            _fail_import("mailbox_unavailable", json_output)
+        _emit_import_result(MailboxImportResult(retryable=1), json_output)
+        raise typer.Exit(code=2) from None
     except (MailboxKeyStoreError, OSError):
         _emit_import_result(MailboxImportResult(retryable=1), json_output)
         raise typer.Exit(code=2) from None
     _emit_import_result(result, json_output)
+
+
+# Mailbox file errors a later run cannot fix. Storage I/O, a delivery failure or
+# an entry replaced while it was read can succeed on retry, so they stay exit 2.
+_PERMANENT_MAILBOX_FILE_ERRORS: Final = frozenset(
+    {MailboxFileErrorCode.UNSAFE_ENTRY, MailboxFileErrorCode.OVERSIZE}
+)
 
 
 def _fail_import(error_code: str, json_output: bool) -> NoReturn:

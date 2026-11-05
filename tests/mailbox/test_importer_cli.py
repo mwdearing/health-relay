@@ -171,6 +171,7 @@ def test_import_reports_malformed_mailbox_path_as_permanent(tmp_path: Path) -> N
         ),
         (NativeAckPublicationError("helper"), "helper_not_ready"),
         (MailboxFileError(MailboxFileErrorCode.UNSAFE_ENTRY), "mailbox_unavailable"),
+        (MailboxFileError(MailboxFileErrorCode.OVERSIZE), "mailbox_unavailable"),
     ],
 )
 def test_import_maps_permanent_setup_errors(
@@ -200,6 +201,29 @@ def test_import_busy_stays_retryable_exit_two(
         raise MailboxBusyError
 
     monkeypatch.setattr("health_bridge.cli_mailbox.production_importer", busy)
+    result = _run_import(value.db_path, value.mailbox_path, "--json")
+
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["retryable"] == 1
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        MailboxFileErrorCode.STORAGE_UNAVAILABLE,
+        MailboxFileErrorCode.DELIVERY_FAILED,
+        MailboxFileErrorCode.PATH_REPLACED,
+    ],
+)
+def test_import_transient_mailbox_file_errors_stay_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: MailboxFileErrorCode
+) -> None:
+    value = environment(tmp_path)
+
+    def fail(_db: Path, _mailbox: Path) -> MailboxImporter:
+        raise MailboxFileError(code)
+
+    monkeypatch.setattr("health_bridge.cli_mailbox.production_importer", fail)
     result = _run_import(value.db_path, value.mailbox_path, "--json")
 
     assert result.exit_code == 2
