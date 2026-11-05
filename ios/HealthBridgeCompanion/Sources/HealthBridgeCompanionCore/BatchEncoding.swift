@@ -75,6 +75,25 @@ public enum OutboundBatchSizePolicy {
         let recordLimit = max(1, maxRecordsPerBatch)
         let byteLimit = max(1, maxRecordBytesPerBatch)
         let encoder = HealthBridgeBatchEncoder()
+        // A batch whose records all fit one upload is never split, whatever mix of record
+        // kinds it carries (for example a raw step sample plus its legacy daily tombstone).
+        // It goes out unchanged as a single batch that carries its cursors.
+        let totalRecords = batch.samples.count + batch.electrocardiograms.count
+            + batch.labResults.count + batch.deletedRecords.count
+        if totalRecords <= recordLimit {
+            var remainingBytes = byteLimit
+            var fits = true
+            func spend<Element: Encodable>(_ elements: [Element]) {
+                guard fits, !elements.isEmpty else { return }
+                let size = encoder.encodedByteCount(of: elements)
+                if size >= remainingBytes { fits = false } else { remainingBytes -= size }
+            }
+            spend(batch.samples)
+            spend(batch.electrocardiograms)
+            spend(batch.labResults)
+            spend(batch.deletedRecords)
+            if fits { return [batch] }
+        }
         var pieces: [Piece] = []
         for chunk in chunks(of: batch.samples, recordLimit: recordLimit, byteLimit: byteLimit, encoder: encoder) {
             pieces.append(Piece(samples: chunk))

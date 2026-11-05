@@ -486,6 +486,28 @@ final class StepCountSyncBatchBoundingTests: XCTestCase {
         ])
     }
 
+    func testUnderBudgetSampleWithLegacyTombstoneIsOneBatchCarryingTheCursor() throws {
+        let start = try date("2026-06-01T10:00:00Z")
+        let single = StepCountSyncBatchFactory.makeAnchoredStepBatch(
+            stepSamples: [HealthKitStepSampleSummary(
+                uuid: UUID(), start: start, end: start.addingTimeInterval(60), count: 17
+            )],
+            deletedStepSamples: [],
+            anchorCursorValue: "opaque-anchor-small",
+            windowStart: start,
+            windowEnd: start.addingTimeInterval(120),
+            generatedAt: start.addingTimeInterval(120)
+        )
+        // The factory adds a legacy daily aggregate tombstone next to the raw sample.
+        XCTAssertEqual(single.samples.count, 1)
+        XCTAssertFalse(single.deletedRecords.isEmpty)
+
+        let batches = StepCountSyncBatchFactory.boundedAnchoredStepBatches(from: single)
+
+        XCTAssertEqual(batches, [single])
+        XCTAssertEqual(batches.first?.sync.cursors.first?.cursorKind, "anchored_step_sync")
+    }
+
     func testCursorOnlyAnchoredBatchIsNotSplit() throws {
         let single = StepCountSyncBatchFactory.makeAnchoredStepBatch(
             stepSamples: [],
