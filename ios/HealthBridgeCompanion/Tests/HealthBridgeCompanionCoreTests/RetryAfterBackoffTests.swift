@@ -99,4 +99,21 @@ final class RetryAfterBackoffTests: XCTestCase {
         XCTAssertNil(BackgroundUploadRetryDeadline.pending(now: now.addingTimeInterval(91), defaults: defaults))
         XCTAssertNil(defaults.object(forKey: BackgroundUploadRetryDeadline.defaultsKey))
     }
+
+    func testRateLimitedErrorDescriptionNamesTheWait() {
+        XCTAssertEqual(
+            ReceiverClientError.rateLimited(retryAfterSeconds: 90).localizedDescription,
+            "Receiver asked for a wait of 90 seconds before more uploads."
+        )
+    }
+
+    func testForegroundClassificationMatchesBackgroundPolicy() {
+        XCTAssertEqual(
+            BackgroundOutboxUploadCompletionPolicy.retryAfterSeconds(statusCode: 429, headerValue: "45"),
+            45
+        )
+        XCTAssertNil(
+            BackgroundOutboxUploadCompletionPolicy.retryAfterSeconds(statusCode: 503, headerValue: "45")
+        )
+    }
 }
