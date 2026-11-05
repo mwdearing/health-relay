@@ -172,9 +172,13 @@ final class UploadQuarantineTests: XCTestCase {
         let first = try outbox.enqueue(Data("same".utf8), receiverIdentity: "receiver-a")
         _ = try outbox.quarantineItem(id: first.id, reason: .invalidPayload, statusCode: 422)
         let second = try outbox.enqueue(Data("same".utf8), receiverIdentity: "receiver-a")
-        _ = try outbox.quarantineItem(id: second.id, reason: .invalidPayload, statusCode: 422)
+        let duplicateRecord = try XCTUnwrap(
+            outbox.quarantineItem(id: second.id, reason: .invalidPayload, statusCode: 422)
+        )
 
         XCTAssertEqual(try outbox.quarantinedItems().map(\.itemID), [first.id])
+        // The returned record must be one that quarantinedItems() reports, not an unstored copy.
+        XCTAssertEqual(duplicateRecord.itemID, first.id)
         XCTAssertTrue(try outbox.pendingItems().isEmpty)
     }
 

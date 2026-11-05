@@ -1162,7 +1162,8 @@ public final class FileOutbox {
     /// owns the item is dropped without applying its cursor checkpoint, so the lane's cursor
     /// does not advance past data the receiver never accepted and the next sync rebuilds it.
     /// Items of the same transaction that are still queued stay and send normally. A payload
-    /// byte-identical to one already quarantined is not stored twice. Returns nil when the
+    /// byte-identical to one already quarantined is not stored twice; the stored record is
+    /// returned for it. Returns nil when the
     /// item is no longer pending.
     @discardableResult
     public func quarantineItem(
@@ -1222,7 +1223,7 @@ public final class FileOutbox {
             try Self.applySensitiveFileAttributes(to: destinationURL, fileManager: fileManager)
         }
         _ = try reconciledManifest()
-        return record
+        return duplicate ?? record
     }
 
     /// Quarantined uploads that still have their payload, oldest first.

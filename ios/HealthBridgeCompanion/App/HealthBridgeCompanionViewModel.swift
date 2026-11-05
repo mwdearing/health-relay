@@ -6791,7 +6791,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                     // Resending the same bytes can never succeed, and the item would block
                     // every upload behind it. Move it aside and keep going.
                     try requireCurrentConnectionGeneration(expectedGeneration)
-                    if (try outbox.quarantineItem(
+                    // A storage error here must not escape and discard this flush's counts: the
+                    // item then counts as failed and is retried or quarantined on the next flush.
+                    if (try? outbox.quarantineItem(
                         id: item.id,
                         reason: rejection,
                         statusCode: statusCode
