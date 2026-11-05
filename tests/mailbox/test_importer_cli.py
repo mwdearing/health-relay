@@ -282,3 +282,26 @@ def test_import_non_sqlite_database_is_unreadable_not_uninitialized(
         "error_code": "database_unreadable",
         "status": "error",
     }
+
+
+def test_import_unopenable_wal_shm_is_unreadable_not_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    value = environment(tmp_path)
+
+    def shm_open_failed(_db: Path, _mailbox: Path) -> MailboxImporter:
+        message = "disk I/O error"
+        error = sqlite3.OperationalError(message)
+        error.sqlite_errorcode = sqlite3.SQLITE_IOERR_SHMOPEN
+        raise error
+
+    monkeypatch.setattr(
+        "health_bridge.cli_mailbox.production_importer", shm_open_failed
+    )
+    result = _run_import(value.db_path, value.mailbox_path, "--json")
+
+    assert result.exit_code == 3
+    assert json.loads(result.stdout) == {
+        "error_code": "database_unreadable",
+        "status": "error",
+    }

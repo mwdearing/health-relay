@@ -172,21 +172,30 @@ def _require_initialized_database(db: Path, json_output: bool) -> None:
         _fail_import("database_uninitialized", json_output)
 
 
-_TRANSIENT_SQLITE_CODES: Final = frozenset(
+# Primary codes whose every extended variant can clear on a rerun.
+_TRANSIENT_SQLITE_PRIMARY: Final = frozenset(
+    {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_FULL}
+)
+# I/O errors a rerun can get past. Open and access failures, such as an
+# unopenable WAL -shm (SQLITE_IOERR_SHMOPEN), are permanent and not listed.
+_TRANSIENT_SQLITE_IOERR: Final = frozenset(
     {
-        sqlite3.SQLITE_BUSY,
-        sqlite3.SQLITE_LOCKED,
         sqlite3.SQLITE_IOERR,
-        sqlite3.SQLITE_FULL,
+        sqlite3.SQLITE_IOERR_READ,
+        sqlite3.SQLITE_IOERR_SHORT_READ,
+        sqlite3.SQLITE_IOERR_WRITE,
+        sqlite3.SQLITE_IOERR_FSYNC,
     }
 )
 
 
 def _is_transient_sqlite_error(error: sqlite3.OperationalError) -> bool:
-    """True for a busy, locked, I/O-failing or full database: a rerun can work."""
+    """True for a busy, locked, full or read/write-failing database."""
     code = getattr(error, "sqlite_errorcode", None)
     if isinstance(code, int):
-        return code & 0xFF in _TRANSIENT_SQLITE_CODES
+        return (
+            code & 0xFF in _TRANSIENT_SQLITE_PRIMARY or code in _TRANSIENT_SQLITE_IOERR
+        )
     message = str(error).lower()
     return any(
         marker in message for marker in ("locked", "busy", "disk i/o", "disk is full")
