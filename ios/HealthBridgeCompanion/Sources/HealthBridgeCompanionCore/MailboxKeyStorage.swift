@@ -201,9 +201,11 @@ final class MailboxKeyFileStorage {
 }
 
 func systemMailboxStorageKind(_ url: URL) -> MailboxStorageKind {
-    var metadata = statfs()
-    guard statfs(url.path, &metadata) == 0 else { return .unknown }
-    return metadata.f_flags & UInt32(MNT_LOCAL) == 0 ? .network : .local
+    // volumeIsLocal is not a required-reason API, unlike the Disk Space calls.
+    guard let isLocal = try? url.resourceValues(forKeys: [.volumeIsLocalKey]).volumeIsLocal else {
+        return .unknown
+    }
+    return isLocal ? .local : .network
 }
 
 private func serviceDigest(_ service: String) -> String {
