@@ -13,9 +13,9 @@ final class UploadQuarantineTests: XCTestCase {
             PermanentUploadRejection.classify(statusCode: 400, errorCode: "invalid_batch"),
             .invalidPayload
         )
-        XCTAssertEqual(
-            PermanentUploadRejection.classify(statusCode: 403, errorCode: "source_principal_mismatch"),
-            .sourcePrincipalMismatch
+        // A principal mismatch can be a connection problem, so it is never auto-quarantined.
+        XCTAssertNil(
+            PermanentUploadRejection.classify(statusCode: 403, errorCode: "source_principal_mismatch")
         )
 
         XCTAssertNil(PermanentUploadRejection.classify(statusCode: 400, errorCode: nil))
@@ -52,10 +52,6 @@ final class UploadQuarantineTests: XCTestCase {
         XCTAssertEqual(schema.outcome, .quarantined)
         XCTAssertEqual(schema.quarantined.first?.1, .invalidPayload)
 
-        let mismatch = try finish(statusCode: 403, errorCode: "source_principal_mismatch")
-        XCTAssertEqual(mismatch.outcome, .quarantined)
-        XCTAssertEqual(mismatch.quarantined.first?.1, .sourcePrincipalMismatch)
-
         // The receiver answers 413 before reading the body, so the transfer may report an error too.
         let withTransportError = try finish(statusCode: 413, hadTransportError: true)
         XCTAssertEqual(withTransportError.outcome, .quarantined)
@@ -67,6 +63,9 @@ final class UploadQuarantineTests: XCTestCase {
             XCTAssertEqual(result.outcome, .retained, "HTTP \(statusCode)")
             XCTAssertTrue(result.quarantined.isEmpty, "HTTP \(statusCode)")
         }
+        let principalMismatch = try finish(statusCode: 403, errorCode: "source_principal_mismatch")
+        XCTAssertEqual(principalMismatch.outcome, .retained)
+        XCTAssertTrue(principalMismatch.quarantined.isEmpty)
         let otherForbidden = try finish(statusCode: 403, errorCode: "forbidden")
         XCTAssertEqual(otherForbidden.outcome, .retained)
         let bareBadRequest = try finish(statusCode: 400)
@@ -163,6 +162,19 @@ final class UploadQuarantineTests: XCTestCase {
 
         XCTAssertEqual(try outbox.discardAllQuarantinedItems(), 1)
         XCTAssertTrue(try outbox.quarantinedItems().isEmpty)
+        XCTAssertTrue(try outbox.pendingItems().isEmpty)
+    }
+
+    func testQuarantiningIdenticalRejectedPayloadsKeepsOneCopy() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outbox = try FileOutbox(directory: directory)
+        let first = try outbox.enqueue(Data("same".utf8), receiverIdentity: "receiver-a")
+        _ = try outbox.quarantineItem(id: first.id, reason: .invalidPayload, statusCode: 422)
+        let second = try outbox.enqueue(Data("same".utf8), receiverIdentity: "receiver-a")
+        _ = try outbox.quarantineItem(id: second.id, reason: .invalidPayload, statusCode: 422)
+
+        XCTAssertEqual(try outbox.quarantinedItems().map(\.itemID), [first.id])
         XCTAssertTrue(try outbox.pendingItems().isEmpty)
     }
 

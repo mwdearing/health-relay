@@ -295,7 +295,8 @@ public enum PermanentUploadRejection: String, Codable, Equatable, Sendable {
     case payloadTooLarge = "payload_too_large"
     /// 400 `invalid_json` / `invalid_batch`, or 422 (schema validation failed).
     case invalidPayload = "invalid_payload"
-    /// 403 `source_principal_mismatch`: the batch names a source this connection does not own.
+    /// Kept so quarantine records written by earlier builds still decode; `classify` no
+    /// longer produces it.
     case sourcePrincipalMismatch = "source_principal_mismatch"
 
     public static func classify(statusCode: Int, errorCode: String?) -> PermanentUploadRejection? {
@@ -306,8 +307,9 @@ public enum PermanentUploadRejection: String, Codable, Equatable, Sendable {
             return .invalidPayload
         case 400 where errorCode == "invalid_json" || errorCode == "invalid_batch":
             return .invalidPayload
-        case 403 where errorCode == "source_principal_mismatch":
-            return .sourcePrincipalMismatch
+        // 403 `source_principal_mismatch` is deliberately not classified: it can come from
+        // a wrong or stale connection, and the same bytes would be accepted once the
+        // connection is fixed, so the item stays queued (retained) instead of moved aside.
         default:
             return nil
         }
@@ -516,6 +518,9 @@ public struct FileOutboxFlushSummary: Equatable, Sendable {
     public let failedItemIDs: [String]
     public let failedDescriptions: [String]
     public let mailboxDeliveryDiagnosticLine: String
+    /// Items moved to quarantine after a permanent rejection, counted at the
+    /// quarantine event rather than inferred from the other counters.
+    public let quarantinedCount: Int
 
     public var failedCount: Int { failedItemIDs.count }
 
@@ -524,8 +529,10 @@ public struct FileOutboxFlushSummary: Equatable, Sendable {
         uploadedCount: Int,
         failedItemIDs: [String],
         failedDescriptions: [String] = [],
-        mailboxDeliveryDiagnosticLine: String = ""
+        mailboxDeliveryDiagnosticLine: String = "",
+        quarantinedCount: Int = 0
     ) {
+        self.quarantinedCount = quarantinedCount
         self.attemptedCount = attemptedCount
         self.uploadedCount = uploadedCount
         self.failedItemIDs = failedItemIDs
@@ -1154,8 +1161,9 @@ public final class FileOutbox {
     /// time, size) until `discardQuarantinedItem` removes it. The enqueue transaction that
     /// owns the item is dropped without applying its cursor checkpoint, so the lane's cursor
     /// does not advance past data the receiver never accepted and the next sync rebuilds it.
-    /// Items of the same transaction that are still queued stay and send normally. Returns
-    /// nil when the item is no longer pending.
+    /// Items of the same transaction that are still queued stay and send normally. A payload
+    /// byte-identical to one already quarantined is not stored twice. Returns nil when the
+    /// item is no longer pending.
     @discardableResult
     public func quarantineItem(
         id: String,
@@ -1179,11 +1187,20 @@ public final class FileOutbox {
             byteCount: (attributes[.size] as? NSNumber)?.intValue ?? 0
         )
 
-        try fileManager.createDirectory(at: quarantineDirectory, withIntermediateDirectories: true)
-        try Self.applySensitiveFileAttributes(to: quarantineDirectory, fileManager: fileManager)
-        let recordURL = quarantineRecordURL(for: id)
-        try JSONEncoder().encode(record).write(to: recordURL, options: [.atomic])
-        try Self.applySensitiveFileAttributes(to: recordURL, fileManager: fileManager)
+        // The cursor is not advanced past a quarantined item, so the next sync rebuilds the
+        // same rejected bytes. Keep one copy of identical payloads instead of one per sync.
+        let duplicate = try quarantinedItems().first { existing in
+            existing.byteCount == record.byteCount
+                && (try? Data(contentsOf: quarantinedPayloadURL(for: existing.itemID)))
+                    == (try? Data(contentsOf: item.fileURL))
+        }
+        if duplicate == nil {
+            try fileManager.createDirectory(at: quarantineDirectory, withIntermediateDirectories: true)
+            try Self.applySensitiveFileAttributes(to: quarantineDirectory, fileManager: fileManager)
+            let recordURL = quarantineRecordURL(for: id)
+            try JSONEncoder().encode(record).write(to: recordURL, options: [.atomic])
+            try Self.applySensitiveFileAttributes(to: recordURL, fileManager: fileManager)
+        }
 
         // Drop the owning transaction first: if the payload moved first, recovery would
         // treat the transaction as incomplete and delete its remaining payloads.
@@ -1193,10 +1210,14 @@ public final class FileOutbox {
             try persistEnqueueTransactions(transactions)
         }
 
-        let quarantinedPayloadURL = quarantinedPayloadURL(for: id)
-        try removeIfExists(quarantinedPayloadURL)
-        try fileManager.moveItem(at: item.fileURL, to: quarantinedPayloadURL)
-        try Self.applySensitiveFileAttributes(to: quarantinedPayloadURL, fileManager: fileManager)
+        if duplicate != nil {
+            try removeIfExists(item.fileURL)
+        } else {
+            let destinationURL = quarantinedPayloadURL(for: id)
+            try removeIfExists(destinationURL)
+            try fileManager.moveItem(at: item.fileURL, to: destinationURL)
+            try Self.applySensitiveFileAttributes(to: destinationURL, fileManager: fileManager)
+        }
         _ = try reconciledManifest()
         return record
     }

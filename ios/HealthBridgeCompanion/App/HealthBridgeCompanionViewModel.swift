@@ -1423,7 +1423,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 statusIsError = true
                 statusMessage = "Some queued uploads did not finish: attempted \(summary.attemptedCount), uploaded \(summary.uploadedCount), failed \(summary.failedCount). \(Self.firstFailureSentence(summary)) Queued uploads: \(pendingOutboxCount)."
             } else {
-                let movedAside = max(0, summary.attemptedCount - summary.uploadedCount - summary.failedCount)
+                let movedAside = summary.quarantinedCount
                 statusIsError = movedAside > 0
                 statusMessage = "Queued uploads sent: \(summary.uploadedCount). Remaining: \(pendingOutboxCount)."
                     + (movedAside > 0
@@ -6353,13 +6353,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 connectionGeneration: expectedGeneration
             )
         }
-        // Each attempted item either uploaded, failed (the loop stops there) or was
-        // quarantined after a permanent rejection.
-        let quarantinedCount = max(
-            0,
-            upload.summary.attemptedCount - upload.summary.uploadedCount - upload.summary.failedCount
-        )
-        if quarantinedCount > 0 {
+        // The summary counts quarantine events directly.
+        if upload.summary.quarantinedCount > 0 {
             lastOutboxNotice = " Your server permanently rejected an upload, so it was moved aside. Review it under Connection."
             return PayloadDelivery(
                 directUpload: nil,
@@ -6753,6 +6748,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         let pendingItems = try outbox.uploadablePendingItems(for: receiverIdentity)
         var attemptedCount = 0
         var uploadedCount = 0
+        var quarantinedCount = 0
         var failedItemIDs: [String] = []
         var failedDescriptions: [String] = []
         var lastDirectUploadResult: ReceiverUploadResult?
@@ -6801,6 +6797,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                         statusCode: statusCode
                     )) != nil {
                         outbox.noteDiagnosticDelivery(itemID: item.id, outcome: .rejected)
+                        quarantinedCount += 1
                         noteQuarantinedUpload(rejection, statusCode: statusCode)
                         continue
                     }
@@ -6817,7 +6814,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 attemptedCount: attemptedCount,
                 uploadedCount: uploadedCount,
                 failedItemIDs: failedItemIDs,
-                failedDescriptions: failedDescriptions
+                failedDescriptions: failedDescriptions,
+                quarantinedCount: quarantinedCount
             ),
             lastDirectUploadResult: lastDirectUploadResult
         )
@@ -6922,6 +6920,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             outbox = nil
             privateStorageAdmissionReady = false
             pendingOutboxCount = 0
+            quarantinedUploadCount = 0
             hasPendingSleepTransition = sleepStorageMayNeedRecovery()
             hasPendingOutboxDeletion = true
             return
