@@ -3,6 +3,17 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+import pytest
+from typer.testing import CliRunner
+
+from health_bridge.cli import app
+from health_bridge.mailbox.connections import (
+    MailboxConnectionError,
+    MailboxConnectionErrorCode,
+)
+from health_bridge.mailbox.filesystem import MailboxFileError, MailboxFileErrorCode
+from health_bridge.mailbox.importer import MailboxBusyError
+from health_bridge.mailbox.native_ack_publication import NativeAckPublicationError
 from tests.mailbox.importer_support import (
     BATCH,
     IMPORTED_COUNTS,
@@ -15,7 +26,9 @@ from tests.mailbox.importer_support import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import pytest
+    from typer.testing import Result
+
+    from health_bridge.mailbox.importer import MailboxImporter
 
 
 def test_cli_json_is_aggregate_only(
@@ -29,3 +42,109 @@ def test_cli_json_is_aggregate_only(
     assert json.loads(result.stdout) == IMPORTED_COUNTS
     assert str(value.mailbox_path) not in result.stdout
     assert BATCH.decode() not in result.stdout
+
+
+def _run_import(db: Path, mailbox: Path, *extra: str) -> Result:
+    return CliRunner().invoke(
+        app,
+        [
+            "mailbox",
+            "import",
+            "--db",
+            str(db),
+            "--mailbox",
+            str(mailbox),
+            "--once",
+            *extra,
+        ],
+    )
+
+
+def test_import_refuses_missing_database_and_creates_nothing(tmp_path: Path) -> None:
+    mailbox = tmp_path / ("02" * 16) / ("03" * 16)
+    mailbox.mkdir(parents=True)
+    db = tmp_path / "typo" / "health.sqlite"
+
+    result = _run_import(db, mailbox)
+
+    assert result.exit_code == 3
+    assert "database_unavailable" in result.output
+    assert "retryable=1" not in result.output
+    assert not db.parent.exists()
+
+
+def test_import_refuses_uninitialized_database_and_leaves_it_untouched(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "empty.sqlite"
+    _ = db.write_bytes(b"")
+    mailbox = tmp_path / ("02" * 16) / ("03" * 16)
+    mailbox.mkdir(parents=True)
+
+    result = _run_import(db, mailbox)
+
+    assert result.exit_code == 3
+    assert "database_uninitialized" in result.output
+    assert db.read_bytes() == b""
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "02" * 16,
+        "empty.sqlite",
+    ]
+
+
+def test_import_reports_malformed_mailbox_path_as_permanent(tmp_path: Path) -> None:
+    value = environment(tmp_path)
+    mailbox = tmp_path / "not-a-mailbox"
+    mailbox.mkdir()
+
+    result = _run_import(value.db_path, mailbox, "--json")
+
+    assert result.exit_code == 3
+    assert json.loads(result.stdout) == {
+        "error_code": "connection_malformed",
+        "status": "error",
+    }
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (
+            MailboxConnectionError(MailboxConnectionErrorCode.UNAVAILABLE),
+            "connection_unavailable",
+        ),
+        (NativeAckPublicationError("helper"), "helper_not_ready"),
+        (MailboxFileError(MailboxFileErrorCode.UNSAFE_ENTRY), "mailbox_unavailable"),
+    ],
+)
+def test_import_maps_permanent_setup_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    code: str,
+) -> None:
+    value = environment(tmp_path)
+
+    def fail(_db: Path, _mailbox: Path) -> MailboxImporter:
+        raise error
+
+    monkeypatch.setattr("health_bridge.cli_mailbox.production_importer", fail)
+    result = _run_import(value.db_path, value.mailbox_path, "--json")
+
+    assert result.exit_code == 3
+    assert json.loads(result.stdout) == {"error_code": code, "status": "error"}
+
+
+def test_import_busy_stays_retryable_exit_two(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    value = environment(tmp_path)
+
+    def busy(_db: Path, _mailbox: Path) -> MailboxImporter:
+        raise MailboxBusyError
+
+    monkeypatch.setattr("health_bridge.cli_mailbox.production_importer", busy)
+    result = _run_import(value.db_path, value.mailbox_path, "--json")
+
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["retryable"] == 1
