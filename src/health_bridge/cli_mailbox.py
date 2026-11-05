@@ -166,7 +166,8 @@ def _require_initialized_database(db: Path, json_output: bool) -> None:
             raise typer.Exit(code=2) from None
         _fail_import("database_unreadable", json_output)
     except sqlite3.Error:
-        initialized = False
+        # A corrupt or non-SQLite file: never steer the operator to `init`.
+        _fail_import("database_unreadable", json_output)
     if not initialized:
         _fail_import("database_uninitialized", json_output)
 

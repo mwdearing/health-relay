@@ -263,3 +263,20 @@ def test_import_other_sqlite_error_during_setup_is_unreadable(
         "error_code": "database_unreadable",
         "status": "error",
     }
+
+
+def test_import_non_sqlite_database_is_unreadable_not_uninitialized(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "not-a-database.sqlite"
+    _ = db.write_bytes(b"synthetic text, not an SQLite database\n" * 64)
+    mailbox = tmp_path / ("04" * 16) / ("05" * 16)
+    mailbox.mkdir(parents=True)
+
+    result = _run_import(db, mailbox, "--json")
+
+    assert result.exit_code == 3
+    assert json.loads(result.stdout) == {
+        "error_code": "database_unreadable",
+        "status": "error",
+    }
