@@ -74,7 +74,11 @@ class MailboxKeysDoctorResult(BaseModel):
 def import_mailbox(
     db: Annotated[
         Path,
-        typer.Option("--db", help="Private local Apple Health SQLite path."),
+        # readable=False: the probe below reports an unreadable file as
+        # database_unreadable (exit 3) instead of a usage error (exit 2).
+        typer.Option(
+            "--db", help="Private local Apple Health SQLite path.", readable=False
+        ),
     ],
     mailbox: Annotated[
         Path,
