@@ -24,16 +24,12 @@ from health_bridge.mcp.types import (
     required_object,
     required_string,
 )
+from health_bridge.queries.args import summarize_validation_error
 
 TOOL_CALL_SHAPE_MESSAGE: Final = (
     "Invalid tool call: params must be an object like "
     '{"name": "<tool>", "arguments": {...}}.'
 )
-TIMESTAMP_HINT: Final = "must look like 2026-06-01T00:00:00Z (UTC, ending in Z)"
-DATE_HINT: Final = "must be a date like 2026-06-01 (YYYY-MM-DD)"
-TIMESTAMP_FIELDS: Final = frozenset({"start_time", "end_time"})
-DATE_FIELDS: Final = frozenset({"start_date", "end_date"})
-MAX_FIELD_NAME_LENGTH: Final = 40
 DATABASE_HINT: Final = (
     "Check the database path this server was started with "
     "(the healthrelay plugin reads it from ~/.config/healthrelay/db-path)."
@@ -231,7 +227,7 @@ def _call_tool(  # noqa: PLR0911
         return _error(
             request.request_id,
             -32602,
-            f"Invalid arguments for {name}: {_validation_summary(error)}",
+            f"Invalid arguments for {name}: {summarize_validation_error(error)}",
         )
     try:
         payload = caller(db_path, validated_arguments)
@@ -251,33 +247,6 @@ def _call_tool(  # noqa: PLR0911
         "id": request.request_id,
         "result": {"content": [{"type": "text", "text": text}]},
     }
-
-
-def _validation_summary(error: ValidationError) -> str:
-    """Describe argument problems by field and expected form, never by value."""
-    problems: list[str] = []
-    for detail in error.errors():
-        location = detail["loc"]
-        field = ".".join(str(part) for part in location)[:MAX_FIELD_NAME_LENGTH]
-        root = str(location[0]) if location else ""
-        error_type = detail["type"]
-        if not location:
-            problem = detail["msg"].removeprefix("Value error, ")
-        elif error_type == "missing":
-            problem = f"{field}: is required"
-        elif error_type == "extra_forbidden":
-            problem = f"{field}: is not an accepted argument"
-        elif root in TIMESTAMP_FIELDS:
-            problem = f"{root}: {TIMESTAMP_HINT}"
-        elif root in DATE_FIELDS:
-            problem = f"{root}: {DATE_HINT}"
-        elif root == "type_codes":
-            problem = "type_codes: must be a list of type-code strings"
-        else:
-            problem = f"{field}: has an invalid value"
-        if problem not in problems:
-            problems.append(problem)
-    return "; ".join(problems)
 
 
 def _database_failure_reason(db_path: Path, error: Exception) -> str:

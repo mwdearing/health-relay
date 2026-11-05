@@ -1,23 +1,11 @@
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
-from typing import ClassVar, Final, Self, TypeAlias
+from typing import Final, TypeAlias
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    field_validator,
-    model_validator,
-)
+from pydantic import BaseModel, Field
 
-from health_bridge.contract.batch_v1 import (
-    UTC_TIMESTAMP_PATTERN,
-    UtcTimestamp,
-    utc_datetime,
-)
+from health_bridge.contract.batch_v1 import UTC_TIMESTAMP_PATTERN
 from health_bridge.mcp.types import JsonMapping, JsonObject
 from health_bridge.queries import (
     explain_sources,
@@ -26,6 +14,11 @@ from health_bridge.queries import (
     get_timeseries,
     get_workouts,
     list_synced_metrics,
+)
+from health_bridge.queries.args import (
+    ArgsModel,
+    DateRangeArgs,
+    TimeseriesArgs,
 )
 from health_bridge.queries.intake_evidence import (
     INTAKE_EVIDENCE_PAGE_ADAPTER,
@@ -43,57 +36,15 @@ ToolResult: TypeAlias = BaseModel | str
 ToolCaller: TypeAlias = Callable[[Path, JsonMapping], ToolResult]
 
 
-class McpModel(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(
-        extra="forbid",
-        frozen=True,
-        strict=True,
-    )
-
-
-class EmptyArgs(McpModel):
+class EmptyArgs(ArgsModel):
     pass
 
 
-class TimeseriesArgs(McpModel):
-    type_codes: list[str]
-    start_time: UtcTimestamp
-    end_time: UtcTimestamp
-
-    @model_validator(mode="after")
-    def require_ordered_interval(self) -> Self:
-        if utc_datetime(self.start_time) > utc_datetime(self.end_time):
-            message = "start_time must not be after end_time"
-            raise ValueError(message)
-        return self
-
-
-class SupportedTimeseriesArgs(McpModel):
+class SupportedTimeseriesArgs(ArgsModel):
     category: str | None = None
 
 
-class DateRangeArgs(McpModel):
-    start_date: str
-    end_date: str
-
-    @field_validator("start_date", "end_date")
-    @classmethod
-    def require_iso_date(cls, value: str) -> str:
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) is None:
-            message = "date must use YYYY-MM-DD"
-            raise ValueError(message)
-        _ = date.fromisoformat(value)
-        return value
-
-    @model_validator(mode="after")
-    def require_ordered_dates(self) -> Self:
-        if date.fromisoformat(self.start_date) > date.fromisoformat(self.end_date):
-            message = "start_date must not be after end_date"
-            raise ValueError(message)
-        return self
-
-
-class IntakeEvidenceArgs(McpModel):
+class IntakeEvidenceArgs(ArgsModel):
     owner_id: str | None = None
     intake_id: str | None = None
     cursor: str | None = None
@@ -306,7 +257,7 @@ MCP_TOOL_DEFINITIONS: Final[tuple[ToolDefinition, ...]] = (
         input_schema=INTAKE_EVIDENCE_INPUT_SCHEMA,
     ),
 )
-TOOL_ARGUMENT_MODELS: Final[dict[str, type[McpModel]]] = {
+TOOL_ARGUMENT_MODELS: Final[dict[str, type[ArgsModel]]] = {
     "get_bridge_status": EmptyArgs,
     "get_bridge_context_markdown": EmptyArgs,
     "list_supported_timeseries_types": SupportedTimeseriesArgs,

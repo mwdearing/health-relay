@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Annotated, Final, Never
 
 import typer
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from health_bridge.queries import (
     explain_sources,
@@ -12,6 +12,11 @@ from health_bridge.queries import (
     get_timeseries,
     get_workouts,
     list_synced_metrics,
+)
+from health_bridge.queries.args import (
+    DateRangeArgs,
+    TimeseriesArgs,
+    summarize_validation_error,
 )
 from health_bridge.queries.intake_evidence import (
     DEFAULT_LIMIT,
@@ -43,6 +48,14 @@ def echo_json(model: BaseModel) -> None:
 def _exit_with_error(message: str) -> Never:
     typer.echo(message, err=True)
     raise typer.Exit(code=1)
+
+
+def _date_range(start_date: str, end_date: str) -> DateRangeArgs:
+    """Validate with the same rules the MCP tools apply."""
+    try:
+        return DateRangeArgs(start_date=start_date, end_date=end_date)
+    except ValidationError as error:
+        _exit_with_error(f"Invalid arguments: {summarize_validation_error(error)}")
 
 
 @query_app.command("synced-metrics")
@@ -81,13 +94,21 @@ def timeseries(
         typer.Option("--end-time", help="Exclusive UTC observation end."),
     ],
 ) -> None:
-    type_codes = tuple(part.strip() for part in types.split(",") if part.strip())
-    echo_json(
-        get_timeseries(
-            db,
+    type_codes = [part.strip() for part in types.split(",") if part.strip()]
+    try:
+        args = TimeseriesArgs(
             type_codes=type_codes,
             start_time=start_time,
             end_time=end_time,
+        )
+    except ValidationError as error:
+        _exit_with_error(f"Invalid arguments: {summarize_validation_error(error)}")
+    echo_json(
+        get_timeseries(
+            db,
+            type_codes=tuple(args.type_codes),
+            start_time=args.start_time,
+            end_time=args.end_time,
         ),
     )
 
@@ -104,7 +125,8 @@ def workouts(
         typer.Option("--end-date", help="Exclusive observation date."),
     ],
 ) -> None:
-    echo_json(get_workouts(db, start_date=start_date, end_date=end_date))
+    args = _date_range(start_date, end_date)
+    echo_json(get_workouts(db, start_date=args.start_date, end_date=args.end_date))
 
 
 @query_app.command("sleep-summary")
@@ -119,7 +141,10 @@ def sleep_summary(
         typer.Option("--end-date", help="Exclusive observation date."),
     ],
 ) -> None:
-    echo_json(get_sleep_summary(db, start_date=start_date, end_date=end_date))
+    args = _date_range(start_date, end_date)
+    echo_json(
+        get_sleep_summary(db, start_date=args.start_date, end_date=args.end_date),
+    )
 
 
 @query_app.command("daily-summary")
@@ -134,7 +159,11 @@ def daily_summary(
         typer.Option("--end-date", help="Exclusive observation date."),
     ],
 ) -> None:
-    echo_json(get_daily_summary(db, start_date=start_date, end_date=end_date))
+    try:
+        args = DateRangeArgs(start_date=start_date, end_date=end_date)
+    except ValidationError as error:
+        _exit_with_error(f"Invalid arguments: {summarize_validation_error(error)}")
+    echo_json(get_daily_summary(db, start_date=args.start_date, end_date=args.end_date))
 
 
 @query_app.command("explain-sources")
