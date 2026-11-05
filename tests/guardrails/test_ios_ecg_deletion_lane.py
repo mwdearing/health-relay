@@ -17,6 +17,23 @@ ANCHOR = re.compile(
 GENERIC = re.compile(r"\} catch \{\n(?P<body>(?:(?! {12}\}\n).*\n)*?) {12}\}\n")
 
 
+# Patterns split across lines; joined where used.
+RESET_CALL = (
+    r"resetElectrocardiogramDeletionAnchor\(\s*in: cursorStore,",
+    r"\s*receiverBindingID: receiverBindingID\s*\)",
+)
+RESET_SAVE = (
+    r'try\? cursorStore\.saveCursorValue\(\s*"",',
+    r"\s*receiverBindingID: receiverBindingID,",
+    r'\s*sourceKey: "apple_health\.phone",\s*cursorKind: ',
+    r"ElectrocardiogramSyncBatchFactory\.deletionAnchorCursorKind\s*\)",
+)
+FAILURE_LOG = (
+    r'appendActivityLog\(\s*"\[ECG\] Deletion check failed: ',
+    r"\\\(describe\(error\)\)",
+)
+
+
 def _lane() -> str:
     match = LANE.search(VIEW_MODEL.read_text(encoding="utf-8"))
     assert match is not None
@@ -35,8 +52,7 @@ def test_ecg_deletion_lane_resets_an_unreadable_anchor() -> None:
     assert match is not None
     body = match.group("body")
     assert re.search(
-        r"resetElectrocardiogramDeletionAnchor\(\s*in: cursorStore,"
-        r"\s*receiverBindingID: receiverBindingID\s*\)",
+        "".join(RESET_CALL),
         body,
     )
     helper = re.search(
@@ -46,10 +62,7 @@ def test_ecg_deletion_lane_resets_an_unreadable_anchor() -> None:
     )
     assert helper is not None
     assert re.search(
-        r'try\? cursorStore\.saveCursorValue\(\s*"",'
-        r"\s*receiverBindingID: receiverBindingID,"
-        r'\s*sourceKey: "apple_health\.phone",\s*cursorKind: '
-        r"ElectrocardiogramSyncBatchFactory\.deletionAnchorCursorKind\s*\)",
+        "".join(RESET_SAVE),
         helper.group(0),
     )
     assert "appendActivityLog(" in body
@@ -62,7 +75,6 @@ def test_ecg_deletion_lane_logs_other_errors() -> None:
     match = GENERIC.match(generic)
     assert match is not None
     assert re.search(
-        r'appendActivityLog\(\s*"\[ECG\] Deletion check failed: '
-        r"\\\(describe\(error\)\)",
+        "".join(FAILURE_LOG),
         match.group("body"),
     )
