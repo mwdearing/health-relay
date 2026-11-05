@@ -4959,6 +4959,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             // Recordings deleted in Health only surface through an anchored query. Tombstones go in
             // their own batch whose anchor is applied only after the receiver accepts it. This
             // never fails the recording sync itself; deletions retry from the stored anchor.
+            var sentDeletionCount = 0
             do {
                 let storedAnchor = try cursorStore.cursorValue(
                     receiverBindingID: receiverBindingID,
@@ -4992,6 +4993,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                             cursorValue: deletions.anchorCursorValue
                         )
                     )
+                    sentDeletionCount = deletions.deletedUUIDs.count
                 }
             } catch {
                 // Deletions are retried from the stored anchor on the next foreground sync.
@@ -4999,7 +5001,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
 
             guard ForegroundSyncUploadPolicy.shouldUpload(batch) else {
                 statusIsError = false
-                statusMessage = "[ECG] HealthKit returned no ECG sync payload for the selected sync window. Nothing sent."
+                statusMessage = sentDeletionCount > 0
+                    ? "[ECG] No new ECG recordings. Sent \(sentDeletionCount) deletion(s)."
+                    : "[ECG] HealthKit returned no ECG sync payload for the selected sync window. Nothing sent."
                 return
             }
 
