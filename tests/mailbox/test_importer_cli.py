@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from typing import TYPE_CHECKING
 
@@ -109,6 +110,42 @@ def test_import_locked_database_probe_is_retryable_not_uninitialized(
     assert result.exit_code == 2
     assert json.loads(result.stdout)["retryable"] == 1
     assert "database_uninitialized" not in result.output
+
+
+def test_import_unopenable_database_is_unreadable_not_uninitialized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    value = environment(tmp_path)
+
+    error = sqlite3.OperationalError("unable to open database file")
+
+    def unopenable(*_args: object, **_kwargs: object) -> sqlite3.Connection:
+        raise error
+
+    monkeypatch.setattr("health_bridge.cli_mailbox.sqlite3.connect", unopenable)
+    result = _run_import(value.db_path, value.mailbox_path, "--json")
+
+    assert result.exit_code == 3
+    assert json.loads(result.stdout) == {
+        "error_code": "database_unreadable",
+        "status": "error",
+    }
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
+def test_import_permission_denied_database_is_unreadable(tmp_path: Path) -> None:
+    db = tmp_path / "locked.sqlite"
+    _ = db.write_bytes(b"")
+    db.chmod(0o000)
+    mailbox = tmp_path / ("02" * 16) / ("03" * 16)
+    mailbox.mkdir(parents=True)
+    try:
+        result = _run_import(db, mailbox, "--json")
+    finally:
+        db.chmod(0o600)
+
+    assert result.exit_code == 3
+    assert json.loads(result.stdout)["error_code"] == "database_unreadable"
 
 
 def test_import_reports_malformed_mailbox_path_as_permanent(tmp_path: Path) -> None:

@@ -141,7 +141,7 @@ def _require_initialized_database(db: Path, json_output: bool) -> None:
         if _is_transient_sqlite_error(exc):
             _emit_import_result(MailboxImportResult(retryable=1), json_output)
             raise typer.Exit(code=2) from None
-        initialized = False
+        _fail_import("database_unreadable", json_output)
     except sqlite3.Error:
         initialized = False
     if not initialized:
