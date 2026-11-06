@@ -75,8 +75,6 @@ from health_bridge.receiver.invitations import (
 )
 from health_bridge.receiver.mailbox_keys import MailboxKeyStore
 from health_bridge.receiver.pairing import (
-    ReceiverPairingInvitationBundle,
-    create_receiver_pairing_bundle,
     create_receiver_pairing_invitation_bundle,
     pairing_deep_link,
 )
@@ -936,7 +934,7 @@ def _resolved_or_absolute(path: Path) -> Path:
 
 
 @receiver_app.command("create-pairing")
-def create_pairing(  # noqa: PLR0912, PLR0913 - Typer exposes CLI branches/options.
+def create_pairing(  # noqa: PLR0913 - Typer exposes CLI branches/options.
     db: Annotated[
         Path,
         typer.Option("--db", help="User-owned SQLite database path."),
@@ -996,13 +994,6 @@ def create_pairing(  # noqa: PLR0912, PLR0913 - Typer exposes CLI branches/optio
             help="Allow secret-bearing pairing output on stdout for expert use.",
         ),
     ] = False,
-    legacy_v1: Annotated[
-        bool,
-        typer.Option(
-            "--legacy-v1",
-            help="Issue a legacy long-lived bearer-token pairing bundle.",
-        ),
-    ] = False,
 ) -> None:
     if output_format == "setup-page" and setup_page is None:
         typer.echo("--setup-page is required when --format setup-page.", err=True)
@@ -1014,39 +1005,24 @@ def create_pairing(  # noqa: PLR0912, PLR0913 - Typer exposes CLI branches/optio
         transport,
         mailbox_root=mailbox_root,
         icloud_container_identifier=icloud_container_identifier,
-        mailbox_allowed=not legacy_v1,
+        mailbox_allowed=True,
     )
 
-    if legacy_v1:
-        bundle = create_receiver_pairing_bundle(
-            db,
-            label=label,
-            receiver_url=receiver_url,
-        )
-    else:
-        bundle = create_receiver_pairing_invitation_bundle(
-            db,
-            label=label,
-            receiver_url=receiver_url,
-            transport=selected_transport,
-        )
+    bundle = create_receiver_pairing_invitation_bundle(
+        db,
+        label=label,
+        receiver_url=receiver_url,
+        transport=selected_transport,
+    )
     deep_link = pairing_deep_link(bundle)
     if output_format == "deeplink":
-        if isinstance(bundle, ReceiverPairingInvitationBundle):
-            output = {
-                "label": bundle.label,
-                "pairing_url": deep_link,
-                "pairing_schema_id": bundle.schema_id,
-                "invitation_expires_at": bundle.expires_at,
-                "warning": bundle.warning,
-            }
-        else:
-            output = {
-                "label": bundle.label,
-                "pairing_url": deep_link,
-                "token_prefix": bundle.token_prefix,
-                "warning": bundle.warning,
-            }
+        output = {
+            "label": bundle.label,
+            "pairing_url": deep_link,
+            "pairing_schema_id": bundle.schema_id,
+            "invitation_expires_at": bundle.expires_at,
+            "warning": bundle.warning,
+        }
     elif output_format == "setup-page":
         setup_page_path = cast("Path", setup_page)
         try:
@@ -1055,33 +1031,19 @@ def create_pairing(  # noqa: PLR0912, PLR0913 - Typer exposes CLI branches/optio
                 render_pairing_setup_page(bundle, deep_link),
             )
         except OSError as exc:
-            if isinstance(bundle, ReceiverPairingInvitationBundle):
-                revoke_pairing_invitation(db, bundle.invitation_id)
-            else:
-                revoke_receiver_token(db, bundle.token_prefix)
+            revoke_pairing_invitation(db, bundle.invitation_id)
             typer.echo(SETUP_PAGE_WRITE_FAILURE_MESSAGE, err=True)
             raise typer.Exit(code=1) from exc
-        if isinstance(bundle, ReceiverPairingInvitationBundle):
-            output = {
-                "label": bundle.label,
-                "setup_page": str(setup_page_path),
-                "pairing_schema_id": bundle.schema_id,
-                "invitation_expires_at": bundle.expires_at,
-                "warning": (
-                    "Setup page contains a temporary, single-use pairing invitation. "
-                    "Open it on your own device and delete it after pairing."
-                ),
-            }
-        else:
-            output = {
-                "label": bundle.label,
-                "setup_page": str(setup_page_path),
-                "token_prefix": bundle.token_prefix,
-                "warning": (
-                    "Legacy setup page contains a pairing secret. Open it on your "
-                    "own device and delete it after pairing."
-                ),
-            }
+        output = {
+            "label": bundle.label,
+            "setup_page": str(setup_page_path),
+            "pairing_schema_id": bundle.schema_id,
+            "invitation_expires_at": bundle.expires_at,
+            "warning": (
+                "Setup page contains a temporary, single-use pairing invitation. "
+                "Open it on your own device and delete it after pairing."
+            ),
+        }
     else:
         output = bundle.model_dump(mode="json", exclude_none=True)
         output["pairing_url"] = deep_link

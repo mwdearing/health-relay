@@ -8,7 +8,11 @@ from typing import Final, TypeAlias
 
 from pydantic import TypeAdapter
 
-from health_bridge.storage.database import connect_database, initialize_database
+from health_bridge.storage.database import (
+    connect_database,
+    ensure_database_initialized,
+    initialize_database,
+)
 
 TOKEN_PREFIX: Final = "hb_"  # noqa: S105 - public token prefix, not a secret.
 TOKEN_PREFIX_LENGTH: Final = 11
@@ -127,7 +131,7 @@ def authenticate_receiver_token_principal(
     db_path: Path,
     token: str,
 ) -> ReceiverTokenPrincipal | None:
-    initialize_database(db_path)
+    ensure_database_initialized(db_path)
     token_hash = hash_receiver_token(token)
     legacy_token_prefix = _token_prefix(token)
     hash_lookup_prefix = _hash_lookup_prefix(token_hash)
