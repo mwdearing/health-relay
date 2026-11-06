@@ -87,13 +87,27 @@ _ERROR_MESSAGES: Final[dict[LaunchdServiceErrorCode, str]] = {
 
 
 class LaunchdServiceError(Exception):
-    def __init__(self, code: LaunchdServiceErrorCode) -> None:
+    def __init__(
+        self,
+        code: LaunchdServiceErrorCode,
+        *,
+        field: str | None = None,
+        reason: str | None = None,
+    ) -> None:
         super().__init__()
         self.code: LaunchdServiceErrorCode = code
+        # Fixed, path-free vocabulary naming the rejected input (for example
+        # "executable") and the failed check (for example "symlink").
+        self.field: str | None = field
+        self.reason: str | None = reason
 
     @override
     def __str__(self) -> str:
-        return _ERROR_MESSAGES[self.code]
+        message = _ERROR_MESSAGES[self.code]
+        if self.field is None:
+            return message
+        detail = self.field if self.reason is None else f"{self.field}: {self.reason}"
+        return f"{message.removesuffix('.')} ({detail})."
 
 
 @dataclass(frozen=True, slots=True)
