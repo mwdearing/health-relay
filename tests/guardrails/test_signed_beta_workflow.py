@@ -7,7 +7,9 @@ reads secrets outside its own steps, and it never writes a secret to a log or an
 artifact.
 """
 
+import json
 import re
+import subprocess
 from pathlib import Path
 from typing import cast
 
@@ -185,7 +187,9 @@ def test_xcodebuild_output_stays_out_of_the_public_log() -> None:
     assert "$log" in text
     for line in text.splitlines():
         stripped = line.strip()
-        if "$log" in stripped and not stripped.startswith(("local ", "if ", "grep -q")):
+        if "$log" in stripped and not stripped.startswith(
+            ("local ", "if ", "grep -q", "errs=$(grep ")
+        ):
             assert (
                 stripped.startswith(("quiet ", '"$RUNNER_TEMP'))
                 or '> "$log"' in stripped
@@ -330,3 +334,210 @@ def test_the_build_configuration_is_a_fixed_choice_validated_before_the_archive(
     assert choice_check in run
     assert '-configuration "$BUILD_CONFIGURATION"' in run
     assert "-configuration Release" not in WORKFLOW.read_text()
+
+
+# The xcodebuild command line and build settings are echoed at the top of every log.
+INVOCATION_HEADER = """\
+Command line invocation:
+    /usr/bin/xcodebuild archive -project X.xcodeproj -allowProvisioningUpdates \
+        -authenticationKeyPath /tmp/asc/AuthKey.p8 -authenticationKeyID KEYID00000 \
+        DEVELOPMENT_TEAM=TEAMID0000 MARKETING_VERSION=1.2.2 CURRENT_PROJECT_VERSION=140
+
+Build settings from command line:
+    CODE_SIGN_STYLE = Automatic
+    CURRENT_PROJECT_VERSION = 140
+    DEVELOPMENT_TEAM = TEAMID0000
+    MARKETING_VERSION = 1.2.2
+    PRODUCT_BUNDLE_IDENTIFIER = com.example.fixture
+
+note: Using profile and certificate settings from the project
+"""
+
+
+def _quiet_source(step_name: str) -> str:
+    step = next(s for s in _steps() if str(s["name"]) == step_name)
+    run = str(step["run"])
+    lines = run[run.index("quiet() {") :].splitlines()
+    return "\n".join(lines[: lines.index("}") + 1])
+
+
+def _categories(step_name: str, log_text: str, tmp_path: Path) -> list[str]:
+    fixture = tmp_path / "fixture.log"
+    _ = fixture.write_text(log_text)
+    script = (
+        "set -euo pipefail\n"
+        f"{_quiet_source(step_name)}\n"
+        f'quiet Probe "{tmp_path}/probe.log" bash -c \'cat "{fixture}"; exit 65\'\n'
+    )
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    return [
+        line.split("category: ", 1)[1]
+        for line in result.stdout.splitlines()
+        if "category: " in line
+    ]
+
+
+STEPS_WITH_QUIET = (
+    "Archive with automatic signing",
+    "Export and upload to App Store Connect",
+)
+
+
+def test_a_compile_error_is_not_blamed_on_the_key_team_or_version(
+    tmp_path: Path,
+) -> None:
+    log = (
+        INVOCATION_HEADER
+        + "/src/App/Foo.swift:12:5: error: cannot find 'bar' in scope\n"
+        + "** ARCHIVE FAILED **\n"
+    )
+    for name in STEPS_WITH_QUIET:
+        assert _categories(name, log, tmp_path) == ["a Swift compile error"]
+
+
+def test_a_real_key_error_still_names_the_key_only(tmp_path: Path) -> None:
+    log = (
+        INVOCATION_HEADER
+        + "error: exportArchive: Authentication credentials are missing or invalid.\n"
+    )
+    for name in STEPS_WITH_QUIET:
+        assert _categories(name, log, tmp_path) == [
+            "the App Store Connect key was rejected"
+        ]
+
+
+def test_a_missing_profile_names_the_profile_only(tmp_path: Path) -> None:
+    log = (
+        INVOCATION_HEADER + "error: No profiles for 'com.example.fixture' were found\n"
+    )
+    for name in STEPS_WITH_QUIET:
+        assert _categories(name, log, tmp_path) == ["a provisioning profile problem"]
+
+
+def test_a_failure_with_no_error_line_names_no_category(tmp_path: Path) -> None:
+    for name in STEPS_WITH_QUIET:
+        assert _categories(name, INVOCATION_HEADER, tmp_path) == []
+
+
+def test_the_two_quiet_helpers_stay_identical() -> None:
+    assert _quiet_source(STEPS_WITH_QUIET[0]) == _quiet_source(STEPS_WITH_QUIET[1])
+
+
+VERIFY_STEP = "Verify the archive before upload"
+
+
+def test_the_archive_is_read_back_between_the_archive_and_the_upload() -> None:
+    names = [str(step.get("name", "")) for step in _steps()]
+    assert (
+        names.index("Archive with automatic signing")
+        < names.index(VERIFY_STEP)
+        < names.index("Export and upload to App Store Connect")
+    )
+
+
+def test_the_archive_check_covers_what_the_build_should_contain() -> None:
+    step = next(s for s in _steps() if str(s["name"]) == VERIFY_STEP)
+    env = cast("dict[str, str]", step["env"])
+    assert env["BUNDLE_ID"] == "${{ secrets.BUNDLE_ID }}"
+    assert env["BUILD_CONFIGURATION"] == "${{ inputs.configuration }}"
+    run = str(step["run"])
+    for needle in (
+        "PlistBuddy",
+        "CFBundleIdentifier",
+        "CFBundleShortVersionString",
+        "CFBundleVersion",
+        "HealthBridgeSourceCommit",
+        "$BUNDLE_ID",
+        "$MARKETING_VERSION",
+        "$BUILD_NUMBER",
+        "$GITHUB_SHA",
+        "codesign --verify --strict",
+        "codesign -d --entitlements :-",
+        "com.apple.developer.icloud-",
+        "AppStore",
+        "shasum -a 256",
+        "Products/Applications",
+    ):
+        assert needle in run, needle
+    # The values it compares are the ones the archive step stamped.
+    archive = str(
+        next(s for s in _steps() if str(s["name"]) == "Archive with automatic signing")[
+            "run"
+        ]
+    )
+    assert 'echo "MARKETING_VERSION=$MARKETING_VERSION" >> "$GITHUB_ENV"' in archive
+    assert 'echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"' in archive
+
+
+def test_the_archive_check_prints_only_pass_or_fail_lines_and_the_checksum() -> None:
+    step = next(s for s in _steps() if str(s["name"]) == VERIFY_STEP)
+    run = str(step["run"])
+    for line in run.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("echo ") and "::add-mask::" not in stripped:
+            assert re.match(r'^echo "(::error::|ok: )[^$`]*( \$SUM)?"$', stripped), (
+                stripped
+            )
+    assert "set -x" not in run
+    assert "cat " not in run
+
+
+def test_both_ipa_workflows_default_to_the_recorded_marketing_version() -> None:
+    build = Path(".github/workflows/build-ipa.yml").read_text()
+    assert "1.2.$GITHUB_RUN_NUMBER" not in build
+    assert "component-versions.json" in build
+    assert "ios_companion" in build
+
+
+def test_the_marketing_version_has_one_recorded_source_that_fork_md_names() -> None:
+    recorded = cast(
+        "dict[str, dict[str, str]]",
+        json.loads(Path("component-versions.json").read_text()),
+    )
+    version = recorded["ios_companion"]["marketing_version"]
+    pbxproj = Path(
+        "ios/HealthBridgeCompanion/HealthBridgeCompanion.xcodeproj/project.pbxproj"
+    ).read_text()
+    assert set(re.findall(r"\bMARKETING_VERSION = ([^;]+);", pbxproj)) == {version}
+    fork = Path("FORK.md").read_text()
+    (rule,) = [line for line in fork.splitlines() if line.startswith("- Version:")]
+    assert f"currently {version}" in rule
+    assert "1.2.<run number>" not in rule
+    assert "do not bump" not in rule
+
+
+def test_the_docs_do_not_claim_which_release_is_latest() -> None:
+    for name in (
+        "README.md",
+        "SECURITY.md",
+        "docs/versioning.md",
+        ".github/release/README.md",
+    ):
+        text = Path(name).read_text()
+        assert "including the one marked Latest" not in text, name
+        assert "including the one currently marked Latest" not in text, name
+        assert "stays on the last app release" not in text, name
+        assert "never marked Latest" not in text, name
+    versioning = Path("docs/versioning.md").read_text()
+    assert "--latest=false" in versioning
+    assert "gh release view" in versioning
+
+
+def test_the_archive_check_refuses_empty_values() -> None:
+    """An unset secret and an unreadable plist key must not compare equal."""
+    step = next(s for s in _steps() if str(s["name"]) == VERIFY_STEP)
+    run = str(step["run"])
+    assert '[[ -n "$2" && -n "$actual" && "$actual" == "$2" ]]' in run
+    for key in (
+        "CFBundleIdentifier",
+        "CFBundleShortVersionString",
+        "CFBundleVersion",
+        "HealthBridgeSourceCommit",
+    ):
+        assert f"same {key} " in run, key

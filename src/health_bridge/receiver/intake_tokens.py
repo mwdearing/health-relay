@@ -12,7 +12,11 @@ from pydantic import TypeAdapter
 
 from health_bridge.contract.intake_context_v1 import PRODUCER_ID_PATTERN
 from health_bridge.receiver.tokens import hash_receiver_token
-from health_bridge.storage.database import connect_database, initialize_database
+from health_bridge.storage.database import (
+    connect_database,
+    ensure_database_initialized,
+    initialize_database,
+)
 from health_bridge.storage.intake_context import PENDING_INTAKE_TOKEN_MARKER
 
 INTAKE_TOKEN_PREFIX: Final = "hri_"  # noqa: S105 - public token prefix, not a secret.
@@ -413,7 +417,7 @@ def authenticate_intake_token(
 ) -> IntakeTokenPrincipal | None:
     if not token.startswith(INTAKE_TOKEN_PREFIX):
         return None
-    initialize_database(db_path)
+    ensure_database_initialized(db_path)
     token_hash = hash_receiver_token(token)
     with connect_database(db_path) as connection:
         rows = connection.execute(
