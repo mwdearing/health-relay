@@ -347,8 +347,9 @@ def test_receiver_start_loads_owned_service_config_into_supported_runtime(
         mailbox_root: Path | None,
         intake_context_enabled: bool,
         request_timeout_seconds: float,
+        on_listening: object,
     ) -> None:
-        del mailbox_key_store, mailbox_connection_store
+        del mailbox_key_store, mailbox_connection_store, on_listening
         captured.update(
             db_path=db_path,
             host=host,

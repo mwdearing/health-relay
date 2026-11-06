@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Final
+import socket
+from typing import TYPE_CHECKING, Final, cast
 
 import pytest
 from typer.testing import CliRunner
@@ -14,6 +15,7 @@ from health_bridge.receiver.mailbox_keys import MailboxKeyStore
 from health_bridge.receiver.transports import PublicReceiverTransport, ReceiverTransport
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 ANSI_SGR_PATTERN: Final = re.compile(r"\x1b\[[0-9;]*m")
@@ -69,7 +71,9 @@ def test_receiver_start_preserves_direct_defaults_and_skips_mailbox_stores(
         mailbox_root: Path | None,
         intake_context_enabled: bool,
         request_timeout_seconds: float,
+        on_listening: Callable[[str, int], None],
     ) -> None:
+        del on_listening
         captured.update(
             db_path=db_path,
             host=host,
@@ -207,7 +211,9 @@ def test_receiver_start_maps_keyboard_interrupt_to_clean_exit(
         select_direct,
     )
 
-    def interrupt_receiver(*_args: object, **_kwargs: object) -> None:
+    def interrupt_receiver(*_args: object, **kwargs: object) -> None:
+        on_listening = cast("Callable[[str, int], None]", kwargs["on_listening"])
+        on_listening("127.0.0.1", 8765)
         raise KeyboardInterrupt
 
     monkeypatch.setattr(cli_receiver_module, "serve_receiver", interrupt_receiver)
@@ -229,6 +235,7 @@ def test_receiver_start_enables_intake_context_explicitly(
 
     def serve(**kwargs: object) -> None:
         captured.update(kwargs)
+        cast("Callable[[str, int], None]", kwargs["on_listening"])("127.0.0.1", 8765)
 
     monkeypatch.setattr(cli_receiver_module, "serve_receiver", serve)
     result = CliRunner().invoke(
@@ -254,6 +261,7 @@ def test_receiver_start_leaves_intake_context_disabled_by_default(
 
     def serve(**kwargs: object) -> None:
         captured.update(kwargs)
+        cast("Callable[[str, int], None]", kwargs["on_listening"])("127.0.0.1", 8765)
 
     monkeypatch.setattr(cli_receiver_module, "serve_receiver", serve)
     result = CliRunner().invoke(
@@ -262,3 +270,69 @@ def test_receiver_start_leaves_intake_context_disabled_by_default(
     assert result.exit_code == 0, (result.output, result.exception)
     assert captured["intake_context_enabled"] is False
     assert "Intake-context routes: disabled" in result.stderr
+
+
+def test_receiver_start_reports_a_taken_port_without_claiming_to_listen(
+    tmp_path: Path,
+) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen(1)
+        port = int(cast("tuple[str, int]", taken.getsockname())[1])
+        result = CliRunner().invoke(
+            app,
+            [
+                "receiver",
+                "start",
+                "--db",
+                str(tmp_path / "r.sqlite"),
+                "--port",
+                str(port),
+            ],
+        )
+
+    assert result.exit_code == 1
+    assert "listening" not in result.stderr
+    assert f"Could not listen on 127.0.0.1:{port}" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.exc_info is None or result.exc_info[0] is SystemExit
+
+
+def _ipv6_loopback_usable() -> bool:
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as probe:
+            probe.bind(("::1", 0))
+    except OSError:
+        return False
+    return True
+
+
+@pytest.mark.skipif(not _ipv6_loopback_usable(), reason="IPv6 loopback unavailable")
+def test_receiver_start_binds_ipv6_hosts_and_prints_a_valid_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def interrupt(*_args: object, **_kwargs: object) -> None:
+        raise KeyboardInterrupt
+
+    from health_bridge.receiver import server as server_module  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        server_module.ReceiverHTTPServer, "serve_forever", interrupt, raising=True
+    )
+    result = CliRunner().invoke(
+        app,
+        [
+            "receiver",
+            "start",
+            "--db",
+            str(tmp_path / "r.sqlite"),
+            "--host",
+            "::1",
+            "--port",
+            "0",
+        ],
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert re.search(r"listening on http://\[::1\]:\d+", result.stderr)

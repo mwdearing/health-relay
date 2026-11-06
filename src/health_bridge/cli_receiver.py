@@ -1047,7 +1047,7 @@ def create_pairing(  # noqa: PLR0912, PLR0913 - Typer exposes CLI branches/optio
         try:
             write_private_text_file(
                 setup_page_path,
-                render_pairing_setup_page(bundle, deep_link),
+                render_pairing_setup_page(bundle, deep_link, db),
             )
         except OSError as exc:
             if isinstance(bundle, ReceiverPairingInvitationBundle):
@@ -2649,7 +2649,10 @@ def start(  # noqa: PLR0913 -- Typer exposes independent receiver options.
     ] = None,
     host: Annotated[
         str,
-        typer.Option("--host", help="Bind host. Keep 127.0.0.1 for local-only."),
+        typer.Option(
+            "--host",
+            help="Bind host (IPv4 or IPv6 address). Keep 127.0.0.1 for local-only.",
+        ),
     ] = DEFAULT_RECEIVER_HOST,
     port: Annotated[
         int,

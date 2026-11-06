@@ -7,7 +7,7 @@ import shutil
 import socket
 import subprocess  # nosec B404
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, ClassVar, Final, Literal, cast
 from urllib.parse import ParseResult, urlparse
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -61,6 +61,9 @@ IPV6_NONFORWARDABLE_NETWORKS = (
     ipaddress.ip_network((42540766411282592856903984951653826560, 32)),
 )
 DOCUMENTATION_HOST_SUFFIXES = (".example", ".invalid", ".test")
+SETUP_GUIDE_URL: Final = (
+    "https://github.com/mwdearing/health-relay/blob/main/docs/setup.md"
+)
 DOCUMENTATION_HOSTS = frozenset(
     {
         "example",
@@ -249,7 +252,7 @@ def _reject_documentation_host(host: str) -> None:
         "Receiver URL uses a reserved documentation or testing hostname. "
         "Prepare the real phone-reachable private HTTPS route first, then retry "
         "with its exact /v1/batches URL. See "
-        "https://github.com/roian6/apple-health-ai-bridge/blob/main/docs/setup.md."
+        f"{SETUP_GUIDE_URL}."
     )
     raise ValueError(message)
 
