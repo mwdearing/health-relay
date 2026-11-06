@@ -656,9 +656,35 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             savedBearerToken = ""
             bearerTokenReadSucceeded = false
         }
-        // Outbox identity migration is not run in init (it reads files and the Keychain on the
-        // main actor). performBootstrap runs it off the main actor via retryPrivateStoreInitialization.
-        let outboxIdentityMigrationSucceeded = false
+        let outboxIdentityMigrationSucceeded: Bool
+        if let outbox,
+           !outbox.destructiveRecoveryIsRequested,
+           atomicConnectionRecordReady,
+           bearerTokenReadSucceeded {
+            do {
+                let currentBindingID = settingsStore.receiverBindingID
+                if let currentBindingID,
+                   Self.receiverSettingsAreComplete(
+                       urlString: settingsStore.receiverURLString,
+                       bearerToken: savedBearerToken
+                   ) {
+                    _ = try outbox.migrateLegacyHashedReceiverIdentities(
+                        currentReceiverURLString: settingsStore.receiverURLString,
+                        currentBearerToken: savedBearerToken,
+                        currentBindingID: currentBindingID
+                    )
+                }
+                outboxIdentityMigrationSucceeded = ReceiverOutboxAdmissionPolicy.isReady(
+                    pendingReceiverIdentities: try outbox.pendingItems().map(\.receiverIdentity),
+                    currentBindingID: currentBindingID,
+                    hasBearerToken: !savedBearerToken.isEmpty
+                )
+            } catch {
+                outboxIdentityMigrationSucceeded = false
+            }
+        } else {
+            outboxIdentityMigrationSucceeded = false
+        }
         self.receiverURLString = settingsStore.receiverURLString
         self.bearerToken = savedBearerToken
         let savedReceiverSettingsAreComplete = Self.receiverSettingsAreComplete(
@@ -696,6 +722,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         } else if initialConnectionStateNeedsRecovery {
             self.statusIsError = true
             self.statusMessage = "A saved connection from an older or damaged app state must be reset and paired again before any upload."
+        } else if !outboxIdentityMigrationSucceeded {
+            self.statusIsError = true
+            self.statusMessage = "Queued-upload privacy migration failed. Automatic and manual uploads remain unavailable until the local outbox is cleared or migration succeeds."
         } else if !bearerToken.isEmpty {
             self.statusMessage = "Loaded saved connection from this iPhone."
         }
@@ -6535,10 +6564,6 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             try await Task.detached(priority: .utility) {
                 try Self.migrateAndCheckOutboxIdentities(snapshot)
             }.value
-            receiverSettingsSaved = snapshot.bindingID != nil && Self.receiverSettingsAreComplete(
-                urlString: snapshot.receiverURLString,
-                bearerToken: snapshot.bearerToken
-            )
         } catch {
             outboxIdentityMigrationReady = false
             if ReceiverConnectionRecordRecoveryPolicy.requiresDestructiveRecovery(error) {
