@@ -975,7 +975,9 @@ def test_receiver_create_pairing_cli_rejects_legacy_v1_flag(tmp_path: Path) -> N
 
     # Then
     assert result.returncode != 0
-    assert "--legacy-v1" in result.stderr
+    plain_output = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout + result.stderr)
+    assert "No such option" in plain_output
+    assert "--legacy-v1" in plain_output
     assert not db_path.exists()
 
 
