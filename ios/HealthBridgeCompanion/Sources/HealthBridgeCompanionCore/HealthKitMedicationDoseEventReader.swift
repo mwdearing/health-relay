@@ -47,15 +47,23 @@ public enum HealthKitMedicationDoseEventReaderError: Error, Equatable {
     case anchorUnavailable
 }
 
-/// Dose events the user deleted since the stored anchor, plus the anchor to store once the
-/// deletions are delivered (RELAY-R2). `deletedUUIDs` is empty when no anchor existed yet: the
-/// first read only establishes the anchor.
-public struct HealthKitMedicationDoseEventDeletions: Equatable, Sendable {
+/// Dose events the user deleted or added since the stored anchor, plus the anchor to store once
+/// they are delivered (RELAY-R2). A corrected log replaces the object, so the old uuid arrives as
+/// a deletion and the replacement as an addition, which can start before the dose read window.
+/// `deletedUUIDs` and `addedEvents` are empty when no anchor existed yet: the first read only
+/// establishes the anchor (an anchorless read would return every dose ever recorded).
+public struct HealthKitMedicationDoseEventChanges: Equatable, Sendable {
     public let deletedUUIDs: [UUID]
+    public let addedEvents: [HealthKitMedicationDoseEventSummary]
     public let anchorCursorValue: String
 
-    public init(deletedUUIDs: [UUID], anchorCursorValue: String) {
+    public init(
+        deletedUUIDs: [UUID],
+        addedEvents: [HealthKitMedicationDoseEventSummary] = [],
+        anchorCursorValue: String
+    ) {
         self.deletedUUIDs = deletedUUIDs
+        self.addedEvents = addedEvents
         self.anchorCursorValue = anchorCursorValue
     }
 }
@@ -116,15 +124,7 @@ public final class HealthKitMedicationDoseEventReader: @unchecked Sendable {
             throw HealthKitMedicationDoseEventReaderError.invalidWindow
         }
 
-        let medications = try await HKUserAnnotatedMedicationQueryDescriptor(predicate: nil, limit: nil)
-            .result(for: healthStore)
-        var namesByConceptKey: [String: String] = [:]
-        for medication in medications {
-            let key = Self.conceptKey(medication.medication.identifier)
-            if namesByConceptKey[key] == nil {
-                namesByConceptKey[key] = medication.nickname ?? medication.medication.displayText
-            }
-        }
+        let namesByConceptKey = try await medicationNamesByConceptKey()
 
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [.strictStartDate])
         let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
@@ -143,39 +143,67 @@ public final class HealthKitMedicationDoseEventReader: @unchecked Sendable {
             }
         }
 
-        return events.map { event in
-            let key = Self.conceptKey(event.medicationConceptIdentifier)
-            return HealthKitMedicationDoseEventSummary(
-                uuid: event.uuid,
-                medicationName: namesByConceptKey[key] ?? "concept \(key)",
-                conceptKey: key,
-                status: Self.status(for: event.logStatus),
-                statusRaw: event.logStatus.rawValue,
-                start: event.startDate,
-                scheduled: event.scheduledDate,
-                dose: event.doseQuantity,
-                unit: event.unit.unitString
-            )
-        }
+        return events.map { Self.summary(for: $0, namesByConceptKey: namesByConceptKey) }
     }
 
-    /// Dose events deleted since `anchorCursorValue`. HealthKit reports deletions only through an
-    /// anchored query; a plain window read never sees them. A corrected log replaces the object,
-    /// so the old uuid arrives here as a deletion.
-    public func readMedicationDoseEventDeletions(
+    /// Medication names keyed by concept (nickname first, then display text).
+    private func medicationNamesByConceptKey() async throws -> [String: String] {
+        let medications = try await HKUserAnnotatedMedicationQueryDescriptor(predicate: nil, limit: nil)
+            .result(for: healthStore)
+        var namesByConceptKey: [String: String] = [:]
+        for medication in medications {
+            let key = Self.conceptKey(medication.medication.identifier)
+            if namesByConceptKey[key] == nil {
+                namesByConceptKey[key] = medication.nickname ?? medication.medication.displayText
+            }
+        }
+        return namesByConceptKey
+    }
+
+    private static func summary(
+        for event: HKMedicationDoseEvent,
+        namesByConceptKey: [String: String]
+    ) -> HealthKitMedicationDoseEventSummary {
+        let key = conceptKey(event.medicationConceptIdentifier)
+        return HealthKitMedicationDoseEventSummary(
+            uuid: event.uuid,
+            medicationName: namesByConceptKey[key] ?? "concept \(key)",
+            conceptKey: key,
+            status: status(for: event.logStatus),
+            statusRaw: event.logStatus.rawValue,
+            start: event.startDate,
+            scheduled: event.scheduledDate,
+            dose: event.doseQuantity,
+            unit: event.unit.unitString
+        )
+    }
+
+    /// Dose events deleted or added since `anchorCursorValue`. HealthKit reports deletions only
+    /// through an anchored query; a plain window read never sees them. A corrected log replaces
+    /// the object, so the old uuid arrives here as a deletion and the replacement as an addition
+    /// (which the time-window read misses when the dose time is older than the replay window).
+    public func readMedicationDoseEventChanges(
         anchorCursorValue: String?
-    ) async throws -> HealthKitMedicationDoseEventDeletions {
+    ) async throws -> HealthKitMedicationDoseEventChanges {
         guard HKHealthStore.isHealthDataAvailable() else {
             throw HealthKitMedicationDoseEventReaderError.healthDataUnavailable
         }
         let anchor = try HealthKitAnchorCursorCodec.decodeOptional(anchorCursorValue)
+        // Names are only needed to map added samples, which are ignored without a stored anchor.
+        // A `let`, because the query's result handler is a concurrently executing closure.
+        let namesByConceptKey: [String: String]
+        if anchor != nil {
+            namesByConceptKey = try await medicationNamesByConceptKey()
+        } else {
+            namesByConceptKey = [:]
+        }
         return try await executeCancellableHealthKitQuery(healthStore: healthStore) { completion in
             let query = HKAnchoredObjectQuery(
                 type: HKObjectType.medicationDoseEventType(),
                 predicate: nil,
                 anchor: anchor,
                 limit: HKObjectQueryNoLimit
-            ) { _, _, deletedObjects, newAnchor, error in
+            ) { _, addedSamples, deletedObjects, newAnchor, error in
                 if let error {
                     completion(.failure(error))
                     return
@@ -187,8 +215,14 @@ public final class HealthKitMedicationDoseEventReader: @unchecked Sendable {
                 do {
                     let cursorValue = try HealthKitAnchorCursorCodec.encode(newAnchor)
                     let uuids = anchor == nil ? [] : (deletedObjects ?? []).map(\.uuid)
-                    completion(.success(HealthKitMedicationDoseEventDeletions(
+                    let added = anchor == nil
+                        ? []
+                        : ((addedSamples as? [HKMedicationDoseEvent]) ?? []).map {
+                            Self.summary(for: $0, namesByConceptKey: namesByConceptKey)
+                        }
+                    completion(.success(HealthKitMedicationDoseEventChanges(
                         deletedUUIDs: uuids,
+                        addedEvents: added,
                         anchorCursorValue: cursorValue
                     )))
                 } catch {

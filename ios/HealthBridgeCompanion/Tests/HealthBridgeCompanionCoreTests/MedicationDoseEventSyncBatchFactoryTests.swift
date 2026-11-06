@@ -264,4 +264,51 @@ final class MedicationDoseEventSyncBatchFactoryTests: XCTestCase {
         XCTAssertFalse(MedicationDoseLanePolicy.shouldSendDeletionBatch(
             mode: .automatic, deletedUUIDs: [uuid], hadStoredAnchor: false))
     }
+
+    func testChangesBatchCarriesReplacementUpsertOlderThanReplayWindowWithTombstone() throws {
+        let deleted = try XCTUnwrap(UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"))
+        let replacement = try XCTUnwrap(UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"))
+        let windowEnd = try date("2026-06-20T12:00:00Z")
+        // Seven days before the dose cursor: outside the 3-day replay window of the dose read.
+        let oldStart = try date("2026-06-13T08:00:00Z")
+
+        let batch = MedicationDoseEventSyncBatchFactory.makeMedicationDoseEventDeletionBatch(
+            deletedUUIDs: [deleted],
+            addedEvents: [
+                HealthKitMedicationDoseEventSummary(
+                    uuid: replacement, medicationName: "Synthetic Vitamin", conceptKey: "c0",
+                    status: .taken, statusRaw: 1, start: oldStart,
+                    scheduled: nil, dose: 1, unit: "capsule"
+                ),
+                // An addition that is also deleted in the same read must not be upserted.
+                HealthKitMedicationDoseEventSummary(
+                    uuid: deleted, medicationName: "Synthetic Vitamin", conceptKey: "c0",
+                    status: .skipped, statusRaw: 2, start: oldStart,
+                    scheduled: nil, dose: nil, unit: nil
+                ),
+            ],
+            anchorCursorValue: "anchor-2",
+            windowStart: try date("2026-06-17T12:00:00Z"),
+            windowEnd: windowEnd,
+            generatedAt: windowEnd
+        )
+
+        XCTAssertEqual(batch.deletedRecords.map(\.clientRecordID), ["hk-meddose-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"])
+        XCTAssertEqual(batch.medicationDoseEvents.map(\.clientRecordID), ["hk-meddose-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"])
+        XCTAssertEqual(batch.medicationDoseEvents.first?.status, .taken)
+        XCTAssertEqual(batch.medicationDoseEvents.first?.startTime, HealthBridgeUTCFormatter.string(from: oldStart))
+        XCTAssertEqual(batch.sync.cursors.first?.cursorValue, "anchor-2")
+    }
+
+    func testAddedEventsAloneTriggerTheChangesBatchWhenAnAnchorWasStored() throws {
+        let added = HealthKitMedicationDoseEventSummary(
+            uuid: UUID(), medicationName: "Synthetic Vitamin", conceptKey: nil,
+            status: .taken, statusRaw: 1, start: try date("2026-06-13T08:00:00Z"),
+            scheduled: nil, dose: nil, unit: nil
+        )
+        XCTAssertTrue(MedicationDoseLanePolicy.shouldSendDeletionBatch(
+            mode: .foreground, deletedUUIDs: [], addedEvents: [added], hadStoredAnchor: true))
+        XCTAssertFalse(MedicationDoseLanePolicy.shouldSendDeletionBatch(
+            mode: .automatic, deletedUUIDs: [], addedEvents: [added], hadStoredAnchor: true))
+    }
 }
