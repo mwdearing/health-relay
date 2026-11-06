@@ -165,19 +165,22 @@ _INITIALIZED_DATABASES_LOCK: Final = threading.Lock()
 def ensure_database_initialized(db_path: Path) -> None:
     """Run ``initialize_database`` once per process for each database file.
 
-    The key is the file's device and inode, so a replaced or recreated file
-    is initialized again. Request-time auth calls use this instead of
-    re-walking the migration ledger on every request.
+    The key is the file's device and inode, so a file that is unlinked and
+    recreated is initialized again. Request-time auth calls take the lock-free
+    fast path. Limit: a file overwritten in place (same inode, e.g. a restore
+    that copies over it) is not re-checked until the process restarts, and a
+    restore should restart the receiver anyway.
     """
     key = str(db_path.resolve())
-    with _INITIALIZED_DATABASES_LOCK:
-        try:
-            stat_result = db_path.stat()
-        except FileNotFoundError:
-            stat_result = None
-        identity = (stat_result.st_dev, stat_result.st_ino) if stat_result else None
-        if identity is not None and _INITIALIZED_DATABASES.get(key) == identity:
+    try:
+        stat_result = db_path.stat()
+    except FileNotFoundError:
+        stat_result = None
+    if stat_result is not None:
+        identity = (stat_result.st_dev, stat_result.st_ino)
+        if _INITIALIZED_DATABASES.get(key) == identity:
             return
+    with _INITIALIZED_DATABASES_LOCK:
         initialize_database(db_path)
         stat_result = db_path.stat()
         _INITIALIZED_DATABASES[key] = (stat_result.st_dev, stat_result.st_ino)
