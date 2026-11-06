@@ -1185,8 +1185,6 @@ public final class FileOutbox {
         receiverIdentity: String,
         upload: (FileOutboxItem, Data) async throws -> Void
     ) async throws -> FileOutboxFlushSummary {
-        stateLock.lock()
-        defer { stateLock.unlock() }
         let items = try uploadablePendingItems(for: receiverIdentity)
         var attemptedCount = 0
         var uploadedCount = 0
