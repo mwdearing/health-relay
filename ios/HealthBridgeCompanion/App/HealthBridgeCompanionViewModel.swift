@@ -281,6 +281,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     var usesMailboxTransport: Bool {
         appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox
     }
+    /// Uploads the server permanently rejected that the outbox moved aside so later uploads
+    /// could send. They stay on this iPhone until the user discards them.
+    @Published private(set) var quarantinedUploadCount = 0
     @Published private(set) var hasPendingSleepTransition = false
     @Published private(set) var hasPendingOutboxDeletion = false
     @Published private(set) var hasPendingPrivateStorageRecovery = false
@@ -1420,8 +1423,12 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 statusIsError = true
                 statusMessage = "Some queued uploads did not finish: attempted \(summary.attemptedCount), uploaded \(summary.uploadedCount), failed \(summary.failedCount). \(Self.firstFailureSentence(summary)) Queued uploads: \(pendingOutboxCount)."
             } else {
-                statusIsError = false
+                let movedAside = summary.quarantinedCount
+                statusIsError = movedAside > 0
                 statusMessage = "Queued uploads sent: \(summary.uploadedCount). Remaining: \(pendingOutboxCount)."
+                    + (movedAside > 0
+                        ? " Your server permanently rejected \(movedAside) upload(s); they were moved aside. Review them under Connection."
+                        : "")
             }
             return true
         } catch let conflict as RejectedSleepBaselineOutboxItem {
@@ -4582,7 +4589,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 : "\(batch.samples.count) step add/update(s), \(changes.deletedStepSamples.count) step deletion(s)"
             statusMessage = "Uploading \(uploadDescription) to \(url.host() ?? url.absoluteString)..."
             failureStage = .encoding
-            let data = try encoder.encode(batch)
+            let payloads = try StepCountSyncBatchFactory
+                .boundedAnchoredStepBatches(from: batch)
+                .map { try encoder.encode($0) }
             let shouldPersistAnchorCursor = shouldPersistSharedProgress
                 && CoreLaneSyncCursorPolicy.shouldPersistCursor(
                     uploadedRecords: uploadedRecords,
@@ -4600,7 +4609,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             failureStage = .transport
             try requireCurrentReceiverSyncProgressScope(progressScope)
             let deliveryResult = try await uploadPayloadsWithOutbox(
-                [data],
+                payloads,
                 to: url,
                 cursorCheckpoint: cursorCheckpoint,
                 executionMode: executionMode,
@@ -4966,7 +4975,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 ? "ECG cursor-only sync"
                 : "\(batch.electrocardiograms.count) ECG recordings"
             statusMessage = "[ECG] Uploading \(uploadDescription) to \(url.host() ?? url.absoluteString)..."
-            let data = try encoder.encode(batch)
+            let payloads = try ElectrocardiogramSyncBatchFactory
+                .boundedBatches(from: batch)
+                .map { try encoder.encode($0) }
             let cursor = batch.sync.cursors.first(where: {
                 $0.sourceKey == "apple_health.phone"
                     && $0.cursorKind == ElectrocardiogramSyncBatchFactory.foregroundCursorKind
@@ -4981,7 +4992,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             }
             try requireCurrentReceiverSyncProgressScope(progressScope)
             let deliveryResult = try await uploadPayloadsWithOutbox(
-                [data],
+                payloads,
                 to: url,
                 cursorCheckpoint: cursorCheckpoint
             )
@@ -5302,8 +5313,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         do {
             let batch = LabResultImportBatchFactory.makeLabResultBatch(results: summary.labResults)
             statusMessage = "[Export] Uploading \(CompanionCopy.count(summary.labResults.count, "lab result")) to \(url.host() ?? url.absoluteString)..."
-            let data = try encoder.encode(batch)
-            let deliveryResult = try await uploadPayloadsWithOutbox([data], to: url)
+            let payloads = try LabResultImportBatchFactory
+                .boundedBatches(from: batch)
+                .map { try encoder.encode($0) }
+            let deliveryResult = try await uploadPayloadsWithOutbox(payloads, to: url)
             let outboxNotice = lastOutboxNotice
             statusIsError = false
             pendingExportImportSummary = nil
@@ -6340,6 +6353,14 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 connectionGeneration: expectedGeneration
             )
         }
+        // The summary counts quarantine events directly.
+        if upload.summary.quarantinedCount > 0 {
+            lastOutboxNotice = " Your server permanently rejected an upload, so it was moved aside. Review it under Connection."
+            return PayloadDelivery(
+                directUpload: nil,
+                connectionGeneration: expectedGeneration
+            )
+        }
         guard let lastResult = upload.lastDirectUploadResult else {
             throw ReceiverClientError.nonHTTPResponse
         }
@@ -6727,6 +6748,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         let pendingItems = try outbox.uploadablePendingItems(for: receiverIdentity)
         var attemptedCount = 0
         var uploadedCount = 0
+        var quarantinedCount = 0
         var failedItemIDs: [String] = []
         var failedDescriptions: [String] = []
         var lastDirectUploadResult: ReceiverUploadResult?
@@ -6761,6 +6783,27 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                     expectedGeneration: expectedGeneration
                 )
             } catch {
+                if case ReceiverClientError.unsuccessfulStatusCode(let statusCode, let responseBody) = error,
+                   let rejection = PermanentUploadRejection.classify(
+                       statusCode: statusCode,
+                       errorCode: PermanentUploadRejection.errorCode(fromResponseBody: responseBody)
+                   ) {
+                    // Resending the same bytes can never succeed, and the item would block
+                    // every upload behind it. Move it aside and keep going.
+                    try requireCurrentConnectionGeneration(expectedGeneration)
+                    // A storage error here must not escape and discard this flush's counts: the
+                    // item then counts as failed and is retried or quarantined on the next flush.
+                    if (try? outbox.quarantineItem(
+                        id: item.id,
+                        reason: rejection,
+                        statusCode: statusCode
+                    )) != nil {
+                        outbox.noteDiagnosticDelivery(itemID: item.id, outcome: .rejected)
+                        quarantinedCount += 1
+                        noteQuarantinedUpload(rejection, statusCode: statusCode)
+                        continue
+                    }
+                }
                 outbox.noteDiagnosticDelivery(itemID: item.id, outcome: .failed)
                 failedItemIDs.append(item.id)
                 failedDescriptions.append(describe(error))
@@ -6773,10 +6816,36 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 attemptedCount: attemptedCount,
                 uploadedCount: uploadedCount,
                 failedItemIDs: failedItemIDs,
-                failedDescriptions: failedDescriptions
+                failedDescriptions: failedDescriptions,
+                quarantinedCount: quarantinedCount
             ),
             lastDirectUploadResult: lastDirectUploadResult
         )
+    }
+
+    /// Logs (visibly, in the activity log) that a rejected upload was moved aside.
+    private func noteQuarantinedUpload(_ rejection: PermanentUploadRejection, statusCode: Int) {
+        refreshPendingOutboxCount()
+        appendActivityLog(
+            "[Outbox] Moved one upload aside after \(rejection.userDescription) (HTTP \(statusCode)). "
+                + "Later uploads continue. Review it under Connection.",
+            isError: true
+        )
+    }
+
+    /// The user's "discard" action for uploads the server permanently rejected.
+    func discardQuarantinedUploads() {
+        guard let outbox else { return }
+        do {
+            let count = try outbox.discardAllQuarantinedItems()
+            refreshPendingOutboxCount()
+            statusIsError = false
+            statusMessage = "[Outbox] Discarded \(CompanionCopy.count(count, "rejected upload")). Apple Health data itself is not deleted."
+        } catch {
+            refreshPendingOutboxCount()
+            statusIsError = true
+            statusMessage = "[Outbox] Could not discard rejected uploads: \(describe(error))"
+        }
     }
 
     private func makeProductionMailboxDelivery() throws -> ProductionMailboxDelivery {
@@ -6848,10 +6917,12 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         guard !taskUIPublicationIsSuppressed else { return }
         do {
             pendingOutboxCount = try outbox?.pendingItems().count ?? 0
+            quarantinedUploadCount = (try? outbox?.quarantinedItems().count) ?? 0
         } catch {
             outbox = nil
             privateStorageAdmissionReady = false
             pendingOutboxCount = 0
+            quarantinedUploadCount = 0
             hasPendingSleepTransition = sleepStorageMayNeedRecovery()
             hasPendingOutboxDeletion = true
             return
@@ -6968,7 +7039,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         let time = Self.activityLogTimeFormatter.string(from: Date())
         // HealthRelay lanes log their own outcome verbatim (counts, cursor state, error code; never a value).
         if trimmed.hasPrefix("[ECG]") || trimmed.hasPrefix("[Medication]")
-            || trimmed.hasPrefix("[Manual]") || trimmed.hasPrefix("[Export]") {
+            || trimmed.hasPrefix("[Manual]") || trimmed.hasPrefix("[Export]")
+            || trimmed.hasPrefix("[Outbox]") {
             guard activityLogMessages.last?.hasSuffix(trimmed) != true else { return }
             activityLogMessages = ActivityLogMerger.appending(label: trimmed, lane: nil, time: time, to: activityLogMessages)
             return

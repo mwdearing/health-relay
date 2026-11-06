@@ -762,7 +762,8 @@ final class BackgroundURLSessionOutboxUploader: NSObject, @unchecked Sendable, U
             } catch {
                 continue
             }
-            let accepted = finalizationOutcome == .retired
+            // A quarantined item is out of the FIFO, so the next one can be sent.
+            let accepted = finalizationOutcome == .retired || finalizationOutcome == .quarantined
             let systemCompletionHandler = eventFinalizationCoordinator.complete(record.taskID)
             if accepted {
                 await scheduleNextDirectUploadIfPossible()
@@ -867,7 +868,8 @@ final class BackgroundURLSessionOutboxUploader: NSObject, @unchecked Sendable, U
         let completion = BackgroundUploadTaskCompletion(
             statusCode: statusCode,
             hadTransportError: error != nil,
-            sleepMinimumResetEpoch: minimumResetEpoch
+            sleepMinimumResetEpoch: minimumResetEpoch,
+            responseErrorCode: PermanentUploadRejection.errorCode(fromResponseBody: responseBody)
         )
         let completionMetadataPersisted: Bool
         if ownershipRecord == nil {
@@ -901,7 +903,8 @@ final class BackgroundURLSessionOutboxUploader: NSObject, @unchecked Sendable, U
                 }
             }
             guard ownershipFinalized else { return }
-            let accepted = finalizationOutcome == .retired
+            // A quarantined item is out of the FIFO, so the next one can be sent.
+            let accepted = finalizationOutcome == .retired || finalizationOutcome == .quarantined
             let systemCompletionHandler = finalizationCoordinator.complete(taskID)
             if accepted {
                 await self.scheduleNextDirectUploadIfPossible()
@@ -948,6 +951,14 @@ final class BackgroundURLSessionOutboxUploader: NSObject, @unchecked Sendable, U
                         )
                     // A replayed successful callback may follow durable payload retirement.
                     outbox.noteDiagnosticDelivery(itemID: itemID, outcome: .accepted)
+                },
+                quarantine: { itemID, rejection, statusCode in
+                    _ = try outbox.quarantineItem(
+                        id: itemID,
+                        reason: rejection,
+                        statusCode: statusCode
+                    )
+                    outbox.noteDiagnosticDelivery(itemID: itemID, outcome: .rejected)
                 }
             )
             if outcome == .retained {

@@ -5,6 +5,13 @@ import Foundation
 /// this is a manual, user-initiated file import, not a recurring background sync -- and
 /// dedup on re-import is `client_record_id` uniqueness on the receiver, not a cursor.
 public enum LabResultImportBatchFactory {
+    public static let maxResultsPerBatch = 500
+
+    /// Splits `batch` so every upload stays under the receiver body limit.
+    public static func boundedBatches(from batch: HealthBridgeBatchV1) -> [HealthBridgeBatchV1] {
+        OutboundBatchSizePolicy.bounded(batch, maxRecordsPerBatch: maxResultsPerBatch)
+    }
+
     public static func makeLabResultBatch(
         results: [HealthBridgeLabResult],
         generatedAt: Date = Date()
