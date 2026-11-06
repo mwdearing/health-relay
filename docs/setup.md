@@ -39,6 +39,8 @@ Prerequisites:
 4. The receiver computer can remain awake and connected when automatic sync is expected.
 5. Every Route A deployment has a least-privilege Tailscale [grant](https://tailscale.com/docs/features/access-control/grants) (or an existing ACL policy) restricting TCP `8443` on this receiver to the intended user or device. Do not rely on a default allow-all policy for a health-data receiver. On a personal tailnet, review its member and device list; on a shared tailnet, also verify that a non-granted identity cannot open the route.
 
+Behaviour to know about with `tailscale serve`: Serve proxies from loopback, so the receiver sees every device as one peer address (`127.0.0.1`). All devices then share one pairing-redeem budget (5 attempts per minute) and one per-client connection cap (8 connections). A second household device can be refused while the first is busy. The receiver does not trust `X-Forwarded-For`, so these limits are not raised by headers. Raising them needs a code change, and the limits are not yet configurable from the command line.
+
 On the receiver computer, inspect the current device Serve configuration first:
 
 ```bash

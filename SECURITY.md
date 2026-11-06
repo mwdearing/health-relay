@@ -63,7 +63,7 @@ Out of scope:
 
 ## Verify what you install
 
-- Get the app only as a signed beta build invited by the maintainer (request one with the [Beta access request](https://github.com/mwdearing/health-relay/issues/new?template=beta_access.yml) form), from a `Build unsigned IPA` workflow run in this repository, or by building it yourself from a checkout you trust. Do not install from [GitHub Releases](https://github.com/mwdearing/health-relay/releases): the workflows that attached unsigned IPA files were retired on 2026-10-14, and the attachments that remain on older `app-v*` releases, including the one marked Latest, are unmaintained history.
+- Get the app only as a signed beta build invited by the maintainer (request one with the [Beta access request](https://github.com/mwdearing/health-relay/issues/new?template=beta_access.yml) form), from a `Build unsigned IPA` workflow run in this repository, or by building it yourself from a checkout you trust. Do not install from [GitHub Releases](https://github.com/mwdearing/health-relay/releases): the workflows that attached unsigned IPA files were retired on 2026-10-14, and the attachments that remain on older `app-v*` releases are unmaintained history; the release marked Latest is not an install pointer.
 - For a workflow artifact, check the IPA against the attached checksum: `sha256sum -c HealthRelay-unsigned.ipa.sha256` (on macOS: `shasum -a 256 -c HealthRelay-unsigned.ipa.sha256`).
 - Each historical `app-v*` release names the commit and the workflow run that built it.
 - If you build it yourself, you sign the IPA with your own Apple developer certificate. Keep that signing identity private.
