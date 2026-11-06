@@ -599,18 +599,25 @@ public final class FileOutbox {
     private static let mailboxEnvelopeIntentFilename = ".mailbox-envelope-intent"
     private let directory: URL
     private let fileManager: FileManager
+    /// Serialises all instance access. The outbox is shared between the main actor and
+    /// detached background work; recursive so public methods can call each other.
+    private let stateLock = NSRecursiveLock()
 
     #if !HEALTH_BRIDGE_MAILBOX_QA
     public weak var automaticSyncDiagnosticDraft: AutomaticSyncDiagnosticDraft?
     public var automaticSyncDiagnosticStore = AutomaticSyncDiagnosticStore()
 
     public func noteDiagnosticEnqueue(_ items: [FileOutboxItem], complete: Bool) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         guard let draft = automaticSyncDiagnosticDraft else { return }
         draft.noteQueued(itemIDs: items.compactMap { UUID(uuidString: String($0.id.suffix(36))) }, complete: complete)
         draft.checkpoint(using: automaticSyncDiagnosticStore)
     }
 
     public func noteDiagnosticDelivery(itemID: String, outcome: AutomaticSyncDeliveryOutcome) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         guard let localID = UUID(uuidString: String(itemID.suffix(36))) else { return }
         automaticSyncDiagnosticDraft?.noteDelivery(itemID: localID, outcome: outcome)
         guard automaticSyncDiagnosticDraft?.defersPersistenceUntilObserverAcknowledgement != true else { return }
@@ -744,6 +751,8 @@ public final class FileOutbox {
         _ payload: Data,
         receiverIdentity: String
     ) throws -> FileOutboxItem {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         try requireUploadAdmission()
         var manifest = try reconciledManifest()
         let sequence = manifest.nextSequence
@@ -783,6 +792,8 @@ public final class FileOutbox {
         pendingGenerationRetirements: [String: Int] = [:],
         stepsRawAndDailyCoverage: Bool? = nil
     ) throws -> [FileOutboxItem] {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         guard !payloads.isEmpty else { return [] }
         let prepared = try prepareEnqueueTransaction(
             payloads,
@@ -807,6 +818,8 @@ public final class FileOutbox {
         receiverIdentity: String,
         stagedPayloadCount: Int
     ) throws {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         _ = try prepareEnqueueTransaction(
             payloads,
             receiverIdentity: receiverIdentity,
@@ -821,6 +834,8 @@ public final class FileOutbox {
         receiverIdentity: String,
         pendingGenerationRetirements: [String: Int] = [:]
     ) throws -> FileOutboxEnqueueResult {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         try requireUploadAdmission()
         for item in try pendingItems() {
             guard item.receiverIdentity == receiverIdentity else { continue }
@@ -845,6 +860,8 @@ public final class FileOutbox {
     }
 
     public func pendingItems() throws -> [FileOutboxItem] {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         let manifest = try reconciledManifest()
         let payloadIDs = Set(try payloadFileURLs().map { payloadID(for: $0) })
         return manifest.entries
@@ -870,6 +887,8 @@ public final class FileOutbox {
         currentBearerToken: String?,
         currentBindingID: String?
     ) throws -> Int {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         var manifest = try reconciledManifest()
         let expectedLegacyIdentity: String?
         if let currentReceiverURLString,
@@ -905,6 +924,8 @@ public final class FileOutbox {
     }
 
     public func pendingCursorCheckpoint() throws -> FileOutboxCursorCheckpoint? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         _ = try reconciledManifest()
         return try loadEnqueueTransactions().lazy.compactMap(\.cursorCheckpoint).first
     }
@@ -912,6 +933,8 @@ public final class FileOutbox {
     public func hasPendingGenerationRetirements(
         _ retirements: [String: Int]
     ) throws -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         guard !retirements.isEmpty else { return false }
         _ = try reconciledManifest()
         return try loadEnqueueTransactions().contains {
@@ -923,6 +946,8 @@ public final class FileOutbox {
         typeCode: String,
         generation: Int
     ) throws -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         guard !typeCode.isEmpty, generation > 0 else { return false }
         _ = try reconciledManifest()
         return try loadEnqueueTransactions().contains {
@@ -933,6 +958,8 @@ public final class FileOutbox {
     public func acknowledgeFinalizationRecord(
         _ record: FileOutboxFinalizationRecord
     ) throws {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         try requireUploadAdmission()
         var transactions = try loadEnqueueTransactions()
         guard let transactionIndex = transactions.firstIndex(where: {
@@ -974,6 +1001,8 @@ public final class FileOutbox {
     public func acknowledgeCursorCheckpoint(
         _ checkpoint: FileOutboxCursorCheckpoint
     ) throws {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         guard let record = try loadEnqueueTransactions().lazy
             .compactMap(\.finalizationRecord)
             .first(where: { $0.cursorCheckpoint == checkpoint }) else {
@@ -987,6 +1016,8 @@ public final class FileOutbox {
         itemID: String,
         receiverIdentity: String
     ) throws -> FileOutboxFinalizationRecord? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         try requireUploadAdmission()
         guard Self.isSafeItemID(itemID), !receiverIdentity.isEmpty else {
             throw ReceiverOutboxIdentityError.missingReceiverIdentity
@@ -1034,6 +1065,8 @@ public final class FileOutbox {
     public func directFinalizationRecordReady(
         receiverIdentity: String
     ) throws -> FileOutboxFinalizationRecord? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         try requireUploadAdmission()
         _ = try reconciledManifest()
         guard let transaction = try loadEnqueueTransactions().first,
@@ -1050,6 +1083,8 @@ public final class FileOutbox {
     }
 
     public func uploadablePendingItems(for receiverIdentity: String) throws -> [FileOutboxItem] {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         try requireUploadAdmission()
         guard !receiverIdentity.isEmpty else {
             throw ReceiverOutboxIdentityError.missingReceiverIdentity
@@ -1070,6 +1105,8 @@ public final class FileOutbox {
     }
 
     public func pendingItem(id: String) throws -> FileOutboxItem? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         guard id == URL(fileURLWithPath: id).lastPathComponent, !id.isEmpty else {
             return nil
         }
@@ -1077,6 +1114,8 @@ public final class FileOutbox {
     }
 
     public func markUploaded(_ item: FileOutboxItem) throws {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         try requireDirectRetirementAllowed(itemID: item.id)
         if fileManager.fileExists(atPath: item.fileURL.path) {
             try fileManager.removeItem(at: item.fileURL)
@@ -1096,6 +1135,8 @@ public final class FileOutbox {
     }
 
     public func beginClearIntent() throws {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         if clearIntentIsActive { return }
         guard try downgradeReadiness() == .ready else {
             throw FileOutboxMailboxError.mailboxArtifactsRequireHold
@@ -1105,6 +1146,8 @@ public final class FileOutbox {
     }
 
     public func clearPendingWhileIntentIsActive() throws -> Int {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         guard clearIntentIsActive else {
             throw FileOutboxClearIntentError.clearIntentRequired
         }
@@ -1122,12 +1165,16 @@ public final class FileOutbox {
     }
 
     public func finishClearIntent() throws {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         if fileManager.fileExists(atPath: clearIntentURL.path) {
             try fileManager.removeItem(at: clearIntentURL)
         }
     }
 
     public func clearPending() throws -> Int {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         try beginClearIntent()
         let count = try clearPendingWhileIntentIsActive()
         try finishClearIntent()
@@ -1178,6 +1225,8 @@ public final class FileOutbox {
         envelope: Data,
         expectedPayloadSHA256: String
     ) throws -> FileOutboxMailboxBindingV1 {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         try finalizeMailboxEnvelope(
             itemID: itemID,
             envelope: envelope,
@@ -1192,6 +1241,8 @@ public final class FileOutbox {
         expectedPayloadSHA256: String,
         through boundary: FileOutboxEnvelopeFinalizationBoundary
     ) throws -> FileOutboxMailboxBindingV1 {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         try finalizeMailboxEnvelope(
             itemID: itemID,
             envelope: envelope,
@@ -1201,12 +1252,16 @@ public final class FileOutbox {
     }
 
     public func mailboxBinding(for itemID: String) throws -> FileOutboxMailboxBindingV1? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         guard Self.isSafeItemID(itemID) else { return nil }
         return try reconciledManifest().entries.first(where: { $0.id == itemID })?
             .mailboxBinding
     }
 
     public func deliveryState(for itemID: String) throws -> FileOutboxDeliveryStateV1? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         guard Self.isSafeItemID(itemID) else { return nil }
         return try reconciledManifest().entries.first(where: { $0.id == itemID })?
             .deliveryState
@@ -1217,6 +1272,8 @@ public final class FileOutbox {
         expected: FileOutboxDeliveryStateV1?,
         updated: FileOutboxDeliveryStateV1
     ) throws -> FileOutboxDeliveryStateV1 {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         try requireUploadAdmission()
         guard Self.isSafeItemID(itemID), updated.isStructurallyValid else {
             throw FileOutboxMailboxError.invalidDeliveryState
@@ -1268,6 +1325,8 @@ public final class FileOutbox {
         itemID: String,
         ownership: OutboxDeliveryOwnershipV1
     ) throws -> FileOutboxFinalizationRecord? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         let transactions = try loadEnqueueTransactions()
         guard let transactionIndex = transactions.firstIndex(where: {
             $0.entries.contains(where: { $0.id == itemID })
@@ -1307,6 +1366,8 @@ public final class FileOutbox {
         committed: FileOutboxDeliveryStateV1,
         fault: (FileOutboxCommittedFinalizationBoundary) throws -> Void = { _ in }
     ) throws -> FileOutboxDeliveryStateV1 {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         try requireUploadAdmission()
         guard expected.phase == .ackVerified,
               committed.phase == .committedFinalized,
@@ -1334,6 +1395,8 @@ public final class FileOutbox {
     }
 
     public func mailboxBoundItemsForAckScanning() throws -> [FileOutboxItem] {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         if fileManager.fileExists(atPath: mailboxEnvelopeIntentURL.path) {
             throw FileOutboxMailboxError.finalizationConflict
         }
@@ -1361,6 +1424,8 @@ public final class FileOutbox {
     }
 
     public func downgradeReadiness() throws -> FileOutboxDowngradeReadiness {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         try Self.downgradeReadiness(directory: directory, fileManager: fileManager)
     }
 
@@ -1727,6 +1792,8 @@ public final class FileOutbox {
     }
 
     public func requireUploadAdmission() throws {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         if destructiveRecoveryIsRequested {
             throw FileOutboxClearIntentError.clearInProgress
         }
