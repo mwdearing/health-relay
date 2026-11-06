@@ -234,6 +234,22 @@ public enum CompanionPrimaryStatusMessage {
         }
 
         let message = trimmed.lowercased()
+        // Consent refusals are written for people; keep them out of every substring heuristic below.
+        if message.contains("data-sharing disclosure") {
+            if message.contains("testing the connection") {
+                return "Data sharing is off. Open Settings > Data Sharing to agree before testing the connection."
+            }
+            if message.contains("queued uploads") {
+                return "Data sharing is off. Queued uploads stay on this iPhone until you agree in Settings > Data Sharing."
+            }
+            return "Data sharing is off. Open Settings > Data Sharing to agree before syncing."
+        }
+        // Pairing input that failed local validation never reached a server. Classify it by the
+        // typed error's name (the NSError domain), before any text heuristic can read the
+        // module name or the description.
+        if let pairingInputMessage = pairingInputMessage(from: message) {
+            return pairingInputMessage
+        }
         let mailboxPreflightMessages = [
             "mailbox_key_lost": "Mailbox connection key lifecycle: lost. Pairing stopped before contacting your server.",
             "mailbox_key_revoked": "Mailbox connection key lifecycle: revoked. Pairing stopped before contacting your server.",
@@ -403,6 +419,21 @@ public enum CompanionPrimaryStatusMessage {
         return "Ready"
     }
 
+    private static func pairingInputMessage(from lowercasedMessage: String) -> String? {
+        guard lowercasedMessage.contains("domain=healthbridgecompanion.receiverpairingbundleerror")
+            || lowercasedMessage.contains("domain=healthbridgecompanioncore.receiverpairingbundleerror")
+            || lowercasedMessage.contains("domain=receiverpairingbundleerror")
+        else { return nil }
+        // The diagnostic suffix repeats the description; match the description before it.
+        let body = lowercasedMessage.components(separatedBy: " | domain=").first ?? lowercasedMessage
+        if let match = ReceiverPairingBundleError.allCases.first(where: {
+            body.contains(($0.errorDescription ?? "").lowercased())
+        }) {
+            return match.userMessage
+        }
+        return "This setup information could not be used. Check it and try again."
+    }
+
     private static func diagnosticCode(from rawMessage: String) -> String {
         let nsRange = NSRange(rawMessage.startIndex..<rawMessage.endIndex, in: rawMessage)
         let patterns = [
@@ -509,6 +540,7 @@ public struct CompanionPairingFailurePresentationState: Equatable, Sendable {
             "pairing_redeem_invalid_response",
             "pairing_redeem_receiver_url_mismatch",
             "pairing_redeem_empty_device_credential",
+            "receiverpairingbundleerror",
         ]
         if preciseFailureCodes.contains(where: normalized.contains) {
             message = CompanionPrimaryStatusMessage.sanitized(
@@ -806,6 +838,11 @@ public enum CompanionStatus: Equatable, Sendable {
     case mailboxFolderReady
     case connectionFailed
     case syncFailed(CompanionSyncArea)
+    /// A send was refused because the data-sharing disclosure has not been accepted.
+    case consentRequired
+    /// Pairing input (setup link, QR code, server address or invitation code) failed local
+    /// validation. No server was contacted.
+    case pairingInputInvalid
 }
 
 /// The status card's and connection card's decisions about the current status text.
@@ -864,6 +901,10 @@ public enum CompanionStatusPresentation {
             return "Sync Failed"
         case .connectionFailed:
             return "Connection Failed"
+        case .consentRequired:
+            return "Data Sharing Is Off"
+        case .pairingInputInvalid:
+            return "Check Setup Details"
         case .notice, .connectionVerified, .mailboxFolderReady:
             // The single remaining substring fallback for unclassified text.
             return syncErrorTitle(message: message)
@@ -882,7 +923,7 @@ public enum CompanionStatusPresentation {
 
     public static func connectionNotice(status: CompanionStatus, message: String, isError: Bool) -> String {
         switch status {
-        case .connectionVerified, .mailboxFolderReady, .connectionFailed:
+        case .connectionVerified, .mailboxFolderReady, .connectionFailed, .consentRequired, .pairingInputInvalid:
             let raw = message.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !raw.isEmpty else { return "" }
             return CompanionPrimaryStatusMessage.sanitized(from: raw, isError: isError)

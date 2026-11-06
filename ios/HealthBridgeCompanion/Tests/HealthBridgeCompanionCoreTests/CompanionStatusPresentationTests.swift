@@ -224,4 +224,73 @@ final class CompanionStatusPresentationTests: XCTestCase {
             XCTAssertEqual(typedReady, legacyReady, message)
         }
     }
+
+    func testConsentRefusalNamesSettingsInsteadOfGenericSyncFailure() {
+        let refusals = [
+            "Accept the data-sharing disclosure in Settings before syncing.",
+            "Accept the data-sharing disclosure in Settings before testing the connection.",
+            "Queued uploads stay on this iPhone until you accept the data-sharing disclosure.",
+        ]
+        for message in refusals {
+            let text = CompanionPrimaryStatusMessage.sanitized(from: message, isError: true)
+            XCTAssertTrue(text.contains("Settings > Data Sharing"), message)
+            XCTAssertNotEqual(text, "Something needs attention", message)
+            // Both the status card and the connection card show the sanitized text.
+            XCTAssertEqual(
+                CompanionStatusPresentation.connectionNotice(status: .consentRequired, message: message, isError: true),
+                text
+            )
+            XCTAssertEqual(
+                CompanionStatusPresentation.syncErrorTitle(status: .consentRequired, message: message),
+                "Data Sharing Is Off"
+            )
+        }
+        // Without a typed status the text rule still applies (activity log, legacy callers).
+        XCTAssertEqual(
+            CompanionStatusPresentation.connectionNotice(
+                message: "Accept the data-sharing disclosure in Settings before testing the connection.",
+                isError: true
+            ),
+            "Data sharing is off. Open Settings > Data Sharing to agree before testing the connection."
+        )
+    }
+
+    private func rawReviewFailure(_ prefix: String, _ error: ReceiverPairingBundleError) -> String {
+        let nsError = error as NSError
+        return "\(prefix): \(error.localizedDescription) | domain=\(nsError.domain) | code=\(nsError.code)"
+    }
+
+    func testPairingInputErrorsAreNotShownAsServerFailures() {
+        for error in ReceiverPairingBundleError.allCases {
+            let raw = rawReviewFailure("Manual pairing could not be reviewed", error)
+            let text = CompanionPrimaryStatusMessage.sanitized(from: raw, isError: true)
+            XCTAssertEqual(text, error.userMessage, raw)
+            XCTAssertFalse(text.contains("your server returned an error"), raw)
+            XCTAssertNotEqual(text, "Connection needs attention", raw)
+            XCTAssertNotEqual(text, "Something needs attention", raw)
+            XCTAssertFalse(text.contains("domain="), raw)
+        }
+        XCTAssertEqual(
+            ReceiverPairingBundleError.invalidReceiverURL.userMessage,
+            "Server address must start with http:// or https:// and include a host."
+        )
+        XCTAssertEqual(
+            ReceiverPairingBundleError.invalidInvitationCode.userMessage,
+            "Invitation code must be 15 letters or numbers."
+        )
+    }
+
+    func testPairingInputStatusGetsItsOwnTitleAndNotice() {
+        let raw = rawReviewFailure("Setup link could not be reviewed", .invalidDeepLink)
+        XCTAssertEqual(
+            CompanionStatusPresentation.syncErrorTitle(status: .pairingInputInvalid, message: raw),
+            "Check Setup Details"
+        )
+        XCTAssertEqual(
+            CompanionStatusPresentation.connectionNotice(status: .pairingInputInvalid, message: raw, isError: true),
+            ReceiverPairingBundleError.invalidDeepLink.userMessage
+        )
+        let presentation = CompanionPairingFailurePresentationState(rawFailure: raw)
+        XCTAssertEqual(presentation.message, ReceiverPairingBundleError.invalidDeepLink.userMessage)
+    }
 }
