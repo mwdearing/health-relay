@@ -353,6 +353,10 @@ public enum CompanionPrimaryStatusMessage {
             let diagnostic = diagnosticCode(from: trimmed)
             return "Bridge URL is invalid\(diagnostic). Reconnect from setup link or check manual URL."
         }
+        if isAppTransportSecurityFailure(message) {
+            let diagnostic = diagnosticCode(from: trimmed)
+            return "\(appTransportSecurityMessagePrefix)\(diagnostic). Use an HTTPS receiver URL or the receiver's IP address, then retry."
+        }
         if isLocalNetworkPairingFailure(message) {
             let diagnostic = diagnosticCode(from: trimmed)
             return "Pairing could not reach your server\(diagnostic). Allow Local Network access, check Wi-Fi or VPN routing, make sure the server is running, then retry."
@@ -465,6 +469,17 @@ public enum CompanionPrimaryStatusMessage {
         return failureMarkers.contains { message.contains($0) }
     }
 
+    static let appTransportSecurityMessagePrefix =
+        "This build only allows unencrypted HTTP to IP addresses, single-label names or .local names"
+
+    /// NSURLErrorAppTransportSecurityRequiresSecureConnection (-1022): plain HTTP to a
+    /// qualified hostname, which is not a reachability problem.
+    private static func isAppTransportSecurityFailure(_ message: String) -> Bool {
+        message.contains("code=-1022")
+            || message.contains("errordomain -1022")
+            || message.contains("app transport security")
+    }
+
     private static func isLocalNetworkPairingFailure(_ message: String) -> Bool {
         let isPairingMessage = message.contains("pairing")
             || message.contains("setup link")
@@ -522,7 +537,9 @@ public struct CompanionPairingFailurePresentationState: Equatable, Sendable {
             from: rawFailure,
             isError: true
         )
-        if sanitized.hasPrefix("Pairing could not reach your server")
+        if sanitized.hasPrefix(CompanionPrimaryStatusMessage.appTransportSecurityMessagePrefix) {
+            message = "Pairing is blocked because this build only allows unencrypted HTTP to IP addresses, single-label names or .local names. Use an HTTPS receiver URL or the receiver's IP address, then retry."
+        } else if sanitized.hasPrefix("Pairing could not reach your server")
             || sanitized.hasPrefix("Sync failed: your server is not reachable")
         {
             message = "Pairing could not reach your server. Check Local Network access, Wi-Fi or VPN routing, and the server, then retry."
