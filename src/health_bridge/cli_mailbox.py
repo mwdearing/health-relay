@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, ClassVar
+from typing import TYPE_CHECKING, Annotated, ClassVar, Final, NoReturn
 
 import typer
 from pydantic import BaseModel, ConfigDict
@@ -16,14 +17,17 @@ from health_bridge.mailbox.connections import (
     MailboxConnectionError,
     MailboxConnectionStore,
 )
-from health_bridge.mailbox.filesystem import MailboxFileError
+from health_bridge.mailbox.filesystem import MailboxFileError, MailboxFileErrorCode
 from health_bridge.mailbox.importer import (
     MailboxBusyError,
     MailboxImportConfig,
     MailboxImporter,
 )
 from health_bridge.mailbox.models import MailboxImportResult
-from health_bridge.mailbox.native_ack_publication import default_native_ack_publisher
+from health_bridge.mailbox.native_ack_publication import (
+    NativeAckPublicationError,
+    default_native_ack_publisher,
+)
 from health_bridge.receiver._mailbox_key_models import (
     MailboxKeyStoreErrorCode,
 )
@@ -37,6 +41,11 @@ from health_bridge.storage.database import initialize_database
 
 if TYPE_CHECKING:
     from health_bridge.mailbox.filesystem import MailboxDirectoryHandle
+
+IMPORT_SETUP_ERROR_EXIT_CODE: Final = 3
+_MIGRATIONS_TABLE_QUERY: Final = (
+    "select 1 from sqlite_master where type = 'table' and name = 'schema_migrations'"
+)
 
 mailbox_app = typer.Typer(
     add_completion=False,
@@ -65,7 +74,11 @@ class MailboxKeysDoctorResult(BaseModel):
 def import_mailbox(
     db: Annotated[
         Path,
-        typer.Option("--db", help="Private local Apple Health SQLite path."),
+        # readable=False: the probe below reports an unreadable file as
+        # database_unreadable (exit 3) instead of a usage error (exit 2).
+        typer.Option(
+            "--db", help="Private local Apple Health SQLite path.", readable=False
+        ),
     ],
     mailbox: Annotated[
         Path,
@@ -83,20 +96,110 @@ def import_mailbox(
     if not once:
         typer.echo("Mailbox import requires --once.", err=True)
         raise typer.Exit(code=2)
+    _require_initialized_database(db, json_output)
     try:
         result = production_importer(db, mailbox).import_once()
     except MailboxBusyError:
         _emit_import_result(MailboxImportResult(retryable=1), json_output)
         raise typer.Exit(code=2) from None
-    except (
-        MailboxConnectionError,
-        MailboxFileError,
-        MailboxKeyStoreError,
-        OSError,
-    ):
+    except MailboxConnectionError as exc:
+        _fail_import(exc.code.value, json_output)
+    except NativeAckPublicationError:
+        _fail_import("helper_not_ready", json_output)
+    except MailboxFileError as exc:
+        if exc.code in _PERMANENT_MAILBOX_FILE_ERRORS:
+            _fail_import("mailbox_unavailable", json_output)
         _emit_import_result(MailboxImportResult(retryable=1), json_output)
         raise typer.Exit(code=2) from None
+    except (MailboxKeyStoreError, OSError):
+        _emit_import_result(MailboxImportResult(retryable=1), json_output)
+        raise typer.Exit(code=2) from None
+    except sqlite3.Error as exc:
+        # Opening the importer migrates the database; a busy or locked file
+        # is retryable, anything else is reported like the probe's failure.
+        if isinstance(exc, sqlite3.OperationalError) and _is_transient_sqlite_error(
+            exc
+        ):
+            _emit_import_result(MailboxImportResult(retryable=1), json_output)
+            raise typer.Exit(code=2) from None
+        _fail_import("database_unreadable", json_output)
     _emit_import_result(result, json_output)
+
+
+# Mailbox file errors a later run cannot fix. Storage I/O, a delivery failure or
+# an entry replaced while it was read can succeed on retry, so they stay exit 2.
+_PERMANENT_MAILBOX_FILE_ERRORS: Final = frozenset(
+    {MailboxFileErrorCode.UNSAFE_ENTRY, MailboxFileErrorCode.OVERSIZE}
+)
+
+
+def _fail_import(error_code: str, json_output: bool) -> NoReturn:
+    """Report a permanent setup error; exit 3 is never a transient retry."""
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {"error_code": error_code, "status": "error"},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    else:
+        typer.echo(f"Mailbox import failed: {error_code}", err=True)
+    raise typer.Exit(code=IMPORT_SETUP_ERROR_EXIT_CODE)
+
+
+def _require_initialized_database(db: Path, json_output: bool) -> None:
+    """Refuse a --db that is not an existing, initialized receiver database."""
+    if not db.is_file():
+        _fail_import("database_unavailable", json_output)
+    try:
+        connection = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
+        try:
+            initialized = (
+                connection.execute(_MIGRATIONS_TABLE_QUERY).fetchone() is not None
+            )
+        finally:
+            connection.close()
+    except sqlite3.OperationalError as exc:
+        if _is_transient_sqlite_error(exc):
+            _emit_import_result(MailboxImportResult(retryable=1), json_output)
+            raise typer.Exit(code=2) from None
+        _fail_import("database_unreadable", json_output)
+    except sqlite3.Error:
+        # A corrupt or non-SQLite file: never steer the operator to `init`.
+        _fail_import("database_unreadable", json_output)
+    if not initialized:
+        _fail_import("database_uninitialized", json_output)
+
+
+# Primary codes whose every extended variant can clear on a rerun.
+_TRANSIENT_SQLITE_PRIMARY: Final = frozenset(
+    {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_FULL}
+)
+# I/O errors a rerun can get past. Open and access failures, such as an
+# unopenable WAL -shm (SQLITE_IOERR_SHMOPEN), are permanent and not listed.
+_TRANSIENT_SQLITE_IOERR: Final = frozenset(
+    {
+        sqlite3.SQLITE_IOERR,
+        sqlite3.SQLITE_IOERR_READ,
+        sqlite3.SQLITE_IOERR_SHORT_READ,
+        sqlite3.SQLITE_IOERR_WRITE,
+        sqlite3.SQLITE_IOERR_FSYNC,
+    }
+)
+
+
+def _is_transient_sqlite_error(error: sqlite3.OperationalError) -> bool:
+    """True for a busy, locked, full or read/write-failing database."""
+    code = getattr(error, "sqlite_errorcode", None)
+    if isinstance(code, int):
+        return (
+            code & 0xFF in _TRANSIENT_SQLITE_PRIMARY or code in _TRANSIENT_SQLITE_IOERR
+        )
+    message = str(error).lower()
+    return any(
+        marker in message for marker in ("locked", "busy", "disk i/o", "disk is full")
+    )
 
 
 def production_importer(
@@ -105,19 +208,19 @@ def production_importer(
     *,
     directory: MailboxDirectoryHandle | None = None,
 ) -> MailboxImporter:
-    initialize_database(db)
     connections = MailboxConnectionStore.production()
+    connection = connections.load(mailbox)
+    ack_publisher = default_native_ack_publisher() if sys.platform == "darwin" else None
+    initialize_database(db)
     return MailboxImporter(
         MailboxImportConfig(
             db_path=db,
             mailbox_path=mailbox,
             lock_path=connections.lock_path(mailbox),
-            connection=connections.load(mailbox),
+            connection=connection,
             clock_ms=lambda: time.time_ns() // 1_000_000,
             directory=directory,
-            ack_publisher=(
-                default_native_ack_publisher() if sys.platform == "darwin" else None
-            ),
+            ack_publisher=ack_publisher,
         )
     )
 
