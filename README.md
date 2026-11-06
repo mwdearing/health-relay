@@ -79,7 +79,7 @@ Automatic background sync is designed for continuous use. iOS controls backgroun
 
 ### 1. Build and install the iPhone app
 
-HealthRelay is not on the App Store. There are two ways to get it on your iPhone:
+HealthRelay is on the App Store. There are two ways to get it on your iPhone:
 
 - **App Store (recommended):** install [HealthRelay for AI Agents](https://apps.apple.com/app/id6819907894) from the App Store. No signing and no beta invite on your side. Optional beta builds are on [TestFlight](https://testflight.apple.com/join/8ExYBjNp).
 - **Build and sign it yourself:** run the `Build unsigned IPA` workflow (Actions → Build unsigned IPA → Run workflow) with your bundle identifier and marketing version, download the `HealthRelay-unsigned-ipa-*` artifact and sign it on your phone or Mac (a sideload signer such as AltStore or Sideloadly, or Xcode with your own team), or follow [docs/self-build.md](docs/self-build.md) with Xcode 16 or later.

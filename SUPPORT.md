@@ -14,7 +14,7 @@ Start with the documentation in this repository (`docs/`). If the documented ste
 
 ## Install the iOS app
 
-The app is distributed as signed beta builds through Apple's beta distribution; GitHub Releases are not an install path: the unsigned IPA files left on older releases are unmaintained history. Install it from the [App Store](https://apps.apple.com/app/id6819907894); no beta invite is needed. Optional beta builds are on [TestFlight](https://testflight.apple.com/join/8ExYBjNp). Do not put your e-mail address or any health data in the issue.
+Install the app from the [App Store](https://apps.apple.com/app/id6819907894); no beta invite is needed. Optional beta builds are on [TestFlight](https://testflight.apple.com/join/8ExYBjNp). GitHub Releases are not an install path: the unsigned IPA files left on older releases are unmaintained history.
 
 ## Reproducible bugs
 
