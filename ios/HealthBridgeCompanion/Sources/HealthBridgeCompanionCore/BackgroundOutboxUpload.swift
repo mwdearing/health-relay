@@ -454,6 +454,23 @@ public final class FileBackgroundUploadTaskOwnershipStore: @unchecked Sendable {
         }
     }
 
+    /// Removes the record only while no completion has been saved for it, under one lock hold.
+    /// Returns false when the record is gone or a delegate callback saved a completion first,
+    /// in which case that callback owns finalizing the record.
+    @discardableResult
+    public func removeIfCompletionUnrecorded(taskID: Int) throws -> Bool {
+        var removed = false
+        try mutate { manifest in
+            guard let index = manifest.records.firstIndex(where: { $0.taskID == taskID }),
+                  manifest.records[index].completion == nil else {
+                return
+            }
+            manifest.records.remove(at: index)
+            removed = true
+        }
+        return removed
+    }
+
     private func mutate(_ update: (inout Manifest) throws -> Void) throws {
         lock.lock()
         defer { lock.unlock() }
@@ -514,6 +531,20 @@ public final class FileBackgroundUploadTaskOwnershipStore: @unchecked Sendable {
             ofItemAtPath: url.path
         )
         #endif
+    }
+}
+
+/// Finds ownership records that no live background task can ever complete. A record
+/// without a saved completion whose task has left the session is stale: the completion
+/// callback ran but could not be saved (for example, storage was full), so nothing will
+/// remove the record. The outbox already reflects the real outcome, so dropping the record
+/// is safe; leaving it blocks every gate that needs an empty ledger.
+public enum BackgroundUploadLedgerReconciler {
+    public static func orphans(
+        records: [BackgroundUploadTaskOwnership],
+        liveTaskIDs: Set<Int>
+    ) -> [BackgroundUploadTaskOwnership] {
+        records.filter { $0.completion == nil && !liveTaskIDs.contains($0.taskID) }
     }
 }
 
