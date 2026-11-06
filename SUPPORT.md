@@ -12,9 +12,9 @@ Do not open a public issue containing vulnerabilities, secrets, real HealthKit d
 
 Start with the documentation in this repository (`docs/`). If the documented steps do not resolve the problem, open a **Setup feedback** [issue](https://github.com/mwdearing/health-relay/issues) using redacted environment details and synthetic data.
 
-## Beta access to the iOS app
+## Install the iOS app
 
-The app is distributed as signed beta builds through Apple's beta distribution; GitHub Releases are not an install path: the unsigned IPA files left on older releases are unmaintained history. Open a **Beta access request** [issue](https://github.com/mwdearing/health-relay/issues/new?template=beta_access.yml) and the maintainer replies there with the next step. Do not put your e-mail address or any health data in the issue.
+The app is distributed as signed beta builds through Apple's beta distribution; GitHub Releases are not an install path: the unsigned IPA files left on older releases are unmaintained history. Install it from the [App Store](https://apps.apple.com/app/id6819907894); no beta invite is needed. Optional beta builds are on [TestFlight](https://testflight.apple.com/join/8ExYBjNp). Do not put your e-mail address or any health data in the issue.
 
 ## Reproducible bugs
 
