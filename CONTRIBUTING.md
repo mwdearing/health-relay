@@ -24,6 +24,8 @@ uv run health-bridge ingest-fixture \
 uv run health-bridge mcp smoke --db .tmp/quickstart.sqlite
 ```
 
+The lock file is revision 5 and needs uv 0.13.6 or newer to read it; older uv versions may fail or rewrite it.
+
 For iOS work:
 
 ```bash
