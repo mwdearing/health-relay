@@ -129,14 +129,20 @@ jobs:
             if ! "$@" > "$log" 2>&1; then
               # The log is never printed: this repository's Actions log is public. Only a fixed category message
               # is printed, chosen by searching the file, so nothing from the file can reach the log.
+              # xcodebuild echoes its command line and build settings (key path, team, version) at the top of the
+              # log, so only its own error lines are searched, never the header.
               echo "::error::$name failed. The xcodebuild output is not published."
-              grep -qiE 'unable to authenticate|authentication|401|403' "$log" && echo "::error::  category: the App Store Connect key was rejected"
-              grep -qiE 'no signing certificate|no certificate|certificate' "$log" && echo "::error::  category: a signing certificate problem"
-              grep -qiE 'provisioning profile|profile' "$log" && echo "::error::  category: a provisioning profile problem"
-              grep -qiE 'entitlement|capabilit' "$log" && echo "::error::  category: an entitlement or capability mismatch"
-              grep -qiE 'no account|team' "$log" && echo "::error::  category: a team or account problem"
-              grep -qiE 'bundle identifier|bundle id' "$log" && echo "::error::  category: a bundle identifier problem"
-              grep -qiE 'build number|version' "$log" && echo "::error::  category: a version or build number problem"
+              local errs
+              errs=$(grep -iE '(^|[^[:alnum:]_])error:' "$log" || true)
+              probe() { if grep -qiE -- "$1" <<< "$errs"; then echo "::error::  category: $2"; fi; }
+              probe '\.swift:[0-9]+(:[0-9]+)?: error:' "a Swift compile error"
+              probe 'unable to authenticate|authentication credentials|authentication failed|status code:? ?40[13]' "the App Store Connect key was rejected"
+              probe 'no signing certificate|signing certificate|no certificate|code signing identit' "a signing certificate problem"
+              probe 'no profiles for|requires a provisioning profile|provisioning profile' "a provisioning profile problem"
+              probe 'entitlement|capabilit' "an entitlement or capability mismatch"
+              probe 'no account for team|requires a development team|no team' "a team or account problem"
+              probe 'bundle identifier|bundle id' "a bundle identifier problem"
+              probe 'build number|already been uploaded|version.*(already|must be higher)' "a version or build number problem"
               exit 1
             fi
           }
@@ -145,6 +151,9 @@ jobs:
           fi
           BUILD_NUMBER=$((GITHUB_RUN_NUMBER + 100))
           echo "Stamping version $MARKETING_VERSION build $BUILD_NUMBER"
+          # The verification step compares the archive with the values stamped here.
+          echo "MARKETING_VERSION=$MARKETING_VERSION" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
           quiet Archive "$RUNNER_TEMP/archive.log" xcodebuild archive \
             -project HealthBridgeCompanion.xcodeproj \
             -scheme HealthBridgeCompanion \
@@ -163,6 +172,47 @@ jobs:
             "HEALTH_BRIDGE_SOURCE_COMMIT=$GITHUB_SHA" \
             "HEALTH_BRIDGE_ICLOUD_CONTAINER_IDENTIFIER=iCloud.$BUNDLE_ID"
 
+      # Nothing else reads the archive before it goes to App Store Connect, where it may reach external testers or
+      # App Store review. Compare it with what this run meant to build. Only pass or fail lines are printed (the
+      # bundle id is a secret, so no value is echoed), plus the archive checksum for the record.
+      - name: Verify the archive before upload
+        env:
+          BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
+          BUILD_CONFIGURATION: ${{ inputs.configuration }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::archive check failed: $1"; exit 1; }
+          ARCHIVE="$RUNNER_TEMP/HealthRelay.xcarchive"
+          APP=$(find "$ARCHIVE/Products/Applications" -maxdepth 1 -name '*.app' -type d | head -1)
+          [[ -n "$APP" ]] || fail "no app bundle in the archive"
+          plist() { /usr/libexec/PlistBuddy -c "Print :$1" "$APP/Info.plist" 2> /dev/null || true; }
+          # An empty expected or archived value fails, so an unset secret and an unreadable key can't match.
+          same() {
+            local actual
+            actual=$(plist "$1")
+            [[ -n "$2" && -n "$actual" && "$actual" == "$2" ]] || fail "$3"
+          }
+          same CFBundleIdentifier "$BUNDLE_ID" "CFBundleIdentifier is not the bundle id"
+          echo "ok: CFBundleIdentifier"
+          same CFBundleShortVersionString "$MARKETING_VERSION" "CFBundleShortVersionString is not the marketing version"
+          echo "ok: CFBundleShortVersionString"
+          same CFBundleVersion "$BUILD_NUMBER" "CFBundleVersion is not the build number"
+          echo "ok: CFBundleVersion"
+          same HealthBridgeSourceCommit "$GITHUB_SHA" "HealthBridgeSourceCommit is not this commit"
+          echo "ok: HealthBridgeSourceCommit"
+          codesign --verify --strict "$APP" > /dev/null 2>&1 || fail "the app signature does not verify"
+          echo "ok: codesign --verify --strict"
+          ENTITLEMENTS=$(codesign -d --entitlements :- "$APP" 2> /dev/null || true)
+          [[ "$ENTITLEMENTS" == *"com.apple.developer.healthkit"* ]] || fail "the HealthKit entitlement is missing"
+          echo "ok: HealthKit entitlement"
+          if [[ "$BUILD_CONFIGURATION" == "AppStore" ]]; then
+            [[ "$ENTITLEMENTS" != *"com.apple.developer.icloud-"* ]] || fail "the AppStore archive carries an iCloud entitlement"
+            echo "ok: no iCloud entitlement in the AppStore archive"
+          fi
+          EXECUTABLE="$APP/$(plist CFBundleExecutable)"
+          SUM=$(shasum -a 256 "$EXECUTABLE" | cut -d' ' -f1)
+          echo "ok: archived executable SHA-256 $SUM"
+
       - name: Export and upload to App Store Connect
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -175,14 +225,20 @@ jobs:
             if ! "$@" > "$log" 2>&1; then
               # The log is never printed: this repository's Actions log is public. Only a fixed category message
               # is printed, chosen by searching the file, so nothing from the file can reach the log.
+              # xcodebuild echoes its command line and build settings (key path, team, version) at the top of the
+              # log, so only its own error lines are searched, never the header.
               echo "::error::$name failed. The xcodebuild output is not published."
-              grep -qiE 'unable to authenticate|authentication|401|403' "$log" && echo "::error::  category: the App Store Connect key was rejected"
-              grep -qiE 'no signing certificate|no certificate|certificate' "$log" && echo "::error::  category: a signing certificate problem"
-              grep -qiE 'provisioning profile|profile' "$log" && echo "::error::  category: a provisioning profile problem"
-              grep -qiE 'entitlement|capabilit' "$log" && echo "::error::  category: an entitlement or capability mismatch"
-              grep -qiE 'no account|team' "$log" && echo "::error::  category: a team or account problem"
-              grep -qiE 'bundle identifier|bundle id' "$log" && echo "::error::  category: a bundle identifier problem"
-              grep -qiE 'build number|version' "$log" && echo "::error::  category: a version or build number problem"
+              local errs
+              errs=$(grep -iE '(^|[^[:alnum:]_])error:' "$log" || true)
+              probe() { if grep -qiE -- "$1" <<< "$errs"; then echo "::error::  category: $2"; fi; }
+              probe '\.swift:[0-9]+(:[0-9]+)?: error:' "a Swift compile error"
+              probe 'unable to authenticate|authentication credentials|authentication failed|status code:? ?40[13]' "the App Store Connect key was rejected"
+              probe 'no signing certificate|signing certificate|no certificate|code signing identit' "a signing certificate problem"
+              probe 'no profiles for|requires a provisioning profile|provisioning profile' "a provisioning profile problem"
+              probe 'entitlement|capabilit' "an entitlement or capability mismatch"
+              probe 'no account for team|requires a development team|no team' "a team or account problem"
+              probe 'bundle identifier|bundle id' "a bundle identifier problem"
+              probe 'build number|already been uploaded|version.*(already|must be higher)' "a version or build number problem"
               exit 1
             fi
           }
