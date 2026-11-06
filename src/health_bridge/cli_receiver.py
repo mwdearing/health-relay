@@ -76,7 +76,6 @@ from health_bridge.receiver.invitations import (
 from health_bridge.receiver.mailbox_keys import MailboxKeyStore
 from health_bridge.receiver.pairing import (
     ReceiverPairingInvitationBundle,
-    create_receiver_pairing_bundle,
     create_receiver_pairing_invitation_bundle,
     pairing_deep_link,
 )
@@ -931,7 +930,7 @@ def _resolved_or_absolute(path: Path) -> Path:
 
 
 @receiver_app.command("create-pairing")
-def create_pairing(  # noqa: PLR0912, PLR0913 - Typer exposes CLI branches/options.
+def create_pairing(  # noqa: PLR0913 - Typer exposes CLI branches/options.
     db: Annotated[
         Path,
         typer.Option("--db", help="User-owned SQLite database path."),
@@ -991,13 +990,6 @@ def create_pairing(  # noqa: PLR0912, PLR0913 - Typer exposes CLI branches/optio
             help="Allow secret-bearing pairing output on stdout for expert use.",
         ),
     ] = False,
-    legacy_v1: Annotated[
-        bool,
-        typer.Option(
-            "--legacy-v1",
-            help="Issue a legacy long-lived bearer-token pairing bundle.",
-        ),
-    ] = False,
 ) -> None:
     if output_format == "setup-page" and setup_page is None:
         typer.echo("--setup-page is required when --format setup-page.", err=True)
@@ -1009,22 +1001,14 @@ def create_pairing(  # noqa: PLR0912, PLR0913 - Typer exposes CLI branches/optio
         transport,
         mailbox_root=mailbox_root,
         icloud_container_identifier=icloud_container_identifier,
-        mailbox_allowed=not legacy_v1,
     )
 
-    if legacy_v1:
-        bundle = create_receiver_pairing_bundle(
-            db,
-            label=label,
-            receiver_url=receiver_url,
-        )
-    else:
-        bundle = create_receiver_pairing_invitation_bundle(
-            db,
-            label=label,
-            receiver_url=receiver_url,
-            transport=selected_transport,
-        )
+    bundle = create_receiver_pairing_invitation_bundle(
+        db,
+        label=label,
+        receiver_url=receiver_url,
+        transport=selected_transport,
+    )
     deep_link = pairing_deep_link(bundle)
     if output_format == "deeplink":
         if isinstance(bundle, ReceiverPairingInvitationBundle):
