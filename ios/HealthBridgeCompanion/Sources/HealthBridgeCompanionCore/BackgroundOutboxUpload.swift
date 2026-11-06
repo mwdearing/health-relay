@@ -569,9 +569,9 @@ public enum BackgroundOutboxUploadCompletionPolicy {
             return nil
         }
         // A long digit string is far above the ceiling, so it clamps without overflowing Int.
-        guard digits.count <= 6, let seconds = Int(digits) else {
-            return digits.allSatisfy({ $0 == "0" }) ? nil : 3600
-        }
+        let significant = digits.drop(while: { $0 == "0" })
+        guard !significant.isEmpty else { return nil }
+        guard significant.count <= 6, let seconds = Int(significant) else { return 3600 }
         guard seconds > 0 else { return nil }
         return min(seconds, 3600)
     }

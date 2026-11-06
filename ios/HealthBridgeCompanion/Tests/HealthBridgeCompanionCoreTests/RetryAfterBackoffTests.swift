@@ -15,6 +15,11 @@ final class RetryAfterBackoffTests: XCTestCase {
     }
 
     func testRetryAfterIsClampedToOneHour() {
+        // Leading zeros are not significant: a short value padded past six digits keeps its size.
+        XCTAssertEqual(
+            BackgroundOutboxUploadCompletionPolicy.retryAfterSeconds(statusCode: 429, headerValue: "0000000000120"),
+            120
+        )
         XCTAssertEqual(
             BackgroundOutboxUploadCompletionPolicy.retryAfterSeconds(statusCode: 429, headerValue: "86400"),
             3600
