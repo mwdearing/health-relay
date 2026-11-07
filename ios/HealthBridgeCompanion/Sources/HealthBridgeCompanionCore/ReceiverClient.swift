@@ -19,6 +19,8 @@ public enum ReceiverClientError: Error, Equatable, LocalizedError {
     case nonHTTPResponse
     case sleepBaselineResetEpochConflict(minimumResetEpoch: UInt64)
     case unsuccessfulStatusCode(statusCode: Int, responseBody: Data)
+    /// The receiver asked for a wait with `Retry-After` on HTTP 429 (clamped to one hour).
+    case rateLimited(retryAfterSeconds: Int)
     /// The response body is longer than the foreground client reads (`maximumResponseBodyBytes`).
     case responseBodyTooLarge
 
@@ -32,6 +34,8 @@ public enum ReceiverClientError: Error, Equatable, LocalizedError {
             "Receiver requires a Sleep reset epoch above \(minimumResetEpoch)."
         case .unsuccessfulStatusCode(let statusCode, _):
             "Receiver returned HTTP \(statusCode)."
+        case .rateLimited(let retryAfterSeconds):
+            "Receiver asked for a wait of \(retryAfterSeconds) seconds before more uploads."
         case .responseBodyTooLarge:
             "Receiver response is larger than the app will read."
         }
@@ -586,6 +590,12 @@ public final class ReceiverClient: @unchecked Sendable {
             throw ReceiverClientError.sleepBaselineResetEpochConflict(
                 minimumResetEpoch: conflict.minimumResetEpoch
             )
+        }
+        if let retryAfterSeconds = BackgroundOutboxUploadCompletionPolicy.retryAfterSeconds(
+            statusCode: httpResponse.statusCode,
+            headerValue: httpResponse.value(forHTTPHeaderField: "Retry-After")
+        ) {
+            throw ReceiverClientError.rateLimited(retryAfterSeconds: retryAfterSeconds)
         }
         guard (200..<300).contains(httpResponse.statusCode) else {
             throw ReceiverClientError.unsuccessfulStatusCode(statusCode: httpResponse.statusCode, responseBody: data)
