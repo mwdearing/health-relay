@@ -251,7 +251,7 @@ def test_readme_makes_own_build_primary_without_exposing_maintainer_operations()
     assert app_store_url not in readme
     assert "Download on the App Store" not in readme
     assert "TestFlight remains available" not in readme
-    assert "HealthRelay is not on the App Store" in readme
+    assert "HealthRelay is on the App Store" in readme
     assert "Build unsigned IPA" in readme
     assert "docs/self-build.md" in readme
     assert "docs/maintainers/" not in readme
