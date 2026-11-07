@@ -50,6 +50,11 @@ REVOKE_TOKEN_SQL: Final = _sql(
     "set revoked_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
     "where token_prefix = ? and revoked_at is null",
 )
+COUNT_ACTIVE_PREFIX_SQL: Final = _sql(
+    "select count(*) from receiver_tokens",
+    "where token_prefix = ? and revoked_at is null",
+)
+TOKEN_COUNT_ROW_ADAPTER: Final[TypeAdapter[tuple[int]]] = TypeAdapter(tuple[int])
 TokenPrincipalRow: TypeAlias = tuple[str, int | None, str | None]
 TOKEN_PRINCIPAL_ROWS_ADAPTER: Final[TypeAdapter[list[TokenPrincipalRow]]] = TypeAdapter(
     list[TokenPrincipalRow],
@@ -156,6 +161,34 @@ def revoke_receiver_token(db_path: Path, token_prefix: str) -> None:
             REVOKE_TOKEN_SQL,
             (token_prefix,),
         )
+
+
+class AmbiguousReceiverTokenPrefixError(ValueError):
+    """More than one active token carries the prefix; nothing was revoked."""
+
+
+def revoke_active_receiver_token(db_path: Path, token_prefix: str) -> int:
+    """Revoke the active token with this prefix and report how many changed.
+
+    ``revoke_receiver_token`` stays the fire-and-forget form used by rollback
+    paths. A caller that must fail when the prefix matched nothing needs the
+    affected row count, which an unknown or already-revoked prefix reports as
+    zero. ``token_prefix`` is matched by exact equality but is not unique in the
+    schema (only indexed), so more than one active match is refused rather than
+    revoked blindly.
+    """
+    initialize_database(db_path)
+    with connect_database(db_path) as connection:
+        # sqlite3 only opens an implicit transaction before DML, so the count
+        # SELECT would run unlocked. Take the write lock first so a concurrent
+        # insert cannot slip in between the count and the UPDATE.
+        _ = connection.execute("BEGIN IMMEDIATE")
+        count_row = TOKEN_COUNT_ROW_ADAPTER.validate_python(
+            connection.execute(COUNT_ACTIVE_PREFIX_SQL, (token_prefix,)).fetchone(),
+        )
+        if count_row[0] > 1:
+            raise AmbiguousReceiverTokenPrefixError(token_prefix)
+        return int(connection.execute(REVOKE_TOKEN_SQL, (token_prefix,)).rowcount)
 
 
 def _generate_token() -> str:
