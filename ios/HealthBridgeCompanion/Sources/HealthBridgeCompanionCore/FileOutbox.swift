@@ -1227,7 +1227,7 @@ public final class FileOutbox {
     ) throws -> FileOutboxMailboxBindingV1 {
         stateLock.lock()
         defer { stateLock.unlock() }
-        try finalizeMailboxEnvelope(
+        return try finalizeMailboxEnvelope(
             itemID: itemID,
             envelope: envelope,
             expectedPayloadSHA256: expectedPayloadSHA256,
@@ -1243,7 +1243,7 @@ public final class FileOutbox {
     ) throws -> FileOutboxMailboxBindingV1 {
         stateLock.lock()
         defer { stateLock.unlock() }
-        try finalizeMailboxEnvelope(
+        return try finalizeMailboxEnvelope(
             itemID: itemID,
             envelope: envelope,
             expectedPayloadSHA256: expectedPayloadSHA256,
@@ -1426,7 +1426,7 @@ public final class FileOutbox {
     public func downgradeReadiness() throws -> FileOutboxDowngradeReadiness {
         stateLock.lock()
         defer { stateLock.unlock() }
-        try Self.downgradeReadiness(directory: directory, fileManager: fileManager)
+        return try Self.downgradeReadiness(directory: directory, fileManager: fileManager)
     }
 
     public static func downgradeReadiness(
