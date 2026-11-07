@@ -6,6 +6,7 @@ import secrets
 import shlex
 import sqlite3
 import stat
+import sys
 import time
 from collections.abc import Callable, Mapping
 from contextlib import suppress
@@ -22,11 +23,10 @@ from urllib.request import (
     ProxyHandler,
     Request,
     build_opener,
-    urlopen,
 )
 
 import typer
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from typing_extensions import override
 
 from health_bridge.cli_receiver_start import (
@@ -2721,40 +2721,108 @@ def smoke(
         typer.Option("--input", help="health_bridge.batch.v1 JSON payload."),
     ],
     token: Annotated[
-        str,
-        typer.Option("--token", help="Receiver bearer token."),
-    ],
+        str | None,
+        typer.Option(
+            "--token",
+            help="Deprecated: shows in ps and shell history. Use --token-file.",
+        ),
+    ] = None,
+    token_file: Annotated[
+        str | None,
+        typer.Option(
+            "--token-file",
+            help="File holding the receiver bearer token, or - to read it from stdin.",
+        ),
+    ] = None,
     url: Annotated[
         str,
-        typer.Option("--url", help="Receiver /v1/batches endpoint."),
+        typer.Option(
+            "--url",
+            help=(
+                "Receiver /v1/batches endpoint. Connects directly: HTTP(S)_PROXY "
+                "is not used and redirects are not followed."
+            ),
+        ),
     ] = "http://127.0.0.1:8765/v1/batches",
 ) -> None:
     _validate_receiver_url(url)
+    bearer = _smoke_bearer_token(token, token_file)
     request = Request(  # noqa: S310 - URL scheme is validated above.
         url,
         data=input_path.read_bytes(),
         headers={
-            "Authorization": f"Bearer {token}",
+            "Authorization": f"Bearer {bearer}",
             "Content-Type": "application/json",
         },
         method="POST",
     )
     try:
-        # `_validate_receiver_url` above restricts this request to HTTP(S).
+        # `_validate_receiver_url` above restricts this request to HTTP(S), and
+        # the opener refuses redirects and proxies so the bearer token only goes
+        # to the receiver the user named. A refused 3xx surfaces as HTTPError.
         with cast(
             "HTTPResponse",
-            urlopen(request, timeout=10),  # noqa: S310  # nosec B310
+            _bearer_opener().open(request, timeout=INTAKE_SMOKE_TIMEOUT_SECONDS),
         ) as response:
-            body = SMOKE_RESPONSE_ADAPTER.validate_json(response.read())
+            raw_body = response.read()
             status = response.status
     except HTTPError as exc:
+        with suppress(OSError):
+            exc.close()
         typer.echo(f"Receiver smoke failed: HTTP {exc.code}.", err=True)
         raise typer.Exit(code=1) from exc
-    except URLError as exc:
-        typer.echo("Receiver smoke failed: receiver was not reachable.", err=True)
+    except (URLError, HTTPException, TimeoutError, OSError) as exc:
+        typer.echo(
+            "Receiver smoke failed: receiver not reachable (proxies are not used).",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    try:
+        body = SMOKE_RESPONSE_ADAPTER.validate_json(raw_body)
+    except (ValidationError, ValueError) as exc:
+        typer.echo(
+            "Receiver smoke failed: response is not a receiver batch result.",
+            err=True,
+        )
         raise typer.Exit(code=1) from exc
     body["http_status"] = status
     typer.echo(json.dumps(body, sort_keys=True))
+
+
+SMOKE_ARGV_CREDENTIAL_WARNING: Final = (
+    "--token is deprecated: argv shows in ps and shell history; use --token-file."
+)
+STDIN_PATH_MARKER: Final = "-"
+SMOKE_TOKEN_PATTERN: Final = re.compile(r"[\x21-\x7e]+")
+
+
+def _smoke_bearer_token(token: str | None, token_file: str | None) -> str:
+    """The bearer token for ``smoke`` from exactly one source, never printed."""
+    if (token is None) == (token_file is None):
+        typer.echo(
+            "Receiver smoke failed: give exactly one of --token-file or --token.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if token is not None:
+        typer.echo(SMOKE_ARGV_CREDENTIAL_WARNING, err=True)
+        candidate = token
+    else:
+        try:
+            if token_file == STDIN_PATH_MARKER:
+                candidate = sys.stdin.read()
+            else:
+                candidate = Path(cast("str", token_file)).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            typer.echo("Receiver smoke failed: could not read the token.", err=True)
+            raise typer.Exit(code=1) from exc
+    candidate = candidate.strip()
+    # Printable ASCII only: a newline or non-Latin-1 character makes urllib raise
+    # while building the Authorization header instead of failing cleanly.
+    if SMOKE_TOKEN_PATTERN.fullmatch(candidate) is None:
+        typer.echo("Receiver smoke failed: the token is not usable.", err=True)
+        raise typer.Exit(code=1)
+    return candidate
 
 
 @receiver_app.command("intake-smoke")
@@ -2787,7 +2855,7 @@ def intake_smoke(
         # forwarded to another host or downgraded from https to http.
         with cast(
             "HTTPResponse",
-            _intake_smoke_opener().open(
+            _bearer_opener().open(
                 request,
                 timeout=INTAKE_SMOKE_TIMEOUT_SECONDS,
             ),
@@ -2828,12 +2896,13 @@ def intake_smoke(
         raise typer.Exit(code=1)
 
 
-def _intake_smoke_opener() -> OpenerDirector:
+def _bearer_opener() -> OpenerDirector:
     """An opener that refuses redirects instead of replaying the bearer token.
 
-    ``urllib`` copies the original headers onto every redirect it follows, so an
-    automatic redirect would hand the intake token to whatever host the response
-    names, including an https-to-http downgrade.
+    Shared by ``smoke`` and ``intake-smoke``. ``urllib`` copies the original
+    headers onto every redirect it follows, so an automatic redirect would hand
+    the bearer token to whatever host the response names, including an
+    https-to-http downgrade.
     """
 
     class _RefuseRedirect(HTTPRedirectHandler):
