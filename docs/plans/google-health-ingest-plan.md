@@ -31,7 +31,6 @@ Date: 2026-10-16. Supersedes v1 to v9.
 - Downstream readers that will see double counts if dedup is skipped:
   - `src/health_bridge/queries/daily.py`, `timeseries.py`, `_common.py`, `catalog.py`
   - `src/health_bridge/status.py`, `src/health_bridge/mcp/tools.py`
-  - the health-line reader in the separate dosing project (resting heart rate and weight straight from `samples`; feeds production cron health lines)
   - `hermes-healthrelay` plugin (reads the receiver; catalog-pinned 0.4.4)
   - health-insights (`data/health-insights`): NOT yet checked line by line
   - agent-dashboard: check for any receiver reads
@@ -185,7 +184,7 @@ Flag: `google_in_canonical` (off by default) controls ONE thing: whether Google 
    - 3a. Historical rows without origin: Option B, dated cutover (chosen by Mike, 2026-10-16, least conflict). History before the recorded cutover date stays uncorrected; `reconcile_cutovers` marks it and readers flag it. No re-sync, so no tombstone churn. Option A (re-sync) is not used.
 4. Backfill under the deploy gate: reconcile existing data after 017; keep the pre-reconcile DB backup.
 5. Canonical views: `samples_canonical` and equivalents, including the hourly split (§7). Readers switch by table name.
-6. Reader migration in its own PR: `daily.py`, `timeseries.py`, `status.py`, `mcp/tools.py`, `hermes-healthrelay`, health-insights, any dashboard reads. The peptide-dosing reader feeds production cron health lines: it moves in its own change after the canonical views exist, with a local test run first, and only after Mike's explicit go-ahead at that point (Mike, 2026-10-16: "if it makes sense, then do it"; host rules still require the cron change to be tested before it goes live).
+6. Reader migration in its own PR: `daily.py`, `timeseries.py`, `status.py`, `mcp/tools.py`, `hermes-healthrelay`, health-insights, any dashboard reads. Any reader that feeds scheduled reports moves in its own change, after the canonical views exist, with a local test run first.
 7. Google spike (§3.2): only after the Cloud project exists (§9.2). Report to Mike; stop the Google work if it fails.
    - 7a. Pixel test windows (Mike, 2026-10-16). The Pixel tracks steps from its own sensors in the Google Health app. Mike powers and carries it only during windows he schedules in advance (§9.14). Two kinds:
      - Overlap window (on the separate test account_key, §9.14): Pixel plus iPhone and Apple Watch carried together for at least 2 full local hours (for example 10:00 to 12:00), so the §4.4 shared-hours rule (at least 30 minutes of coverage in each of at least 2 hours) is met. A short walk alone does not qualify for the discrepancy check; it still tests source of truth. Tests source of truth (Apple wins by default, Google wins when configured) and discrepancy alerts on shared hours. Also gives the first measured disagreement between the devices, to check the 20 percent threshold.
@@ -226,7 +225,6 @@ Resolved by Mike (2026-10-16 19:16Z, 19:18Z and 22:39Z):
 | 9.4 | Other users | The receiver ingests from multiple accounts and multiple apps under one account (§4.5). First deployment is one account. Serving others needs §9.4a. |
 | 9.5 | Discrepancy alerts | Daily buckets over shared hours; 20 percent for steps and energy; 1 kg for weight; dashboard for every alert, email at twice the threshold. |
 | 9.6 | Platform defaults | iOS: Apple Health is the source of truth by default, configurable. Android: Google Health only. |
-| 9.7 | Peptide reader | Move it when the canonical views exist, as its own change with a local test first (§8 step 6). |
 | 9.8 | Repo layout | Same repo: `ios/` and `android/` side by side. |
 | 9.9 | Dedicated reviewer project | Mike creates it when the scope and spec are ready. Scope brief to be written when asked. Does not gate the spike. |
 | 9.10 | Historical rows | Option B, dated cutover (least conflict). |
