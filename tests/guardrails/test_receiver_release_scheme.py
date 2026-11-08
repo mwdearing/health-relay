@@ -168,21 +168,10 @@ _PYTHON_TAG_REASON = (
     "unnoticed."
 )
 
-_RELEASE_TAG_REASON = (
-    "The only tag filter in this file is the pattern `receiver-v*`, which "
-    "matches only names beginning with the literal text `receiver-v`, while "
-    "every pinned receiver tag name begins with `healthrelay-`. Recorded so "
-    "the receiver release workflow is not reported on every run, and so that "
-    "widening its filter cannot pass unnoticed."
-)
-
 REVIEWED_TAG_ALLOWANCES: tuple[ReviewedTagAllowance, ...] = (
     ReviewedTagAllowance(".github/workflows/ios.yml", ("ios-v*",), _IOS_TAG_REASON),
     ReviewedTagAllowance(
         ".github/workflows/python.yml", ("ios-v*",), _PYTHON_TAG_REASON
-    ),
-    ReviewedTagAllowance(
-        ".github/workflows/release.yml", ("receiver-v*",), _RELEASE_TAG_REASON
     ),
 )
 
@@ -2607,8 +2596,6 @@ def test_allowlisting_a_prefix_mention_keeps_the_other_findings() -> None:
 
 def test_declared_tag_literals_reports_what_a_workflow_asks_for() -> None:
     ios = (ROOT / ".github/workflows/ios.yml").read_text(encoding="utf-8")
-    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     codeql = (ROOT / ".github/workflows/codeql.yml").read_text(encoding="utf-8")
     assert declared_tag_literals(ios) == ("ios-v*",)
-    assert declared_tag_literals(release) == ("receiver-v*",)
     assert declared_tag_literals(codeql) == ()
