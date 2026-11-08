@@ -481,6 +481,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     private let quantityObservationStore: QuantityObservationStore
     private let coreLaneUploadProofStore: CoreLaneUploadProofStore
     private var outbox: FileOutbox?
+    private var privateStoreInitializationTask: Task<Void, Error>?
     private let outboxDirectoryURL: URL?
     private var cursorStore: FileSyncCursorStore?
     private let cursorStoreFileURL: URL?
@@ -6475,7 +6476,22 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         }
     }
 
+    /// Coalesces concurrent callers onto one initialization, so two callers can never each
+    /// create an outbox or run the preflight in parallel.
     private func retryPrivateStoreInitialization() async throws {
+        if let existing = privateStoreInitializationTask {
+            try await existing.value
+            return
+        }
+        let task = Task { @MainActor in
+            defer { self.privateStoreInitializationTask = nil }
+            try await self.performPrivateStoreInitialization()
+        }
+        privateStoreInitializationTask = task
+        try await task.value
+    }
+
+    private func performPrivateStoreInitialization() async throws {
         do {
             try settingsStore.ensureAtomicConnectionRecord()
             connectionStateNeedsRecovery = false
@@ -6536,6 +6552,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                     fileURL: sleepManifestFileURL
                 )
             }
+            let generationBeforeOpen = settingsStore.receiverSettingsGenerationToken
             let existing = OffMainActorValue(value: outbox)
             let directory = outboxDirectoryURL
             let settings = OffMainActorValue(value: settingsStore)
@@ -6546,6 +6563,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                     settings: settings
                 )
             }.value
+            // Settings changed during the open: stop before any migration writes a stale identity.
+            guard settingsStore.receiverSettingsGenerationToken == generationBeforeOpen else {
+                throw CompanionPrivateStorageError.outboxUnavailable
+            }
             if let current = outbox {
                 guard current === snapshot.outbox.value else {
                     throw CompanionPrivateStorageError.outboxUnavailable
@@ -6564,6 +6585,11 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             try await Task.detached(priority: .utility) {
                 try Self.migrateAndCheckOutboxIdentities(snapshot)
             }.value
+            // Settings may have changed while the work was off the main actor. If so, the
+            // snapshot is stale: fail transiently so the next retry re-reads everything.
+            guard settingsStore.receiverSettingsGenerationToken == generationBeforeOpen else {
+                throw CompanionPrivateStorageError.outboxUnavailable
+            }
         } catch {
             outboxIdentityMigrationReady = false
             if ReceiverConnectionRecordRecoveryPolicy.requiresDestructiveRecovery(error) {

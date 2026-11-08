@@ -604,8 +604,29 @@ public final class FileOutbox {
     private let stateLock = NSRecursiveLock()
 
     #if !HEALTH_BRIDGE_MAILBOX_QA
-    public weak var automaticSyncDiagnosticDraft: AutomaticSyncDiagnosticDraft?
-    public var automaticSyncDiagnosticStore = AutomaticSyncDiagnosticStore()
+    private weak var diagnosticDraftStorage: AutomaticSyncDiagnosticDraft?
+    private var diagnosticStoreStorage = AutomaticSyncDiagnosticStore()
+    /// Both diagnostic handles are read from background work, so access is serialised with stateLock.
+    public var automaticSyncDiagnosticDraft: AutomaticSyncDiagnosticDraft? {
+        get {
+            stateLock.lock(); defer { stateLock.unlock() }
+            return diagnosticDraftStorage
+        }
+        set {
+            stateLock.lock(); defer { stateLock.unlock() }
+            diagnosticDraftStorage = newValue
+        }
+    }
+    public var automaticSyncDiagnosticStore: AutomaticSyncDiagnosticStore {
+        get {
+            stateLock.lock(); defer { stateLock.unlock() }
+            return diagnosticStoreStorage
+        }
+        set {
+            stateLock.lock(); defer { stateLock.unlock() }
+            diagnosticStoreStorage = newValue
+        }
+    }
 
     public func noteDiagnosticEnqueue(_ items: [FileOutboxItem], complete: Bool) {
         stateLock.lock()
