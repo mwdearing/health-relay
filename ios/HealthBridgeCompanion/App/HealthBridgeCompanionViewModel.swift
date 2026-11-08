@@ -106,6 +106,8 @@ private struct OutboxOpenSnapshot: Sendable {
     let receiverURLString: String
     let bearerToken: String
     let bindingID: String?
+    let generation: String
+    let settings: OffMainActorValue<ReceiverSettingsStore>
 }
 
 @MainActor
@@ -6436,6 +6438,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         settings: OffMainActorValue<ReceiverSettingsStore>
     ) throws -> OutboxOpenSnapshot {
         let store = settings.value
+        let generation = store.receiverSettingsGenerationToken
         let outboxInstance: FileOutbox
         if let reused = existing.value {
             outboxInstance = reused
@@ -6450,7 +6453,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             outbox: OffMainActorValue(value: outboxInstance),
             receiverURLString: store.receiverURLString,
             bearerToken: bearerToken,
-            bindingID: store.receiverBindingID
+            bindingID: store.receiverBindingID,
+            generation: generation,
+            settings: settings
         )
     }
 
@@ -6464,7 +6469,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             _ = try outboxInstance.migrateLegacyHashedReceiverIdentities(
                 currentReceiverURLString: snapshot.receiverURLString,
                 currentBearerToken: snapshot.bearerToken,
-                currentBindingID: bindingID
+                currentBindingID: bindingID,
+                stillCurrent: { snapshot.settings.value.receiverSettingsGenerationToken == snapshot.generation }
             )
         }
         guard ReceiverOutboxAdmissionPolicy.isReady(

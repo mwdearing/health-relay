@@ -263,6 +263,11 @@ public enum FileOutboxClearIntentError: LocalizedError, Equatable {
     }
 }
 
+/// Transient: the settings changed while migration was running. Callers retry; it is not an identity failure.
+public enum FileOutboxMigrationError: Error, Equatable, Sendable {
+    case settingsChangedDuringMigration
+}
+
 public struct FileOutboxItem: Equatable, Identifiable, Sendable {
     public let id: String
     public let fileURL: URL
@@ -906,10 +911,16 @@ public final class FileOutbox {
     public func migrateLegacyHashedReceiverIdentities(
         currentReceiverURLString: String?,
         currentBearerToken: String?,
-        currentBindingID: String?
+        currentBindingID: String?,
+        stillCurrent: (() -> Bool)? = nil
     ) throws -> Int {
         stateLock.lock()
         defer { stateLock.unlock() }
+        // Checked under the outbox lock, before any write, so a settings change
+        // that landed before this point cannot be stamped with the old identity.
+        if let stillCurrent, !stillCurrent() {
+            throw FileOutboxMigrationError.settingsChangedDuringMigration
+        }
         var manifest = try reconciledManifest()
         let expectedLegacyIdentity: String?
         if let currentReceiverURLString,
