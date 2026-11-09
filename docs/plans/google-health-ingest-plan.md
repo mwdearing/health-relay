@@ -5,7 +5,7 @@ Revision: v10, last revised 2026-11-09. Original date 2026-10-16. Supersedes v1 
 
 ## 1. Summary
 
-- Reported by Mike (2026-10-16), not yet verified: the iOS Google Health app syncs Apple Health data, Apple Watch included, into Google Health. Apart from the Pixel test windows, this is the only way data reaches his Google Health account, so his Google side otherwise holds Apple echoes only.
+- Reported by Mike (2026-10-16), not yet verified: the iOS Google Health app syncs Apple Health data, Apple Watch included, into Google Health. Pixel test windows are on a separate test account (§9.14), so this is the only way data reaches his Google Health account, so his Google side otherwise holds Apple echoes only.
 - Google-native test data: the Pixel's Google Health app tracks steps from the phone's own sensors and stores them in Google Health (screenshot, 2026-10-16). Mike carries and powers the Pixel only during scheduled windows, of two kinds (§8 step 7a).
 - Two user types:
   - Apple users who also connect Google Health: echo filtering applies; source of truth defaults to Apple Health and is configurable (§4.4).
@@ -79,8 +79,8 @@ Spike outcomes:
 ### 4.1 Rule 0: echo filter (driven by setting, matched on Apple-specific identifiers)
 - The filter runs when the account's `apple_source_connected` setting (§4.5) is true. It does NOT depend on whether Apple rows for that hour have arrived yet: Google can deliver before the iPhone syncs, and a data-presence rule would keep the echo and then duplicate it when the Apple row lands.
 - What counts as Apple-origin: ONLY Apple-specific identifiers, taken as exact values from the spike (G2): the source app is Apple Health (or the Google Health app's Apple Health import, as Google labels it), or the device manufacturer is Apple. A generic origin such as "phone" or "mobile" without an Apple manufacturer is NEVER treated as Apple: it may be the Pixel. The allow-list of Apple values is a versioned file, covered by fixtures.
-- With `apple_source_connected` true: a Google-side record that matches the Apple allow-list is kept in the raw tables with status `echo` and excluded from canonical totals; it is counted in a per-run "echoes skipped" metric (counts only). If no Apple counterpart has arrived within 7 days (default, configurable), the echo is promoted into canonical totals, so data that exists only via Google is not lost. Records that do not match either allow-list follow the unrecognised-origin rule below.
-- Google precedence (versioned mapping file): Apple allow-list match → echo (above). Google allow-list match (Fitbit, Pixel Watch, Pixel phone) → kept. Anything else is an unrecognised origin: kept in the raw tables with status `unmapped`, excluded from canonical totals, and counted in a per-run "unrecognised origin" metric (counts only). Once the label is mapped, the rows are promoted without a re-pull (decided 2026-11-06: reject from totals and log; the raw rows make the promotion possible).
+- With `apple_source_connected` true: a Google-side record that matches the Apple allow-list is kept in the raw tables with status `echo` and excluded from canonical totals; it is counted in a per-run "echoes skipped" metric (counts only). If no Apple counterpart has arrived within 7 days (default, configurable), the echo is promoted into canonical totals, so data that exists only via Google is not lost. Promotion is revocable: if the Apple counterpart arrives later, the promoted echo returns to status `echo`, the Apple record wins, and totals are recomputed, so the late row never double counts. Records that do not match either allow-list follow the unrecognised-origin rule below.
+- Google precedence (versioned mapping file): with `apple_source_connected` false, Google is the record and unrecognised origins are kept in canonical totals and counted (no data is held out for a Google-only account). With it true: Apple allow-list match → echo (above). Google allow-list match (Fitbit, Pixel Watch, Pixel phone) → kept. Anything else is an unrecognised origin: kept in the raw tables with status `unmapped`, excluded from canonical totals, and counted in a per-run "unrecognised origin" metric (counts only). Once the label is mapped, the rows are promoted without a re-pull (decided 2026-11-06: reject from totals and log; the raw rows make the promotion possible).
 - With `apple_source_connected` false (Google-only account): nothing is dropped as an echo; Google data is the record.
 - Changing the setting triggers a full re-pull window for the Google source so the stored rows match the new rule.
 - On iOS, the Google Health app's bundle id is recorded as a bridge source. Precedence: a record whose origin resolves to Apple, including through the Google Health app's Apple Health import label, is an echo on both sides and is excluded from the Apple source for the iOS bridge. Only records that resolve to a non-Apple origin are Google-native. G3 is a blocking check before step 3, and a fixture covers a HealthKit row written by the Google Health bundle id that carries an Apple origin.
@@ -159,7 +159,7 @@ Losers stay in the raw tables as members; nothing is deleted.
 
 - Cumulative types (steps, active energy, distance, flights) are never summed across sub-sources and never take the maximum across sub-sources: two devices can count the same walk, so max overcounts.
 - Reconcile per local hour, then sum hours for the day. Per hour:
-  1. Echoes are already resolved (dropped at ingest by §4.1, or by origin per §5 step 1).
+  1. Echoes are already resolved (kept with status `echo` and excluded from totals by §4.1, or by origin per §5 step 1). Nothing is deleted.
   2. Independent devices with data in the same hour: the user's source of truth, then configured priority.
   3. Then the sub-source with fuller coverage for that hour, then the §5 tie rule.
 - An Apple user who picks Google as source of truth gets Google for hours where both an Apple device and a Google-native device recorded; hours with only Apple data stay Apple; hours with only Google-native data stay Google.
@@ -249,7 +249,7 @@ Still open:
 
 ## 11. Open risks
 
-- Mike's Google account holds Apple echoes only outside Pixel windows; Google-native features are proven on the Pixel windows only, and only if the Pixel's phone steps come back through the API (G9).
+- Mike's Google account holds Apple echoes only; Google-native features are proven on the separate test account's Pixel windows only, and only if the Pixel's phone steps come back through the API (G9).
 - Google may return Apple-synced data without an origin, which makes full reconciliation mandatory for Google data.
 - Google may label Apple and Pixel origins in ways the allow-list does not cover; the "unrecognised origin" metric catches it, and §4.1 holds those records out and logs them.
 - Two-way sync between the Google Health app and Apple Health can create a loop unless both guards are in place.
