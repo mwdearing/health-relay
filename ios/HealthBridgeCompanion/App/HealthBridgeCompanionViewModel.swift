@@ -106,8 +106,6 @@ private struct OutboxOpenSnapshot: Sendable {
     let receiverURLString: String
     let bearerToken: String
     let bindingID: String?
-    let generation: String
-    let settings: OffMainActorValue<ReceiverSettingsStore>
 }
 
 @MainActor
@@ -484,6 +482,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     private let coreLaneUploadProofStore: CoreLaneUploadProofStore
     private var outbox: FileOutbox?
     private var privateStoreInitializationTask: Task<Void, Error>?
+    private var privateStoreInitializationGeneration: String?
     private let outboxDirectoryURL: URL?
     private var cursorStore: FileSyncCursorStore?
     private let cursorStoreFileURL: URL?
@@ -6430,33 +6429,19 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         refreshPendingOutboxCount()
     }
 
-    /// Runs on a detached task. Opens or reuses the outbox and reads the
-    /// Keychain token; no main-actor state is touched here.
-    nonisolated private static func openOutboxAndReadSettings(
+    /// Runs on a detached task. Opens or reuses the outbox. It reads no settings, so it
+    /// never touches state the main actor can mutate.
+    nonisolated private static func openOutbox(
         existing: OffMainActorValue<FileOutbox?>,
-        directory: URL?,
-        settings: OffMainActorValue<ReceiverSettingsStore>
-    ) throws -> OutboxOpenSnapshot {
-        let store = settings.value
-        let generation = store.receiverSettingsGenerationToken
-        let outboxInstance: FileOutbox
+        directory: URL?
+    ) throws -> OffMainActorValue<FileOutbox> {
         if let reused = existing.value {
-            outboxInstance = reused
-        } else {
-            guard let directory else {
-                throw CompanionPrivateStorageError.outboxUnavailable
-            }
-            outboxInstance = try FileOutbox(directory: directory)
+            return OffMainActorValue(value: reused)
         }
-        let bearerToken = try store.loadBearerToken()
-        return OutboxOpenSnapshot(
-            outbox: OffMainActorValue(value: outboxInstance),
-            receiverURLString: store.receiverURLString,
-            bearerToken: bearerToken,
-            bindingID: store.receiverBindingID,
-            generation: generation,
-            settings: settings
-        )
+        guard let directory else {
+            throw CompanionPrivateStorageError.outboxUnavailable
+        }
+        return OffMainActorValue(value: try FileOutbox(directory: directory))
     }
 
     /// Runs on a detached task after the settings check. Migrates legacy
@@ -6469,8 +6454,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             _ = try outboxInstance.migrateLegacyHashedReceiverIdentities(
                 currentReceiverURLString: snapshot.receiverURLString,
                 currentBearerToken: snapshot.bearerToken,
-                currentBindingID: bindingID,
-                stillCurrent: { snapshot.settings.value.receiverSettingsGenerationToken == snapshot.generation }
+                currentBindingID: bindingID
             )
         }
         guard ReceiverOutboxAdmissionPolicy.isReady(
@@ -6485,10 +6469,16 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     /// Coalesces concurrent callers onto one initialization, so two callers can never each
     /// create an outbox or run the preflight in parallel.
     private func retryPrivateStoreInitialization() async throws {
+        let generation = settingsStore.receiverSettingsGenerationToken
         if let existing = privateStoreInitializationTask {
-            try await existing.value
-            return
+            if privateStoreInitializationGeneration == generation {
+                try await existing.value
+                return
+            }
+            // Settings changed since the running pass began: let it finish, then run a fresh one.
+            _ = try? await existing.value
         }
+        privateStoreInitializationGeneration = generation
         let task = Task { @MainActor in
             defer { self.privateStoreInitializationTask = nil }
             try await self.performPrivateStoreInitialization()
@@ -6558,28 +6548,32 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                     fileURL: sleepManifestFileURL
                 )
             }
+            // Settings are read on the main actor and captured as values. Only the file work leaves it.
             let generationBeforeOpen = settingsStore.receiverSettingsGenerationToken
+            let capturedBearerToken = try settingsStore.loadBearerToken()
+            let capturedURLString = settingsStore.receiverURLString
+            let capturedBindingID = settingsStore.receiverBindingID
             let existing = OffMainActorValue(value: outbox)
             let directory = outboxDirectoryURL
-            let settings = OffMainActorValue(value: settingsStore)
-            let snapshot = try await Task.detached(priority: .utility) {
-                try Self.openOutboxAndReadSettings(
-                    existing: existing,
-                    directory: directory,
-                    settings: settings
-                )
+            let openedOutbox = try await Task.detached(priority: .utility) {
+                try Self.openOutbox(existing: existing, directory: directory)
             }.value
-            // Settings changed during the open: stop before any migration writes a stale identity.
             guard settingsStore.receiverSettingsGenerationToken == generationBeforeOpen else {
                 throw CompanionPrivateStorageError.outboxUnavailable
             }
             if let current = outbox {
-                guard current === snapshot.outbox.value else {
+                guard current === openedOutbox.value else {
                     throw CompanionPrivateStorageError.outboxUnavailable
                 }
             } else {
-                outbox = snapshot.outbox.value
+                outbox = openedOutbox.value
             }
+            let snapshot = OutboxOpenSnapshot(
+                outbox: openedOutbox,
+                receiverURLString: capturedURLString,
+                bearerToken: capturedBearerToken,
+                bindingID: capturedBindingID
+            )
             if snapshot.bindingID != nil {
                 guard Self.receiverSettingsAreComplete(
                     urlString: snapshot.receiverURLString,
