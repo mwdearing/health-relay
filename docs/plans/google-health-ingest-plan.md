@@ -83,7 +83,7 @@ Spike outcomes:
 - Google precedence (versioned mapping file): Apple allow-list match → echo (above). Google allow-list match (Fitbit, Pixel Watch, Pixel phone) → kept. Anything else is an unrecognised origin: kept in the raw tables with status `unmapped`, excluded from canonical totals, and counted in a per-run "unrecognised origin" metric (counts only). Once the label is mapped, the rows are promoted without a re-pull (decided 2026-11-06: reject from totals and log; the raw rows make the promotion possible).
 - With `apple_source_connected` false (Google-only account): nothing is dropped as an echo; Google data is the record.
 - Changing the setting triggers a full re-pull window for the Google source so the stored rows match the new rule.
-- On iOS, the Google Health app's bundle id is recorded as a bridge source; HealthKit rows written by it are treated as Google-origin and excluded from the Apple source if they would loop (G3).
+- On iOS, the Google Health app's bundle id is recorded as a bridge source. Precedence: a record whose origin resolves to Apple, including through the Google Health app's Apple Health import label, is an echo on both sides and is excluded from the Apple source for the iOS bridge. Only records that resolve to a non-Apple origin are Google-native. G3 is a blocking check before step 3, and a fixture covers a HealthKit row written by the Google Health bundle id that carries an Apple origin.
 - A known bridge app (any bundle id that mirrors a vendor, e.g. a Fitbit-to-HealthKit app) marks the record as vendor-origin.
 
 ### 4.2 Fallback matching (when origin is missing)
