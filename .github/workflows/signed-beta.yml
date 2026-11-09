@@ -131,22 +131,16 @@ jobs:
               # is printed, chosen by searching the file, so nothing from the file can reach the log.
               # xcodebuild echoes its command line and build settings (key path, team, version) at the top of the
               # log, so only its own error lines are searched, never the header.
-              echo "::error::$name failed. Only redacted error lines are published below."
+              echo "::error::$name failed. Only fixed Apple error codes and categories are published."
               local errs
               errs=$(grep -iE '(^|[^[:alnum:]_])error:' "$log" || true)
-              # Publish the first error lines with paths, ids, UUIDs, long tokens, emails and the
-              # team, key and issuer values removed. Actions also masks those secret values.
-              printf '%s\n' "$errs" | head -20 | cut -c1-240 \
-                | sed -E \
-                  -e "s#${APPLE_TEAM_ID:-@@none@@}#<team>#g" \
-                  -e "s#${ASC_KEY_ID:-@@none@@}#<key>#g" \
-                  -e "s#${ASC_ISSUER_ID:-@@none@@}#<issuer>#g" \
-                  -e 's#[^ ]*/[^ ]*#<path>#g' \
-                  -e 's#[0-9a-fA-F]{8}-[0-9a-fA-F-]{27}#<uuid>#g' \
-                  -e 's#[A-Za-z0-9+/=_-]{20,}#<token>#g' \
-                  -e 's#[A-Z0-9]{10}#<id>#g' \
-                  -e 's#[^ @]+@[^ ]+#<email>#g' \
-                | while IFS= read -r line; do echo "::error::xcodebuild: $line"; done
+              # Only fixed code patterns are printed (ITMS-nnnnnn and IDE distribution error names). They
+              # come from Apple and carry no path, id or token, so nothing else from the file reaches the log.
+              local codes
+              codes=$(grep -oE 'ITMS-[0-9]{5,6}|IDEDistribution[A-Za-z]+|ASC[A-Za-z]*Error' "$log" | sort -u | head -10 || true)
+              while IFS= read -r code; do
+                [ -n "$code" ] && echo "::error::xcodebuild code: $code"
+              done <<< "$codes"
               probe() { if grep -qiE -- "$1" <<< "$errs"; then echo "::error::  category: $2"; fi; }
               probe '\.swift:[0-9]+(:[0-9]+)?: error:' "a Swift compile error"
               probe 'unable to authenticate|authentication credentials|authentication failed|status code:? ?40[13]' "the App Store Connect key was rejected"
@@ -240,22 +234,16 @@ jobs:
               # is printed, chosen by searching the file, so nothing from the file can reach the log.
               # xcodebuild echoes its command line and build settings (key path, team, version) at the top of the
               # log, so only its own error lines are searched, never the header.
-              echo "::error::$name failed. Only redacted error lines are published below."
+              echo "::error::$name failed. Only fixed Apple error codes and categories are published."
               local errs
               errs=$(grep -iE '(^|[^[:alnum:]_])error:' "$log" || true)
-              # Publish the first error lines with paths, ids, UUIDs, long tokens, emails and the
-              # team, key and issuer values removed. Actions also masks those secret values.
-              printf '%s\n' "$errs" | head -20 | cut -c1-240 \
-                | sed -E \
-                  -e "s#${APPLE_TEAM_ID:-@@none@@}#<team>#g" \
-                  -e "s#${ASC_KEY_ID:-@@none@@}#<key>#g" \
-                  -e "s#${ASC_ISSUER_ID:-@@none@@}#<issuer>#g" \
-                  -e 's#[^ ]*/[^ ]*#<path>#g' \
-                  -e 's#[0-9a-fA-F]{8}-[0-9a-fA-F-]{27}#<uuid>#g' \
-                  -e 's#[A-Za-z0-9+/=_-]{20,}#<token>#g' \
-                  -e 's#[A-Z0-9]{10}#<id>#g' \
-                  -e 's#[^ @]+@[^ ]+#<email>#g' \
-                | while IFS= read -r line; do echo "::error::xcodebuild: $line"; done
+              # Only fixed code patterns are printed (ITMS-nnnnnn and IDE distribution error names). They
+              # come from Apple and carry no path, id or token, so nothing else from the file reaches the log.
+              local codes
+              codes=$(grep -oE 'ITMS-[0-9]{5,6}|IDEDistribution[A-Za-z]+|ASC[A-Za-z]*Error' "$log" | sort -u | head -10 || true)
+              while IFS= read -r code; do
+                [ -n "$code" ] && echo "::error::xcodebuild code: $code"
+              done <<< "$codes"
               probe() { if grep -qiE -- "$1" <<< "$errs"; then echo "::error::  category: $2"; fi; }
               probe '\.swift:[0-9]+(:[0-9]+)?: error:' "a Swift compile error"
               probe 'unable to authenticate|authentication credentials|authentication failed|status code:? ?40[13]' "the App Store Connect key was rejected"
