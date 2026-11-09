@@ -6470,12 +6470,14 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     /// create an outbox or run the preflight in parallel.
     private func retryPrivateStoreInitialization() async throws {
         let generation = settingsStore.receiverSettingsGenerationToken
-        if let existing = privateStoreInitializationTask {
+        // Loop until no pass is running: a caller that waited on a stale pass must re-check
+        // the slot, so only one fresh pass is ever installed.
+        while let existing = privateStoreInitializationTask {
             if privateStoreInitializationGeneration == generation {
                 try await existing.value
                 return
             }
-            // Settings changed since the running pass began: let it finish, then run a fresh one.
+            // Settings changed since the running pass began: let it finish, then re-check.
             _ = try? await existing.value
         }
         privateStoreInitializationGeneration = generation
