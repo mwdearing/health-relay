@@ -72,6 +72,7 @@ def test_dependabot_keeps_security_updates_without_version_prs() -> None:
 RETIRED_RELEASE_WORKFLOWS = (
     Path(".github/workflows/publish-ipa-release.yml"),
     Path(".github/workflows/promote-ipa-release.yml"),
+    Path(".github/workflows/release.yml"),
 )
 
 
@@ -83,7 +84,6 @@ SECRET_REF = re.compile(r"secrets\.(?P<name>[A-Za-z0-9_]+)")
 ALLOWED_WRITE_SCOPES: dict[str, frozenset[str]] = {
     "codeql.yml": frozenset({"security-events"}),
     "publish-release.yml": frozenset({"contents", "id-token", "attestations"}),
-    "release.yml": frozenset({"contents", "id-token", "attestations"}),
 }
 RELEASE_WRITERS = frozenset(
     name for name, scopes in ALLOWED_WRITE_SCOPES.items() if "contents" in scopes
@@ -111,7 +111,7 @@ def _workflow_files() -> list[Path]:
     return files
 
 
-def test_unsigned_ipa_release_workflows_stay_retired() -> None:
+def test_retired_release_workflows_stay_retired() -> None:
     for path in RETIRED_RELEASE_WORKFLOWS:
         assert not path.exists(), path
 
