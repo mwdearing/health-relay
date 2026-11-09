@@ -6563,13 +6563,11 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             guard settingsStore.receiverSettingsGenerationToken == generationBeforeOpen else {
                 throw CompanionPrivateStorageError.outboxUnavailable
             }
-            if let current = outbox {
-                guard current === openedOutbox.value else {
-                    throw CompanionPrivateStorageError.outboxUnavailable
-                }
-            } else {
-                outbox = openedOutbox.value
+            // Main is reentrant across the await: install only if the outbox is still the one we started from.
+            guard outbox === existing.value else {
+                throw CompanionPrivateStorageError.outboxUnavailable
             }
+            outbox = openedOutbox.value
             let snapshot = OutboxOpenSnapshot(
                 outbox: openedOutbox,
                 receiverURLString: capturedURLString,
