@@ -2812,7 +2812,9 @@ def _smoke_bearer_token(token: str | None, token_file: str | None) -> str:
             if token_file == STDIN_PATH_MARKER:
                 candidate = sys.stdin.read()
             else:
-                candidate = Path(cast("str", token_file)).read_text(encoding="utf-8-sig")
+                candidate = Path(cast("str", token_file)).read_text(
+                    encoding="utf-8-sig"
+                )
         except (OSError, UnicodeDecodeError) as exc:
             typer.echo("Receiver smoke failed: could not read the token.", err=True)
             raise typer.Exit(code=1) from exc
