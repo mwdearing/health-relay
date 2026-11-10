@@ -93,6 +93,21 @@ enum DisconnectReceiverOutcome: Equatable {
     )
 }
 
+/// Wraps a non-Sendable reference that is only touched on the detached outbox
+/// work. FileOutbox and ReceiverSettingsStore do their own file locking; this
+/// wrapper just lets the blocking file and Keychain reads leave the main actor.
+private struct OffMainActorValue<Value>: @unchecked Sendable {
+    let value: Value
+}
+
+/// Result of the off-main outbox open and settings read.
+private struct OutboxOpenSnapshot: Sendable {
+    let outbox: OffMainActorValue<FileOutbox>
+    let receiverURLString: String
+    let bearerToken: String
+    let bindingID: String?
+}
+
 @MainActor
 final class HealthBridgeCompanionViewModel: ObservableObject {
     private enum ManualSyncLane: CaseIterable {
@@ -133,7 +148,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 return
             }
             do {
-                try viewModel.preparePrivateStorageForUploadAdmission()
+                try await viewModel.preparePrivateStorageForUploadAdmission()
             } catch {
                 viewModel.refreshPendingOutboxCount()
                 viewModel.statusIsError = true
@@ -466,6 +481,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     private let quantityObservationStore: QuantityObservationStore
     private let coreLaneUploadProofStore: CoreLaneUploadProofStore
     private var outbox: FileOutbox?
+    private var privateStoreInitializationTask: Task<Void, Error>?
+    private var privateStoreInitializationGeneration: String?
     private let outboxDirectoryURL: URL?
     private var cursorStore: FileSyncCursorStore?
     private let cursorStoreFileURL: URL?
@@ -1377,7 +1394,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             return false
         }
         do {
-            try preparePrivateStorageForUploadAdmission()
+            try await preparePrivateStorageForUploadAdmission()
         } catch {
             refreshPendingOutboxCount()
             statusIsError = true
@@ -1519,7 +1536,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                     try await self.runWithExclusiveDirectOutboxTransfer {
                         do {
                             do {
-                                try self.retryPrivateStoreInitialization()
+                                try await self.retryPrivateStoreInitialization()
                             } catch {
                                 self.outbox = nil
                             }
@@ -1551,7 +1568,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         guard cleared else { return false }
         if bootstrapCompleted {
             do {
-                try preparePrivateStorageForUploadAdmission()
+                try await preparePrivateStorageForUploadAdmission()
             } catch {
                 statusIsError = true
                 statusMessage = "Private storage recovery failed: \(describe(error))"
@@ -1820,7 +1837,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         do {
             preparationFailure = try await runWithExclusiveDirectOutboxTransfer {
                 do {
-                    try self.preparePrivateStorageForUploadAdmission()
+                    try await self.preparePrivateStorageForUploadAdmission()
                     return Optional<String>.none
                 } catch {
                     return self.describe(error)
@@ -1845,7 +1862,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     }
 
     private func recoverPendingOutboxClearIfNeeded() async -> Bool {
-        try? retryPrivateStoreInitialization()
+        try? await retryPrivateStoreInitialization()
         let rawRecoveryIsRequested = outboxDirectoryURL.map {
             FileOutbox.destructiveRecoveryIsRequested(directory: $0)
         } ?? false
@@ -2363,7 +2380,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             )
         } catch {
             endTerminalTaskUIPublicationSuppression()
-            restorePrivateStorageAdmissionAfterFailedConnectionTransition()
+            await restorePrivateStorageAdmissionAfterFailedConnectionTransition()
             if diagnosePairingCommitBarriers,
                error as? ReceiverConnectionTerminalBarrierError
                 == .backgroundPayloadCancellationNotFinalized {
@@ -2374,7 +2391,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         }
         endTerminalTaskUIPublicationSuppression()
         do {
-            try preparePrivateStorageForUploadAdmission()
+            try await preparePrivateStorageForUploadAdmission()
         } catch {
             privateStorageAdmissionReady = false
             outboxIdentityMigrationReady = false
@@ -2391,14 +2408,14 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         )
     }
 
-    private func restorePrivateStorageAdmissionAfterFailedConnectionTransition() {
+    private func restorePrivateStorageAdmissionAfterFailedConnectionTransition() async {
         do {
             if try pairingCoordinator.hasPendingCancellationRecovery() {
                 privateStorageAdmissionReady = false
                 outboxIdentityMigrationReady = false
                 return
             }
-            try preparePrivateStorageForUploadAdmission()
+            try await preparePrivateStorageForUploadAdmission()
         } catch {
             privateStorageAdmissionReady = false
             outboxIdentityMigrationReady = false
@@ -4247,7 +4264,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         var processedAllPending: Bool?
         do {
             try requireCurrentConnectionGeneration(expectedGeneration)
-            try preparePrivateStorageForUploadAdmission()
+            try await preparePrivateStorageForUploadAdmission()
             processedAllPending = try await processPendingTypes()
             if (trustedPendingOutboxCount() ?? 0) > 0 {
                 if appBuildEffectiveTransport(settingsStore.activeTransport) == .mailbox {
@@ -5532,7 +5549,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         var failureStage = AutomaticSyncDiagnosticFailureStage.store
         do {
             if !privateStorageAdmissionReady {
-                try preparePrivateStorageForUploadAdmission()
+                try await preparePrivateStorageForUploadAdmission()
             }
             guard let sleepManifestStore else {
                 statusIsError = true
@@ -6412,7 +6429,67 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         refreshPendingOutboxCount()
     }
 
-    private func retryPrivateStoreInitialization() throws {
+    /// Runs on a detached task. Opens or reuses the outbox. It reads no settings, so it
+    /// never touches state the main actor can mutate.
+    nonisolated private static func openOutbox(
+        existing: OffMainActorValue<FileOutbox?>,
+        directory: URL?
+    ) throws -> OffMainActorValue<FileOutbox> {
+        if let reused = existing.value {
+            return OffMainActorValue(value: reused)
+        }
+        guard let directory else {
+            throw CompanionPrivateStorageError.outboxUnavailable
+        }
+        return OffMainActorValue(value: try FileOutbox(directory: directory))
+    }
+
+    /// Runs on a detached task after the settings check. Migrates legacy
+    /// receiver identities and verifies outbox admission.
+    nonisolated private static func migrateAndCheckOutboxIdentities(
+        _ snapshot: OutboxOpenSnapshot
+    ) throws {
+        let outboxInstance = snapshot.outbox.value
+        if let bindingID = snapshot.bindingID {
+            _ = try outboxInstance.migrateLegacyHashedReceiverIdentities(
+                currentReceiverURLString: snapshot.receiverURLString,
+                currentBearerToken: snapshot.bearerToken,
+                currentBindingID: bindingID
+            )
+        }
+        guard ReceiverOutboxAdmissionPolicy.isReady(
+            pendingReceiverIdentities: try outboxInstance.pendingItems().map(\.receiverIdentity),
+            currentBindingID: snapshot.bindingID,
+            hasBearerToken: !snapshot.bearerToken.isEmpty
+        ) else {
+            throw ReceiverOutboxIdentityError.unknownReceiverIdentity
+        }
+    }
+
+    /// Coalesces concurrent callers onto one initialization, so two callers can never each
+    /// create an outbox or run the preflight in parallel.
+    private func retryPrivateStoreInitialization() async throws {
+        let generation = settingsStore.receiverSettingsGenerationToken
+        // Loop until no pass is running: a caller that waited on a stale pass must re-check
+        // the slot, so only one fresh pass is ever installed.
+        while let existing = privateStoreInitializationTask {
+            if privateStoreInitializationGeneration == generation {
+                try await existing.value
+                return
+            }
+            // Settings changed since the running pass began: let it finish, then re-check.
+            _ = try? await existing.value
+        }
+        privateStoreInitializationGeneration = generation
+        let task = Task { @MainActor in
+            defer { self.privateStoreInitializationTask = nil }
+            try await self.performPrivateStoreInitialization()
+        }
+        privateStoreInitializationTask = task
+        try await task.value
+    }
+
+    private func performPrivateStoreInitialization() async throws {
         do {
             try settingsStore.ensureAtomicConnectionRecord()
             connectionStateNeedsRecovery = false
@@ -6473,36 +6550,45 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                     fileURL: sleepManifestFileURL
                 )
             }
-            if outbox == nil {
-                guard let outboxDirectoryURL else {
-                    throw CompanionPrivateStorageError.outboxUnavailable
-                }
-                outbox = try FileOutbox(directory: outboxDirectoryURL)
-            }
-            guard let outbox else {
+            // Settings are read on the main actor and captured as values. Only the file work leaves it.
+            let generationBeforeOpen = settingsStore.receiverSettingsGenerationToken
+            let capturedBearerToken = try settingsStore.loadBearerToken()
+            let capturedURLString = settingsStore.receiverURLString
+            let capturedBindingID = settingsStore.receiverBindingID
+            let existing = OffMainActorValue(value: outbox)
+            let directory = outboxDirectoryURL
+            let openedOutbox = try await Task.detached(priority: .utility) {
+                try Self.openOutbox(existing: existing, directory: directory)
+            }.value
+            guard settingsStore.receiverSettingsGenerationToken == generationBeforeOpen else {
                 throw CompanionPrivateStorageError.outboxUnavailable
             }
-            let currentBearerToken = try settingsStore.loadBearerToken()
-            let currentBindingID = settingsStore.receiverBindingID
-            if let currentBindingID {
+            // Main is reentrant across the await: install only if the outbox is still the one we started from.
+            guard outbox === existing.value else {
+                throw CompanionPrivateStorageError.outboxUnavailable
+            }
+            outbox = openedOutbox.value
+            let snapshot = OutboxOpenSnapshot(
+                outbox: openedOutbox,
+                receiverURLString: capturedURLString,
+                bearerToken: capturedBearerToken,
+                bindingID: capturedBindingID
+            )
+            if snapshot.bindingID != nil {
                 guard Self.receiverSettingsAreComplete(
-                    urlString: settingsStore.receiverURLString,
-                    bearerToken: currentBearerToken
+                    urlString: snapshot.receiverURLString,
+                    bearerToken: snapshot.bearerToken
                 ) else {
                     throw KeychainReceiverTokenStoreError.invalidData
                 }
-                _ = try outbox.migrateLegacyHashedReceiverIdentities(
-                    currentReceiverURLString: settingsStore.receiverURLString,
-                    currentBearerToken: currentBearerToken,
-                    currentBindingID: currentBindingID
-                )
             }
-            guard ReceiverOutboxAdmissionPolicy.isReady(
-                pendingReceiverIdentities: try outbox.pendingItems().map(\.receiverIdentity),
-                currentBindingID: currentBindingID,
-                hasBearerToken: !currentBearerToken.isEmpty
-            ) else {
-                throw ReceiverOutboxIdentityError.unknownReceiverIdentity
+            try await Task.detached(priority: .utility) {
+                try Self.migrateAndCheckOutboxIdentities(snapshot)
+            }.value
+            // Settings may have changed while the work was off the main actor. If so, the
+            // snapshot is stale: fail transiently so the next retry re-reads everything.
+            guard settingsStore.receiverSettingsGenerationToken == generationBeforeOpen else {
+                throw CompanionPrivateStorageError.outboxUnavailable
             }
         } catch {
             outboxIdentityMigrationReady = false
@@ -6556,9 +6642,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         return reconciled
     }
 
-    private func preparePrivateStorageForUploadAdmission() throws {
+    private func preparePrivateStorageForUploadAdmission() async throws {
         privateStorageAdmissionReady = false
-        try retryPrivateStoreInitialization()
+        try await retryPrivateStoreInitialization()
         guard let outbox else {
             throw CompanionPrivateStorageError.outboxUnavailable
         }
@@ -6760,6 +6846,16 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                     minimumResetEpoch: minimumResetEpoch,
                     expectedGeneration: expectedGeneration
                 )
+            } catch ReceiverClientError.rateLimited(let retryAfterSeconds) {
+                try requireCurrentConnectionGeneration(expectedGeneration)
+                // Share the deadline with the background scheduler so it does not retry sooner.
+                BackgroundUploadRetryDeadline.note(retryAfterSeconds: retryAfterSeconds, now: Date())
+                outbox.noteDiagnosticDelivery(itemID: item.id, outcome: .failed)
+                failedItemIDs.append(item.id)
+                failedDescriptions.append(
+                    "Your server asked the app to wait \(retryAfterSeconds) seconds before sending more. | domain=ReceiverClientError | code=rate_limited"
+                )
+                break
             } catch {
                 outbox.noteDiagnosticDelivery(itemID: item.id, outcome: .failed)
                 failedItemIDs.append(item.id)
@@ -7128,6 +7224,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 return "Your server's response was too large for the app to read. | domain=ReceiverClientError | code=response_too_large"
             case .sleepBaselineResetEpochConflict(let minimumResetEpoch):
                 return "Your server requires a Sleep reset epoch above \(minimumResetEpoch). | domain=ReceiverClientError | code=sleep_epoch_conflict"
+            case .rateLimited(let retryAfterSeconds):
+                return "Your server asked the app to wait \(retryAfterSeconds) seconds before sending more. | domain=ReceiverClientError | code=rate_limited"
             case .unsuccessfulStatusCode(let statusCode, _):
                 if statusCode == 401 {
                     return "Your server rejected the saved connection key. Reconnect from a fresh setup link. | domain=ReceiverClientError | code=http_401"

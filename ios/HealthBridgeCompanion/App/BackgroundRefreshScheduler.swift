@@ -30,7 +30,8 @@ enum BackgroundRefreshScheduler {
         }
         guard let earliestBeginDate = HealthBridgeBackgroundSync.nextEarliestBeginDate(
             enabled: true,
-            now: now
+            now: now,
+            notBefore: BackgroundUploadRetryDeadline.pending(now: now)
         ) else {
             return
         }

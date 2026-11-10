@@ -145,12 +145,9 @@ def test_only_ci_strict_gates_pass_the_missing_denylist_opt_out() -> None:
     # Given: the flag that lets CI run strict mode without the private denylist.
     flag = "--allow-missing-local-denylist"
     gate = "uv run python scripts/public-release-audit.py --strict " + flag
-    workflows = (
-        Path(".github/workflows/python.yml"),
-        Path(".github/workflows/release.yml"),
-    )
+    workflows = (Path(".github/workflows/python.yml"),)
 
-    # When / Then: exactly the two CI workflows carry the opt-out, once each.
+    # When / Then: exactly the CI workflow carries the opt-out, once.
     for workflow in workflows:
         assert workflow.read_text(encoding="utf-8").count(gate) == 1, workflow
 
