@@ -188,7 +188,7 @@ def test_xcodebuild_output_stays_out_of_the_public_log() -> None:
     for line in text.splitlines():
         stripped = line.strip()
         if "$log" in stripped and not stripped.startswith(
-            ("local ", "if ", "grep -q", "errs=$(grep ")
+            ("local ", "if ", "grep -q", "errs=$(grep ", "codes=$(grep -oE ")
         ):
             assert (
                 stripped.startswith(("quiet ", '"$RUNNER_TEMP'))
@@ -197,6 +197,9 @@ def test_xcodebuild_output_stays_out_of_the_public_log() -> None:
     assert "tail " not in text
     assert "sed -E" not in text
     assert "category:" in text
+    # Only fixed Apple code patterns are printed from the log; never raw lines.
+    assert "ITMS-[0-9]{5,6}" in text
+    assert "xcodebuild: $line" not in text
     cleanup = _steps()[-1]
     assert "archive.log" in str(cleanup["run"])
     assert "export.log" in str(cleanup["run"])
