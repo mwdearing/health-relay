@@ -116,7 +116,8 @@ def test_strict_audit_allows_missing_denylist_only_with_explicit_flag(
     output = capsys.readouterr().out
     assert code == 0
     assert "local_denylist_consulted=false" in output
-    assert "local denylist was NOT consulted" in output
+    assert "private local denylist values were NOT checked" in output
+    assert "built-in patterns ran" in output
     assert "strict_blockers=0" in output
 
 
@@ -174,3 +175,68 @@ def test_release_operator_docs_require_strict_run_with_local_denylist() -> None:
     assert "local denylist" in qa
     assert "scripts/validate-fresh-device-evidence.py" in qa
     assert "component-versions.json" in qa
+
+
+def _tracked_file_with(
+    monkeypatch: pytest.MonkeyPatch, audit: AuditModule, tmp_path: Path, text: str
+) -> None:
+    tracked = tmp_path / "notes.txt"
+    _ = tracked.write_text(text)
+    monkeypatch.setattr(audit, "git_tracked_files", lambda: [tracked])
+
+
+def test_ci_flag_still_runs_builtin_patterns_on_home_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Given: no private denylist and a tracked file with a synthetic home path.
+    audit = _load_audit(monkeypatch, tmp_path / "missing-denylist.local")
+    _tracked_file_with(
+        monkeypatch, audit, tmp_path, "see /" + "Users/synthetic-user/x\n"
+    )
+
+    # When: the CI flag is passed.
+    code = _run_main(monkeypatch, audit, "--strict", "--allow-missing-local-denylist")
+
+    # Then: the built-in pattern still blocks, and no PASS line is printed.
+    output = capsys.readouterr().out
+    assert code == 3
+    assert "private-user-home-path" in output
+    assert "PASS" not in output
+
+
+def test_ci_flag_still_runs_builtin_patterns_on_private_ip(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Given: no private denylist and a tracked file with a synthetic LAN address.
+    audit = _load_audit(monkeypatch, tmp_path / "missing-denylist.local")
+    _tracked_file_with(monkeypatch, audit, tmp_path, "host 192" + ".168.1.50\n")
+
+    # When
+    code = _run_main(monkeypatch, audit, "--strict", "--allow-missing-local-denylist")
+
+    # Then
+    output = capsys.readouterr().out
+    assert code == 3
+    assert "private-rfc1918-address" in output
+
+
+def test_published_support_contact_is_allowlisted_only_in_named_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Given: the published support address in an arbitrary (non-allowlisted) file.
+    audit = _load_audit(monkeypatch, tmp_path / "missing-denylist.local")
+    address = "health-relay-support" + "@technology.mozmail.com"
+    _tracked_file_with(monkeypatch, audit, tmp_path, f"mail {address}\n")
+
+    # When
+    code = _run_main(monkeypatch, audit, "--strict", "--allow-missing-local-denylist")
+
+    # Then: the allowlist is per file, so an unlisted file still fails.
+    assert code == 3
+    assert "account-linked-email" in capsys.readouterr().out
