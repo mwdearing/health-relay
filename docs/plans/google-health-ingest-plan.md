@@ -1,6 +1,6 @@
 # HealthRelay: Google Health ingest and cross-source dedup (plan, v10)
 
-Status, per decision:
+Status, per decision (spec approved for the Google spike only, §3.2; the build waits for the spike result):
 - APPROVED (2026-10-16, Mike): the v10 base plan, the Google spike gate (§3.2), and the §9 decisions dated 2026-10-16 that are not listed as pending below.
 - PENDING CONFIRMATION (not binding for the build until Mike confirms in the PR thread; recommended defaults taken under his 2026-11-09 instruction): echo promotion and alert rules (never promote Apple-origin echoes; 7-day missing-Apple alert; 30-day decision alert); Google allow-list (values from G2); Apple-via-bundle precedence; token scope bound to one account; §9.14 test-account placement; row_status default and gating (step 3 schema only, puller after 017 and the verified allow-list).
 Revision: v10, last revised 2026-11-09. Original approval date 2026-10-16. Supersedes v1 to v9. No code or PR for the build until the Google spike passes (§3.2).
@@ -275,3 +275,8 @@ Still open:
 - The Google Health API may change before "the end of May" (year not stated).
 - Security review of the token-holding puller is done by the team that wrote it until the dedicated reviewer project exists. Accepted gap, pending §9.9.
 - Pixel test coverage is limited to scheduled windows and steps only.
+
+## Spike questions (open, from review; answered by the Google spike before the build)
+1. Echo with no Apple counterpart ever (sync off or Apple row deleted): the current default is that the echo stays excluded after the decision window with no decision. Spike question: how often does this occur in the Apple-off and deleted-row cases, and should the default become promote-with-`unpaired_echo` instead? Until answered, the default stays excluded and the 30-day alert is the only exit.
+2. Whether any Apple-origin echo is ever the only copy of real data (G2/G3 measurements).
+3. Whether the Google puller's cursor state and token rotation work in practice (G5 and the token controls in §6).
