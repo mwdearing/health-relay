@@ -2,7 +2,7 @@
 
 Status, per decision (spec approved for the Google spike only, §3.2; the build waits for the spike result):
 - APPROVED (2026-11-10, Mike, "Confirm" in project chat): the row_status rules (migration 017 sets canonical on existing rows, echo classification gated on G2/G3, unset/false echo rule), the retention rule (overlap copy staged, removed by the staging timer after 10 days), and the unpaired-echo exit (option 1).
-- APPROVED (2026-11-10, Mike, option 1, in project chat; also the overlap copy is deleted the staging timer rule (§2b) after the checks): echoes with no Apple counterpart stay excluded, with a missing-Apple alert at 7 days and a decision alert at 30 days; no automatic promotion.
+- APPROVED (2026-11-10, Mike, option 1, in project chat; also the overlap copy is staged when the checks pass and removed by the staging timer (§2b, 10 days)): echoes with no Apple counterpart stay excluded, with a missing-Apple alert at 7 days and a decision alert at 30 days; no automatic promotion.
 - APPROVED (2026-10-16, Mike): the v10 base plan, the Google spike gate (§3.2), and the §9 decisions dated 2026-10-16 that are not listed as pending below.
 - PENDING CONFIRMATION (not binding for the build until Mike confirms in the PR thread; recommended defaults taken under his 2026-11-09 instruction):  Google allow-list (values from G2); Apple-via-bundle precedence; token scope bound to one account; §9.14 test-account placement; row_status default and gating (step 3 schema only, puller after 017 and the verified allow-list).
 Revision: v10, last revised 2026-11-10 (confirmations recorded). Original approval date 2026-10-16. Supersedes v1 to v9. No code or PR for the build until the Google spike passes (§3.2).
