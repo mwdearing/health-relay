@@ -178,9 +178,7 @@ def test_smoke_non_json_200_is_a_clean_error(
 
     assert result.exit_code == 1
     assert "response is not a receiver batch result" in result.output
-    assert not isinstance(result.exception, Exception) or isinstance(
-        result.exception, SystemExit
-    )
+    assert result.exception is None or isinstance(result.exception, SystemExit)
 
 
 def test_smoke_reads_token_from_stdin(
