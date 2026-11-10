@@ -137,10 +137,16 @@ jobs:
               # Only fixed code patterns are printed (ITMS-nnnnnn and IDE distribution error names). They
               # come from Apple and carry no path, id or token, so nothing else from the file reaches the log.
               local codes
-              codes=$(grep -oE 'ITMS-[0-9]{5,6}|IDEDistribution[A-Za-z]+|ASC[A-Za-z]*Error' "$log" | sort -u | head -10 || true)
-              while IFS= read -r code; do
-                [ -n "$code" ] && echo "::error::xcodebuild code: $code"
-              done <<< "$codes"
+              codes=$(grep -oE 'ITMS-[0-9]{5,6}' "$log" | sort -u | head -10 || true)
+              if [ -n "$codes" ]; then
+                while IFS= read -r code; do
+                  echo "::error::xcodebuild code: $code"
+                done <<< "$codes"
+              fi
+              # Named distribution or App Store Connect errors are reported as a fixed message only.
+              if grep -qE 'IDEDistribution|ASC[A-Za-z]*Error' "$log"; then
+                echo "::error::xcodebuild reports a distribution or App Store Connect error (text not published)"
+              fi
               probe() { if grep -qiE -- "$1" <<< "$errs"; then echo "::error::  category: $2"; fi; }
               probe '\.swift:[0-9]+(:[0-9]+)?: error:' "a Swift compile error"
               probe 'unable to authenticate|authentication credentials|authentication failed|status code:? ?40[13]' "the App Store Connect key was rejected"
@@ -240,10 +246,16 @@ jobs:
               # Only fixed code patterns are printed (ITMS-nnnnnn and IDE distribution error names). They
               # come from Apple and carry no path, id or token, so nothing else from the file reaches the log.
               local codes
-              codes=$(grep -oE 'ITMS-[0-9]{5,6}|IDEDistribution[A-Za-z]+|ASC[A-Za-z]*Error' "$log" | sort -u | head -10 || true)
-              while IFS= read -r code; do
-                [ -n "$code" ] && echo "::error::xcodebuild code: $code"
-              done <<< "$codes"
+              codes=$(grep -oE 'ITMS-[0-9]{5,6}' "$log" | sort -u | head -10 || true)
+              if [ -n "$codes" ]; then
+                while IFS= read -r code; do
+                  echo "::error::xcodebuild code: $code"
+                done <<< "$codes"
+              fi
+              # Named distribution or App Store Connect errors are reported as a fixed message only.
+              if grep -qE 'IDEDistribution|ASC[A-Za-z]*Error' "$log"; then
+                echo "::error::xcodebuild reports a distribution or App Store Connect error (text not published)"
+              fi
               probe() { if grep -qiE -- "$1" <<< "$errs"; then echo "::error::  category: $2"; fi; }
               probe '\.swift:[0-9]+(:[0-9]+)?: error:' "a Swift compile error"
               probe 'unable to authenticate|authentication credentials|authentication failed|status code:? ?40[13]' "the App Store Connect key was rejected"

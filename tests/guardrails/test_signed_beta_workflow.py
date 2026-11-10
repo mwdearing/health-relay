@@ -200,6 +200,7 @@ def test_xcodebuild_output_stays_out_of_the_public_log() -> None:
     # Only fixed Apple code patterns are printed from the log; never raw lines.
     assert "ITMS-[0-9]{5,6}" in text
     assert "xcodebuild: $line" not in text
+    assert "xcodebuild reports a distribution" in text
     cleanup = _steps()[-1]
     assert "archive.log" in str(cleanup["run"])
     assert "export.log" in str(cleanup["run"])
