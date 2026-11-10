@@ -277,6 +277,6 @@ Still open:
 - Pixel test coverage is limited to scheduled windows and steps only.
 
 ## Spike questions (open, from review; answered by the Google spike before the build)
-1. Echo with no Apple counterpart ever (sync off or Apple row deleted): the current default is that the echo stays excluded after the decision window with no decision. Spike question: how often does this occur in the Apple-off and deleted-row cases, and should the default become promote-with-`unpaired_echo` instead? Until answered, the default stays excluded and the 30-day alert is the only exit.
+1. Echo with no Apple counterpart ever (sync off or Apple row deleted): the current default is that the echo stays excluded after the decision window with no decision. Spike question: how often does this occur in the Apple-off and deleted-row cases, and should the default become promote-with-`unpaired_echo` instead? Until answered, the default stays excluded and the 30-day alert is the only exit; no option promotes an echo automatically.
 2. Whether any Apple-origin echo is ever the only copy of real data (G2/G3 measurements).
 3. Whether the Google puller's cursor state and token rotation work in practice (G5 and the token controls in §6).
