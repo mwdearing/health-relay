@@ -341,12 +341,12 @@ INVOCATION_HEADER = """\
 Command line invocation:
     /usr/bin/xcodebuild archive -project X.xcodeproj -allowProvisioningUpdates \
         -authenticationKeyPath /tmp/asc/AuthKey.p8 -authenticationKeyID KEYID00000 \
-        DEVELOPMENT_TEAM=team-id-placeholder MARKETING_VERSION=1.2.2 CURRENT_PROJECT_VERSION=140
+        DEVELOPMENT_TEAM=tid MARKETING_VERSION=1.2.2 CURRENT_PROJECT_VERSION=140
 
 Build settings from command line:
     CODE_SIGN_STYLE = Automatic
     CURRENT_PROJECT_VERSION = 140
-    DEVELOPMENT_TEAM = team-id-placeholder
+    DEVELOPMENT_TEAM = tid
     MARKETING_VERSION = 1.2.2
     PRODUCT_BUNDLE_IDENTIFIER = com.example.fixture
 
