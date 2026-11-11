@@ -136,6 +136,7 @@
       ],
       "properties": {
         "result": { "enum": ["committed", "retryable", "terminal"] },
+        "minimum_reset_epoch": { "$ref": "#/$defs/nonnegative_i64" },
         "payload_sha256": { "$ref": "#/$defs/sha256" },
         "receipt_id": {
           "oneOf": [{ "$ref": "#/$defs/nonnegative_i64" }, { "type": "null" }]
@@ -159,7 +160,8 @@
             "principal_mismatch",
             "binding_mismatch",
             "generation_mismatch",
-            "key_revoked"
+            "key_revoked",
+            "sleep_baseline_reset_epoch_stale"
           ]
         }
       },
@@ -170,7 +172,8 @@
             "receipt_id": { "$ref": "#/$defs/nonnegative_i64" },
             "dataset_generation": { "$ref": "#/$defs/nonnegative_i64" },
             "committed_at_ms": { "$ref": "#/$defs/nonnegative_i64" },
-            "error_code": { "type": "null" }
+            "error_code": { "type": "null" },
+            "minimum_reset_epoch": false
           }
         },
         {
@@ -186,7 +189,8 @@
                 "quota_exceeded",
                 "internal_retry"
               ]
-            }
+            },
+            "minimum_reset_epoch": false
           }
         },
         {
@@ -205,8 +209,19 @@
                 "generation_mismatch",
                 "key_revoked"
               ]
-            }
+            },
+            "minimum_reset_epoch": false
           }
+        },
+        {
+          "properties": {
+            "result": { "const": "terminal" },
+            "receipt_id": { "type": "null" },
+            "dataset_generation": { "type": "null" },
+            "committed_at_ms": { "type": "null" },
+            "error_code": { "const": "sleep_baseline_reset_epoch_stale" }
+          },
+          "required": ["minimum_reset_epoch"]
         }
       ]
     }

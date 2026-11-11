@@ -168,7 +168,12 @@ def _parse_ack(encoded: bytes) -> dict[str, JsonValue]:
 
 def _parse_receipt(plaintext: bytes) -> DeliveryReceiptV1:
     try:
-        raw = require_object(hbjcs1_decode(plaintext), _RECEIPT_FIELDS)
+        decoded = hbjcs1_decode(plaintext)
+        has_floor = isinstance(decoded, dict) and "minimum_reset_epoch" in decoded
+        raw = require_object(
+            decoded,
+            _RECEIPT_FIELDS | {"minimum_reset_epoch"} if has_floor else _RECEIPT_FIELDS,
+        )
         return DeliveryReceiptV1(
             result=require_string(raw, "result"),
             payload_sha256=require_string(raw, "payload_sha256"),
@@ -176,6 +181,9 @@ def _parse_receipt(plaintext: bytes) -> DeliveryReceiptV1:
             dataset_generation=_optional_integer(raw, "dataset_generation"),
             committed_at_ms=_optional_integer(raw, "committed_at_ms"),
             error_code=_optional_string(raw, "error_code"),
+            minimum_reset_epoch=(
+                _optional_integer(raw, "minimum_reset_epoch") if has_floor else None
+            ),
         )
     except HBJCS1Error:
         fail("authentication_failed")

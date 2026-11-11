@@ -17,6 +17,7 @@ extension DeliveryProtocolV1 {
         let encoded = "{\"committed_at_ms\":\(optionalInteger(receipt.committedAtMS)),"
             + "\"dataset_generation\":\(optionalInteger(receipt.datasetGeneration)),"
             + "\"error_code\":\(error),"
+            + (receipt.minimumResetEpoch.map { "\"minimum_reset_epoch\":\($0)," } ?? "")
             + "\"payload_sha256\":\"\(receipt.payloadSHA256)\","
             + "\"receipt_id\":\(optionalInteger(receipt.receiptID)),"
             + "\"result\":\"\(receipt.result.rawValue)\"}"
@@ -144,6 +145,12 @@ extension DeliveryProtocolV1 {
             throw DeliveryProtocolV1Error.authenticationFailed
         }
         let values = [receipt.receiptID, receipt.datasetGeneration, receipt.committedAtMS]
+        // The epoch floor travels with the stale-epoch code and with nothing else.
+        guard (receipt.errorCode == .sleepBaselineResetEpochStale)
+            == (receipt.minimumResetEpoch != nil),
+            receipt.minimumResetEpoch.map({ $0 >= 0 }) ?? true else {
+            throw DeliveryProtocolV1Error.authenticationFailed
+        }
         switch receipt.result {
         case .committed:
             guard receipt.errorCode == nil,
@@ -164,17 +171,26 @@ extension DeliveryProtocolV1 {
     }
 
     private static func decodeReceipt(_ plaintext: Data) throws -> DeliveryReceiptV1 {
-        let fields = try object(plaintext, fields: receiptFields, limit: maxAckBytes)
+        var expectedFields = receiptFields
+        if case let .object(candidate) = try decodeMetadata(plaintext),
+           candidate["minimum_reset_epoch"] != nil {
+            expectedFields.insert("minimum_reset_epoch")
+        }
+        let fields = try object(plaintext, fields: expectedFields, limit: maxAckBytes)
         guard let result = DeliveryReceiptV1.Result(rawValue: try string(fields, "result")) else {
             throw DeliveryProtocolV1Error.authenticationFailed
         }
+        let minimumResetEpoch: Int64? = fields["minimum_reset_epoch"] == nil
+            ? nil
+            : try optionalInteger(fields["minimum_reset_epoch"])
         let receipt = DeliveryReceiptV1(
             result: result,
             payloadSHA256: try string(fields, "payload_sha256"),
             receiptID: try optionalInteger(fields["receipt_id"]),
             datasetGeneration: try optionalInteger(fields["dataset_generation"]),
             committedAtMS: try optionalInteger(fields["committed_at_ms"]),
-            errorCode: try optionalError(fields["error_code"])
+            errorCode: try optionalError(fields["error_code"]),
+            minimumResetEpoch: minimumResetEpoch
         )
         try validateReceipt(receipt)
         return receipt

@@ -136,6 +136,7 @@ public struct DeliveryReceiptV1: Equatable, Sendable {
         case bindingMismatch = "binding_mismatch"
         case generationMismatch = "generation_mismatch"
         case keyRevoked = "key_revoked"
+        case sleepBaselineResetEpochStale = "sleep_baseline_reset_epoch_stale"
     }
 
     public let result: Result
@@ -144,6 +145,8 @@ public struct DeliveryReceiptV1: Equatable, Sendable {
     public let datasetGeneration: Int64?
     public let committedAtMS: Int64?
     public let errorCode: ErrorCode?
+    /// Receiver's stored Sleep reset epoch. Present only with `.sleepBaselineResetEpochStale`.
+    public let minimumResetEpoch: Int64?
 
     public init(
         result: Result,
@@ -151,7 +154,8 @@ public struct DeliveryReceiptV1: Equatable, Sendable {
         receiptID: Int64?,
         datasetGeneration: Int64?,
         committedAtMS: Int64?,
-        errorCode: ErrorCode?
+        errorCode: ErrorCode?,
+        minimumResetEpoch: Int64? = nil
     ) {
         self.result = result
         self.payloadSHA256 = payloadSHA256
@@ -159,6 +163,7 @@ public struct DeliveryReceiptV1: Equatable, Sendable {
         self.datasetGeneration = datasetGeneration
         self.committedAtMS = committedAtMS
         self.errorCode = errorCode
+        self.minimumResetEpoch = minimumResetEpoch
     }
 
     public var encodedMetadata: Data { DeliveryProtocolV1.encodeReceipt(self) }

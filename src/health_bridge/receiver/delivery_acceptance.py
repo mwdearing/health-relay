@@ -129,8 +129,8 @@ class DeliveryAcceptanceService:
                 else "payload_invalid"
             )
             return self._terminal(claims, code)
-        except (sqlite3.Error, OSError, StaleOrderedSleepBaselineResetError):
-            return self._retryable(claims)
+        except (sqlite3.Error, OSError) as exc:
+            return self._storage_failure(claims, exc)
         self._fault(fault_hook, DeliveryAcceptanceFaultPoint.AFTER_COMMIT)
         return self._publish(receipt, claims, replayed=False, fault_hook=fault_hook)
 
@@ -207,6 +207,37 @@ class DeliveryAcceptanceService:
             dataset_generation=None,
             committed_at_ms=None,
             error_code=code,
+        )
+        return DeliveryAcceptanceResult(
+            ack_bytes=seal_receipt(receipt, claims, self._connection),
+            receipt=receipt,
+            replayed=False,
+        )
+
+    def _storage_failure(
+        self,
+        claims: DeliveryEnvelopeClaims,
+        error: sqlite3.Error | OSError,
+    ) -> DeliveryAcceptanceResult:
+        # A stale reset epoch is deterministic: retrying the same bytes can never
+        # succeed, so it gets a final receipt instead of a retryable one.
+        if isinstance(error, StaleOrderedSleepBaselineResetError):
+            return self._sleep_baseline_stale(claims, error.current_epoch)
+        return self._retryable(claims)
+
+    def _sleep_baseline_stale(
+        self,
+        claims: DeliveryEnvelopeClaims,
+        minimum_reset_epoch: int,
+    ) -> DeliveryAcceptanceResult:
+        receipt = DeliveryReceiptV1(
+            result="terminal",
+            payload_sha256=claims.payload_sha256.hex(),
+            receipt_id=None,
+            dataset_generation=None,
+            committed_at_ms=None,
+            error_code="sleep_baseline_reset_epoch_stale",
+            minimum_reset_epoch=minimum_reset_epoch,
         )
         return DeliveryAcceptanceResult(
             ack_bytes=seal_receipt(receipt, claims, self._connection),
