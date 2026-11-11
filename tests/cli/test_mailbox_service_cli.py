@@ -16,8 +16,11 @@ import health_bridge.cli_receiver as cli_receiver_module
 from health_bridge.cli import app
 from health_bridge.launchd import (
     LaunchctlAdapter,
+    LaunchdServiceCode,
     LaunchdServiceError,
     LaunchdServiceErrorCode,
+    LaunchdServiceRequest,
+    LaunchdServiceResult,
     write_launch_agent_artifacts,
 )
 from health_bridge.launchd.adapters import LaunchctlResult
@@ -115,6 +118,97 @@ def test_validate_is_linux_safe_and_does_not_install(tmp_path: Path) -> None:
     assert json.loads(result.stdout) == {"code": "valid"}
     assert not (home / "Library/LaunchAgents").exists()
     assert not (home / "Library/Application Support/HealthBridge/launchd").exists()
+
+
+def _symlink_executable(args: list[str], home: Path) -> Path:
+    index = args.index("--executable") + 1
+    target = Path(args[index])
+    link = home / "local-bin/health-bridge"
+    link.parent.mkdir(mode=0o700)
+    link.symlink_to(target)
+    args[index] = str(link)
+    return target
+
+
+def test_validate_accepts_uv_tool_style_executable_symlink(tmp_path: Path) -> None:
+    args, home, _database = _service_args(tmp_path)
+    _ = _symlink_executable(args, home)
+
+    result = CliRunner().invoke(
+        app,
+        ["mailbox", "service", "validate", *args, "--json"],
+        env={"HOME": str(home)},
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert json.loads(result.stdout) == {"code": "valid"}
+
+
+def test_validate_still_refuses_symlink_to_unsafe_executable(tmp_path: Path) -> None:
+    args, home, _database = _service_args(tmp_path)
+    target = _symlink_executable(args, home)
+    target.chmod(0o777)
+
+    result = CliRunner().invoke(
+        app,
+        ["mailbox", "service", "validate", *args, "--json"],
+        env={"HOME": str(home)},
+    )
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout) == {
+        "code": "unsafe_permissions",
+        "field": "executable",
+        "reason": "group_or_world_access",
+    }
+    assert str(home) not in result.output
+
+
+def test_validate_names_failing_input_in_human_message(tmp_path: Path) -> None:
+    args, home, database = _service_args(tmp_path)
+    database.chmod(0o644)
+
+    result = CliRunner().invoke(
+        app,
+        ["mailbox", "service", "validate", *args],
+        env={"HOME": str(home)},
+    )
+
+    assert result.exit_code == 1
+    assert "(db: group_or_world_access)" in result.stderr
+    assert str(home) not in result.output
+
+
+def test_install_passes_resolved_executable_to_launch_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args, home, _database = _service_args(tmp_path)
+    target = _symlink_executable(args, home)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    seen: list[Path] = []
+
+    def record_install(
+        request: LaunchdServiceRequest, _launchctl: object
+    ) -> LaunchdServiceResult:
+        seen.append(request.executable)
+        return LaunchdServiceResult(code=LaunchdServiceCode.INSTALLED)
+
+    monkeypatch.setattr(cli_launchd_module, "install_launch_agent", record_install)
+
+    def ready_helper_status(**_kwargs: object) -> HelperResult:
+        return HelperResult(code=HelperStatusCode.READY)
+
+    monkeypatch.setattr(cli_launchd_module, "read_helper_status", ready_helper_status)
+
+    result = CliRunner().invoke(
+        app,
+        ["mailbox", "service", "install", *args, "--json"],
+        env={"HOME": str(home)},
+    )
+
+    assert result.exit_code == 0, (result.output, result.exception)
+    assert seen == [target.resolve()]
 
 
 def test_install_fails_closed_on_linux_without_side_effects(

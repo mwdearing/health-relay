@@ -110,10 +110,20 @@ Complete mailbox setup first. You need these existing paths:
 - the private receiver SQLite database;
 - the selected iCloud container's `HealthBridgeMailbox/v1` directory.
 
-The executable, database, mailbox directory, and their parent directories must
-not use symlink traversal or group/world-writable permissions. The database and
+The database, mailbox directory, and their parent directories must not use
+symlink traversal or group/world-accessible permissions. The database and
 mailbox must belong to the current user. Validation fails closed without
 repairing or replacing unsafe paths.
+
+`uv tool install` places a symlink to the executable in `~/.local/bin`. The
+service commands resolve the `--executable` symlink once, validate the real
+file it points to, and record the resolved path in the LaunchAgent, so
+`"$(command -v health-bridge)"` works as given. The resolved file and its
+parent directories must still meet the same ownership and permission rules.
+
+When validation fails, the message names the rejected input and the failed
+check, for example `(db: group_or_world_access)`. With `--json` the output also
+carries `field` and `reason`. Neither includes a path.
 
 Validate the inputs without installing or starting anything:
 
@@ -211,10 +221,12 @@ Status returns one fixed code:
 Only `running_healthy` exits with status 0. Other status states exit 1 so scripts
 cannot mistake degraded or drifted supervision for a healthy receiver.
 
-With `--json`, successful results, status results, and lifecycle errors all use
-the single object shape `{"code": "fixed_code"}` on standard output. Errors exit
-nonzero and do not add path-bearing diagnostics or raw launchctl output. Without
-`--json`, failures use a fixed privacy-safe message on standard error.
+With `--json`, lifecycle errors are a `{"code": "fixed_code"}` object on
+standard output. Input validation errors also carry `field` and `reason`
+members that name the rejected input and the failed check. Errors exit nonzero
+and do not add path-bearing diagnostics or raw launchctl output. Without
+`--json`, failures use a fixed privacy-safe message on standard error, with a
+`(field: reason)` suffix for validation errors.
 
 Request one bounded restart and recovery sequence with:
 
