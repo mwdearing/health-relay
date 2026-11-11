@@ -219,7 +219,7 @@ def build_dev_device_session_manifest(
     try:
         write_private_text_file(
             request.setup_page_path,
-            render_pairing_setup_page(bundle, deep_link),
+            render_pairing_setup_page(bundle, deep_link, request.db_path),
         )
     except OSError as exc:
         revoke_pairing_invitation(request.db_path, bundle.invitation_id)
