@@ -16,7 +16,7 @@ on:
         required: false
         default: Release
       marketing_version:
-        description: Marketing version to stamp; empty = 1.2.<workflow run number> (build number = run number too)
+        description: Marketing version to stamp; empty = the version recorded in component-versions.json (the build number is the workflow run number)
         required: false
         default: ""
 
@@ -52,7 +52,9 @@ jobs:
         run: |
           set -euo pipefail
           BUILD_DIR="$RUNNER_TEMP/build"
-          MARKETING_VERSION="${MARKETING_VERSION:-1.2.$GITHUB_RUN_NUMBER}"
+          if [[ -z "$MARKETING_VERSION" ]]; then
+            MARKETING_VERSION=$(python3 -c "import json; print(json.load(open('../../component-versions.json'))['ios_companion']['marketing_version'])")
+          fi
           echo "Stamping version $MARKETING_VERSION build $GITHUB_RUN_NUMBER"
           xcodebuild -project HealthBridgeCompanion.xcodeproj \
             -target HealthBridgeCompanion \

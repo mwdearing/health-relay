@@ -1,4 +1,5 @@
 import sqlite3
+import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -155,6 +156,34 @@ def initialize_database(db_path: Path) -> None:
             _apply_pre_receipt_migrations(connection, db_path)
         _apply_migration(connection, DELIVERY_RECEIPT_MIGRATION_ID, db_path)
         _apply_post_receipt_migrations(connection, db_path)
+
+
+_INITIALIZED_DATABASES: dict[str, tuple[int, int]] = {}
+_INITIALIZED_DATABASES_LOCK: Final = threading.Lock()
+
+
+def ensure_database_initialized(db_path: Path) -> None:
+    """Run ``initialize_database`` once per process for each database file.
+
+    The key is the file's device and inode, so a file that is unlinked and
+    recreated is initialized again. Request-time auth calls take the lock-free
+    fast path. Limit: a file overwritten in place (same inode, e.g. a restore
+    that copies over it) is not re-checked until the process restarts, and a
+    restore should restart the receiver anyway.
+    """
+    key = str(db_path.resolve())
+    try:
+        stat_result = db_path.stat()
+    except FileNotFoundError:
+        stat_result = None
+    if stat_result is not None:
+        identity = (stat_result.st_dev, stat_result.st_ino)
+        if _INITIALIZED_DATABASES.get(key) == identity:
+            return
+    with _INITIALIZED_DATABASES_LOCK:
+        initialize_database(db_path)
+        stat_result = db_path.stat()
+        _INITIALIZED_DATABASES[key] = (stat_result.st_dev, stat_result.st_ino)
 
 
 def _apply_pre_receipt_migrations(
