@@ -195,9 +195,9 @@ public final class HealthKitMedicationDoseEventReader: @unchecked Sendable {
         let namesByConceptKey: [String: String]
         let nameLookupFailed: Bool
         if anchor != nil {
-            // Names only map added samples. A failed lookup must not block deletion
-            // tombstones, so the read continues; added samples are refused below rather
-            // than uploaded with placeholder names.
+            // Names map added samples only. A failed lookup refuses a read that has added
+            // samples (the anchor does not advance, so nothing is lost), and never uploads
+            // a placeholder name. A read with only deletions still delivers.
             if let names = try? await medicationNamesByConceptKey() {
                 namesByConceptKey = names
                 nameLookupFailed = false
@@ -227,9 +227,17 @@ public final class HealthKitMedicationDoseEventReader: @unchecked Sendable {
                 do {
                     let cursorValue = try HealthKitAnchorCursorCodec.encode(newAnchor)
                     let rawAdded = (addedSamples as? [HKMedicationDoseEvent]) ?? []
-                    if anchor != nil, nameLookupFailed, !rawAdded.isEmpty {
-                        completion(.failure(HealthKitMedicationDoseEventReaderError.nameLookupUnavailable))
-                        return
+                    // A name is needed for every added event. If the lookup failed, or
+                    // the concept is missing from the names, refuse the whole read: the
+                    // anchor stays put, so the deletions in it are retried, not lost.
+                    if anchor != nil, !rawAdded.isEmpty {
+                        let unnamed = rawAdded.contains { event in
+                            nameLookupFailed || namesByConceptKey[conceptKey(event.medicationConceptIdentifier)] == nil
+                        }
+                        if unnamed {
+                            completion(.failure(HealthKitMedicationDoseEventReaderError.nameLookupUnavailable))
+                            return
+                        }
                     }
                     let uuids = anchor == nil ? [] : (deletedObjects ?? []).map(\.uuid)
                     let added = anchor == nil
