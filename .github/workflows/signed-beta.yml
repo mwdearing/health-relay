@@ -131,9 +131,22 @@ jobs:
               # is printed, chosen by searching the file, so nothing from the file can reach the log.
               # xcodebuild echoes its command line and build settings (key path, team, version) at the top of the
               # log, so only its own error lines are searched, never the header.
-              echo "::error::$name failed. The xcodebuild output is not published."
+              echo "::error::$name failed. Only fixed Apple error codes and categories are published."
               local errs
               errs=$(grep -iE '(^|[^[:alnum:]_])error:' "$log" || true)
+              # Only fixed code patterns are printed (ITMS-nnnnnn and IDE distribution error names). They
+              # come from Apple and carry no path, id or token, so nothing else from the file reaches the log.
+              local codes
+              codes=$(grep -oE 'ITMS-[0-9]{5,6}' "$log" | sort -u | head -10 || true)
+              if [ -n "$codes" ]; then
+                while IFS= read -r code; do
+                  echo "::error::xcodebuild code: $code"
+                done <<< "$codes"
+              fi
+              # Named distribution or App Store Connect errors are reported as a fixed message only.
+              if grep -qE 'IDEDistribution|ASC[A-Za-z]*Error' <<< "$errs"; then
+                echo "::error::xcodebuild reports a distribution or App Store Connect error (text not published)"
+              fi
               probe() { if grep -qiE -- "$1" <<< "$errs"; then echo "::error::  category: $2"; fi; }
               probe '\.swift:[0-9]+(:[0-9]+)?: error:' "a Swift compile error"
               probe 'unable to authenticate|authentication credentials|authentication failed|status code:? ?40[13]' "the App Store Connect key was rejected"
@@ -227,9 +240,22 @@ jobs:
               # is printed, chosen by searching the file, so nothing from the file can reach the log.
               # xcodebuild echoes its command line and build settings (key path, team, version) at the top of the
               # log, so only its own error lines are searched, never the header.
-              echo "::error::$name failed. The xcodebuild output is not published."
+              echo "::error::$name failed. Only fixed Apple error codes and categories are published."
               local errs
               errs=$(grep -iE '(^|[^[:alnum:]_])error:' "$log" || true)
+              # Only fixed code patterns are printed (ITMS-nnnnnn and IDE distribution error names). They
+              # come from Apple and carry no path, id or token, so nothing else from the file reaches the log.
+              local codes
+              codes=$(grep -oE 'ITMS-[0-9]{5,6}' "$log" | sort -u | head -10 || true)
+              if [ -n "$codes" ]; then
+                while IFS= read -r code; do
+                  echo "::error::xcodebuild code: $code"
+                done <<< "$codes"
+              fi
+              # Named distribution or App Store Connect errors are reported as a fixed message only.
+              if grep -qE 'IDEDistribution|ASC[A-Za-z]*Error' <<< "$errs"; then
+                echo "::error::xcodebuild reports a distribution or App Store Connect error (text not published)"
+              fi
               probe() { if grep -qiE -- "$1" <<< "$errs"; then echo "::error::  category: $2"; fi; }
               probe '\.swift:[0-9]+(:[0-9]+)?: error:' "a Swift compile error"
               probe 'unable to authenticate|authentication credentials|authentication failed|status code:? ?40[13]' "the App Store Connect key was rejected"

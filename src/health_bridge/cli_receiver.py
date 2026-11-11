@@ -167,6 +167,13 @@ INTAKE_SETUP_ROTATE_UNIDENTIFIABLE_MESSAGE: Final = (
     "with receiver intake-revoke-token after receiver intake-list-tokens, then "
     "re-run, or move the file aside."
 )
+INTAKE_SETUP_ROTATE_OWNER_MISMATCH_MESSAGE: Final = (
+    "Refusing to rotate the intake secret file {path}: it holds a token for "
+    "owner {held_owner} / producer {held_producer}, not owner {owner} / "
+    "producer {producer}, so rotating would revoke another producer's "
+    "credential; nothing was changed. Point --output-secret at this "
+    "producer's own file, or run with the owner and producer that file belongs to."
+)
 INTAKE_SETUP_URL_PLACEHOLDER: Final = "<receiver URL>"
 INTAKE_SETUP_URL_MESSAGE: Final = (
     "Refusing to continue setup with an unusable --url ({reason}); give the http "
@@ -1751,7 +1758,14 @@ def intake_setup(  # noqa: PLR0913 -- Typer exposes independent setup options.
         # rotation that cannot revoke what it replaces would leave that credential
         # usable.
         replaced_prefix = (
-            _rotation_prefix_or_exit(db, output_secret) if rotate else None
+            _rotation_prefix_or_exit(
+                db,
+                output_secret,
+                owner_id=owner_id,
+                producer_id=producer_id,
+            )
+            if rotate
+            else None
         )
 
         # Claimed exclusively, not merely checked, so a second run that starts
@@ -1869,39 +1883,70 @@ def _release_rotation_lock(output_secret: Path) -> None:
         )
 
 
-def _rotation_prefix_or_exit(db: Path, output_secret: Path) -> str | None:
+def _rotation_prefix_or_exit(
+    db: Path,
+    output_secret: Path,
+    *,
+    owner_id: str,
+    producer_id: str,
+) -> str | None:
     """The prefix ``--rotate`` must retire, refusing when it cannot be recovered.
 
     A missing file has nothing to rotate, so a fresh token is simply issued. An
     existing file whose prefix cannot be read, or whose prefix names no token
     this receiver knows, is refused: the write would destroy the only record of
-    a credential the rotation promised to revoke.
+    a credential the rotation promised to revoke. A token that belongs to a
+    different owner or producer than this run is refused too, because revoking
+    it would retire another producer's only working credential.
     """
     if not output_secret.exists():
         return None
     prefix = _existing_secret_token_prefix(output_secret)
-    if prefix is None or not _intake_token_prefix_is_known(db, prefix):
+    held = None if prefix is None else _known_intake_token(db, prefix)
+    if held is None:
         typer.echo(
             INTAKE_SETUP_ROTATE_UNIDENTIFIABLE_MESSAGE.format(path=output_secret),
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    # The file's own claim is a cheap cross-check; the stored row is the record
+    # that decides, since the file can be edited or copied.
+    file_owner, file_producer = _existing_secret_identity(output_secret)
+    if (
+        (held.owner_id, held.producer_id) != (owner_id, producer_id)
+        or file_owner not in (None, owner_id)
+        or file_producer not in (None, producer_id)
+    ):
+        typer.echo(
+            INTAKE_SETUP_ROTATE_OWNER_MISMATCH_MESSAGE.format(
+                path=output_secret,
+                held_owner=held.owner_id,
+                held_producer=held.producer_id,
+                owner=owner_id,
+                producer=producer_id,
+            ),
             err=True,
         )
         raise typer.Exit(code=1)
     return prefix
 
 
-def _intake_token_prefix_is_known(db: Path, prefix: str) -> bool:
-    """True when the prefix has the intake shape and is a token this store holds.
+def _known_intake_token(db: Path, prefix: str) -> IntakeTokenRecord | None:
+    """The stored row for an intake-shaped prefix, or None when there is none.
 
     A read-only listing decides it, so checking a rotation's old token creates
     nothing and revokes nothing. An unreadable store is treated as unknown,
     which refuses the rotation rather than guessing.
     """
     if not prefix.startswith(INTAKE_TOKEN_PREFIX):
-        return False
+        return None
     try:
-        return prefix in {token.token_prefix for token in _read_intake_tokens(db)}
+        for token in _read_intake_tokens(db):
+            if token.token_prefix == prefix:
+                return token
     except (sqlite3.Error, OSError, _MissingIntakeTablesError):
-        return False
+        return None
+    return None
 
 
 def _reserve_secret_output_path(output_secret: Path) -> bool:
@@ -2163,6 +2208,20 @@ def _existing_secret_token_prefix(output_secret: Path) -> str | None:
     document = _intake_json_object(text.encode("utf-8"))
     prefix = None if document is None else document.get("token_prefix")
     return prefix if isinstance(prefix, str) and prefix != "" else None
+
+
+def _existing_secret_identity(output_secret: Path) -> tuple[str | None, str | None]:
+    """The owner and producer ids the secret file claims, None when absent."""
+    text = _existing_secret_text(output_secret)
+    document = None if text is None else _intake_json_object(text.encode("utf-8"))
+    if document is None:
+        return None, None
+    owner = document.get("owner_id")
+    producer = document.get("producer_id")
+    return (
+        owner if isinstance(owner, str) else None,
+        producer if isinstance(producer, str) else None,
+    )
 
 
 def _revoke_replaced_intake_token(
