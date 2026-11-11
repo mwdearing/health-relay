@@ -45,6 +45,7 @@ public enum HealthKitMedicationDoseEventReaderError: Error, Equatable {
     case invalidWindow
     case perObjectAuthorizationDeclined
     case anchorUnavailable
+    case nameLookupUnavailable
 }
 
 /// Dose events the user deleted or added since the stored anchor, plus the anchor to store once
@@ -192,12 +193,21 @@ public final class HealthKitMedicationDoseEventReader: @unchecked Sendable {
         // Names are only needed to map added samples, which are ignored without a stored anchor.
         // A `let`, because the query's result handler is a concurrently executing closure.
         let namesByConceptKey: [String: String]
+        let nameLookupFailed: Bool
         if anchor != nil {
             // Names only map added samples. A failed lookup must not block deletion
-            // tombstones, so it falls back to no names instead of failing the read.
-            namesByConceptKey = (try? await medicationNamesByConceptKey()) ?? [:]
+            // tombstones, so the read continues; added samples are refused below rather
+            // than uploaded with placeholder names.
+            if let names = try? await medicationNamesByConceptKey() {
+                namesByConceptKey = names
+                nameLookupFailed = false
+            } else {
+                namesByConceptKey = [:]
+                nameLookupFailed = true
+            }
         } else {
             namesByConceptKey = [:]
+            nameLookupFailed = false
         }
         return try await executeCancellableHealthKitQuery(healthStore: healthStore) { completion in
             let query = HKAnchoredObjectQuery(
@@ -216,6 +226,11 @@ public final class HealthKitMedicationDoseEventReader: @unchecked Sendable {
                 }
                 do {
                     let cursorValue = try HealthKitAnchorCursorCodec.encode(newAnchor)
+                    let rawAdded = (addedSamples as? [HKMedicationDoseEvent]) ?? []
+                    if anchor != nil, nameLookupFailed, !rawAdded.isEmpty {
+                        completion(.failure(HealthKitMedicationDoseEventReaderError.nameLookupUnavailable))
+                        return
+                    }
                     let uuids = anchor == nil ? [] : (deletedObjects ?? []).map(\.uuid)
                     let added = anchor == nil
                         ? []
