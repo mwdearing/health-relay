@@ -144,7 +144,7 @@ jobs:
                 done <<< "$codes"
               fi
               # Named distribution or App Store Connect errors are reported as a fixed message only.
-              if grep -qE 'IDEDistribution|ASC[A-Za-z]*Error' "$log"; then
+              if grep -qE 'IDEDistribution|ASC[A-Za-z]*Error' <<< "$errs"; then
                 echo "::error::xcodebuild reports a distribution or App Store Connect error (text not published)"
               fi
               probe() { if grep -qiE -- "$1" <<< "$errs"; then echo "::error::  category: $2"; fi; }
@@ -253,7 +253,7 @@ jobs:
                 done <<< "$codes"
               fi
               # Named distribution or App Store Connect errors are reported as a fixed message only.
-              if grep -qE 'IDEDistribution|ASC[A-Za-z]*Error' "$log"; then
+              if grep -qE 'IDEDistribution|ASC[A-Za-z]*Error' <<< "$errs"; then
                 echo "::error::xcodebuild reports a distribution or App Store Connect error (text not published)"
               fi
               probe() { if grep -qiE -- "$1" <<< "$errs"; then echo "::error::  category: $2"; fi; }
