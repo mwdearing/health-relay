@@ -198,10 +198,12 @@ public final class HealthKitMedicationDoseEventReader: @unchecked Sendable {
             // Names map added samples only. A failed lookup refuses a read that has added
             // samples (the anchor does not advance, so nothing is lost), and never uploads
             // a placeholder name. A read with only deletions still delivers.
-            if let names = try? await medicationNamesByConceptKey() {
-                namesByConceptKey = names
+            do {
+                namesByConceptKey = try await medicationNamesByConceptKey()
                 nameLookupFailed = false
-            } else {
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
                 namesByConceptKey = [:]
                 nameLookupFailed = true
             }
