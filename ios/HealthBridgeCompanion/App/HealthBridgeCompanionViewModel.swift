@@ -133,6 +133,14 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 }
             } catch is CancellationError {
                 viewModel.statusMessage = "[Manual] lanes cancelled before start"
+                if Task.isCancelled {
+                    viewModel.statusIsError = false
+                    viewModel.statusMessage = CompanionSyncNowCompletion.pausedByIOSMessage
+                } else {
+                    // The exclusive transfer could not start: a background upload is unfinished.
+                    viewModel.statusIsError = true
+                    viewModel.statusMessage = CompanionSyncNowCompletion.backgroundUploadStillFinishingMessage
+                }
                 return
             } catch {
                 viewModel.statusIsError = true
@@ -157,6 +165,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             }
 
             viewModel.isSyncing = true
+            viewModel.firstManualDeliveryFailure = nil
             viewModel.statusIsError = false
             viewModel.statusMessage = "Starting sync for allowed Apple Health data."
             defer {
@@ -172,6 +181,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             }
             if viewModel.pendingOutboxCount > 0 {
                 guard await viewModel.flushPendingOutbox() else {
+                    if Task.isCancelled {
+                        viewModel.markManualSyncPausedByIOS()
+                        return
+                    }
                     viewModel.statusMessage = "Sync stopped: \(viewModel.statusMessage)"
                     return
                 }
@@ -185,13 +198,21 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             viewModel.statusMessage = "[Manual] lanes starting: \(ManualSyncLane.allCases.count)"
             for lane in ManualSyncLane.allCases {
                 viewModel.statusMessage = "[Manual] lane \(lane)"
-                guard !viewModel.hasPendingPairing, !Task.isCancelled else {
+                if Task.isCancelled {
+                    viewModel.markManualSyncPausedByIOS()
+                    return
+                }
+                guard !viewModel.hasPendingPairing else {
                     viewModel.statusIsError = true
                     viewModel.statusMessage =
                         "Sync stopped because pairing recovery is in progress."
                     return
                 }
                 guard await runManualLane(lane) else {
+                    if Task.isCancelled {
+                        viewModel.markManualSyncPausedByIOS()
+                        return
+                    }
                     viewModel.statusMessage = "[Manual] stopped at lane \(lane): \(viewModel.statusMessage)"
                     return
                 }
@@ -199,7 +220,8 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             viewModel.statusMessage = "[Manual] all lanes finished"
 
             let completion = CompanionSyncNowCompletion.summary(
-                pendingOutboxCount: viewModel.pendingOutboxCount
+                pendingOutboxCount: viewModel.pendingOutboxCount,
+                firstDeliveryFailure: viewModel.firstManualDeliveryFailure
             )
             viewModel.statusIsError = completion.isError
             viewModel.statusMessage = completion.message
@@ -511,6 +533,22 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     private var backgroundAutomaticSyncFailure: AutomaticSyncDiagnosticFailure?
     private var backgroundAutomaticSyncQuerySucceeded = false
     private var lastOutboxNotice = ""
+    /// First server rejection seen by the current Sync Now run, so the run can end in an error
+    /// instead of reporting success while every upload was refused.
+    private var firstManualDeliveryFailure: String?
+
+    private func noteManualDeliveryFailure(_ description: String?) {
+        guard firstManualDeliveryFailure == nil,
+              let description,
+              CompanionSyncNowCompletion.isServerRejection(description) else { return }
+        firstManualDeliveryFailure = description
+    }
+
+    /// iOS ended background time and cancelled the run. Nothing failed, so this is not an error.
+    private func markManualSyncPausedByIOS() {
+        statusIsError = false
+        statusMessage = CompanionSyncNowCompletion.pausedByIOSMessage
+    }
     #if canImport(HealthKit)
     private var automaticSyncActiveObserverCount = 0
     private var backgroundDeliveryRegistrationExpectedCount = 0
@@ -1388,7 +1426,11 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
             statusMessage = "Queued uploads stay on this iPhone until you accept the data-sharing disclosure."
             return false
         }
-        guard !hasPendingPairing, !Task.isCancelled else {
+        guard !Task.isCancelled else {
+            markManualSyncPausedByIOS()
+            return false
+        }
+        guard !hasPendingPairing else {
             statusIsError = true
             statusMessage = "Queued upload retry is paused while pairing recovery is in progress."
             return false
@@ -1434,8 +1476,15 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                 statusIsError = false
                 statusMessage = "Secure mailbox delivery confirmed \(summary.uploadedCount) item(s). Waiting for receiver confirmation: \(pendingOutboxCount)."
             } else if summary.failedCount > 0 {
+                noteManualDeliveryFailure(summary.failedDescriptions.first)
                 statusIsError = true
                 statusMessage = "Some queued uploads did not finish: attempted \(summary.attemptedCount), uploaded \(summary.uploadedCount), failed \(summary.failedCount). \(Self.firstFailureSentence(summary)) Queued uploads: \(pendingOutboxCount)."
+                // A server rejection stops Sync Now so the reason stays visible. A transport
+                // failure leaves the uploads queued and the run continues, as the summary reports.
+                if let firstFailure = summary.failedDescriptions.first,
+                   CompanionSyncNowCompletion.isServerRejection(firstFailure) {
+                    return false
+                }
             } else {
                 statusIsError = false
                 statusMessage = "Queued uploads sent: \(summary.uploadedCount). Remaining: \(pendingOutboxCount)."
@@ -6348,6 +6397,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         refreshPendingOutboxCount()
         if upload.summary.failedCount > 0
             || !enqueuedItemIDs.isDisjoint(with: remainingItemIDs) {
+            noteManualDeliveryFailure(upload.summary.failedDescriptions.first)
             lastOutboxNotice = upload.summary.failedDescriptions.first.map {
                 " Durable Direct retry remains queued: \($0)"
             } ?? " Durable Direct retry remains queued."
@@ -7153,6 +7203,9 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     }
 
     private func describe(_ error: Error) -> String {
+        if error is CancellationError {
+            return CompanionSyncNowCompletion.pausedByIOSMessage
+        }
         if let preflightError = error as? ReceiverPairingPreflightError {
             switch preflightError {
             case .mailboxKey(let failure):
