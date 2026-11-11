@@ -5109,17 +5109,19 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
                         cursorKind: MedicationDoseEventSyncBatchFactory.deletionAnchorCursorKind
                     )
                     let hadStoredAnchor = storedAnchor?.isEmpty == false
-                    let deletions = try await reader.readMedicationDoseEventDeletions(
+                    let deletions = try await reader.readMedicationDoseEventChanges(
                         anchorCursorValue: storedAnchor
                     )
                     if MedicationDoseLanePolicy.shouldSendDeletionBatch(
                         mode: executionMode,
                         deletedUUIDs: deletions.deletedUUIDs,
+                        addedEvents: deletions.addedEvents,
                         hadStoredAnchor: hadStoredAnchor
                     ) {
                         let deletionBatch = MedicationDoseEventSyncBatchFactory
                             .makeMedicationDoseEventDeletionBatch(
                                 deletedUUIDs: deletions.deletedUUIDs,
+                                addedEvents: deletions.addedEvents,
                                 anchorCursorValue: deletions.anchorCursorValue,
                                 windowStart: start,
                                 windowEnd: end,
