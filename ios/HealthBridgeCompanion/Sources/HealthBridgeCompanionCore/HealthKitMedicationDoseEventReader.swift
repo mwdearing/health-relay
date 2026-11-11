@@ -227,17 +227,13 @@ public final class HealthKitMedicationDoseEventReader: @unchecked Sendable {
                 do {
                     let cursorValue = try HealthKitAnchorCursorCodec.encode(newAnchor)
                     let rawAdded = (addedSamples as? [HKMedicationDoseEvent]) ?? []
-                    // A name is needed for every added event. If the lookup failed, or
-                    // the concept is missing from the names, refuse the whole read: the
-                    // anchor stays put, so the deletions in it are retried, not lost.
-                    if anchor != nil, !rawAdded.isEmpty {
-                        let unnamed = rawAdded.contains { event in
-                            nameLookupFailed || namesByConceptKey[Self.conceptKey(event.medicationConceptIdentifier)] == nil
-                        }
-                        if unnamed {
-                            completion(.failure(HealthKitMedicationDoseEventReaderError.nameLookupUnavailable))
-                            return
-                        }
+                    // A failed (transient) name lookup refuses a read with added samples: the
+                    // anchor stays put, so the deletions are retried, and no placeholder name is
+                    // uploaded in place of a real one. A concept the lookup succeeded without
+                    // keeps the existing "concept <key>" name, so the read never stalls on it.
+                    if anchor != nil, nameLookupFailed, !rawAdded.isEmpty {
+                        completion(.failure(HealthKitMedicationDoseEventReaderError.nameLookupUnavailable))
+                        return
                     }
                     let uuids = anchor == nil ? [] : (deletedObjects ?? []).map(\.uuid)
                     let added = anchor == nil
