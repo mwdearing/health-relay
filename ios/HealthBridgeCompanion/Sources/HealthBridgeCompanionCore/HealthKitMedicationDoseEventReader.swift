@@ -193,7 +193,9 @@ public final class HealthKitMedicationDoseEventReader: @unchecked Sendable {
         // A `let`, because the query's result handler is a concurrently executing closure.
         let namesByConceptKey: [String: String]
         if anchor != nil {
-            namesByConceptKey = try await medicationNamesByConceptKey()
+            // Names only map added samples. A failed lookup must not block deletion
+            // tombstones, so it falls back to no names instead of failing the read.
+            namesByConceptKey = (try? await medicationNamesByConceptKey()) ?? [:]
         } else {
             namesByConceptKey = [:]
         }
