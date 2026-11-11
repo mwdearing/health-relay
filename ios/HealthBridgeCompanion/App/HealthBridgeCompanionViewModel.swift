@@ -1228,7 +1228,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     func checkConnection() async {
         guard syncConsentAdmitsSend else {
             statusIsError = true
-            statusMessage = "Accept the data-sharing disclosure in Settings before testing the connection."
+            setStatus(.consentRequired, "Accept the data-sharing disclosure in Settings before testing the connection.")
             return
         }
         guard terminalPayloadActionAdmissionIsOpen else { return }
@@ -1301,7 +1301,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     func syncAllNow() async {
         guard syncConsentAdmitsSend else {
             statusIsError = true
-            statusMessage = "Accept the data-sharing disclosure in Settings before syncing."
+            setStatus(.consentRequired, "Accept the data-sharing disclosure in Settings before syncing.")
             return
         }
         guard terminalPayloadActionAdmissionIsOpen else { return }
@@ -1385,7 +1385,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     private func flushPendingOutbox() async -> Bool {
         guard syncConsentAdmitsSend else {
             statusIsError = true
-            statusMessage = "Queued uploads stay on this iPhone until you accept the data-sharing disclosure."
+            setStatus(.consentRequired, "Queued uploads stay on this iPhone until you accept the data-sharing disclosure.")
             return false
         }
         guard !hasPendingPairing, !Task.isCancelled else {
@@ -4422,7 +4422,7 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     func sendConnectionTestBatch() async {
         guard syncConsentAdmitsSend else {
             statusIsError = true
-            statusMessage = "Accept the data-sharing disclosure in Settings before testing the connection."
+            setStatus(.consentRequired, "Accept the data-sharing disclosure in Settings before testing the connection.")
             return
         }
         do {
@@ -7328,9 +7328,13 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         return describe(error)
     }
 
-    private func publishPairingFailure(_ message: String) {
+    private func publishPairingFailure(_ message: String, status: CompanionStatus = .notice) {
         statusIsError = true
-        statusMessage = message
+        if status == .notice {
+            statusMessage = message
+        } else {
+            setStatus(status, message)
+        }
         guard hasPendingPairing else { return }
         pairingFailurePresentation = CompanionPairingFailurePresentationState(
             rawFailure: message
@@ -7338,6 +7342,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     }
 
     private func publishPairingFailure(_ prefix: String, error: Error) {
-        publishPairingFailure("\(prefix): \(describePairingFailure(error))")
+        // Bundle errors are raised by local validation, before any server is contacted.
+        publishPairingFailure(
+            "\(prefix): \(describePairingFailure(error))",
+            status: error is ReceiverPairingBundleError ? .pairingInputInvalid : .notice
+        )
     }
 }
