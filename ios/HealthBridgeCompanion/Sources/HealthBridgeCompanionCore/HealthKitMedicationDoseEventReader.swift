@@ -232,7 +232,7 @@ public final class HealthKitMedicationDoseEventReader: @unchecked Sendable {
                     // anchor stays put, so the deletions in it are retried, not lost.
                     if anchor != nil, !rawAdded.isEmpty {
                         let unnamed = rawAdded.contains { event in
-                            nameLookupFailed || namesByConceptKey[conceptKey(event.medicationConceptIdentifier)] == nil
+                            nameLookupFailed || namesByConceptKey[Self.conceptKey(event.medicationConceptIdentifier)] == nil
                         }
                         if unnamed {
                             completion(.failure(HealthKitMedicationDoseEventReaderError.nameLookupUnavailable))
