@@ -180,6 +180,34 @@ def test_bad_date_error_names_field_without_echoing_value(tmp_path: Path) -> Non
     assert "June 1" not in error.message
 
 
+def test_daily_summary_span_over_cap_is_rejected_with_a_hint(tmp_path: Path) -> None:
+    db_path = initialized_fixture_db(tmp_path)
+
+    error = _error(
+        db_path,
+        "get_daily_summary",
+        {"start_date": "0001-01-01", "end_date": "9999-12-31"},
+    )
+
+    assert error.code == -32602
+    assert error.message == (
+        "Invalid arguments for get_daily_summary: "
+        "date range must not exceed 366 days; narrow the range"
+    )
+
+
+def test_span_cap_applies_only_to_the_daily_summary(tmp_path: Path) -> None:
+    db_path = initialized_fixture_db(tmp_path)
+
+    notes = _notes(
+        db_path,
+        "get_workouts",
+        {"start_date": "2016-01-01", "end_date": "2026-01-01"},
+    )
+
+    assert notes != []
+
+
 def test_missing_and_unexpected_arguments_are_named(tmp_path: Path) -> None:
     db_path = initialized_fixture_db(tmp_path)
 
@@ -294,6 +322,11 @@ def test_date_range_tools_document_exclusive_end_date(tool: str) -> None:
     assert "EXCLUSIVE" in description
     assert "YYYY-MM-DD" in description
     assert "UTC" in description
+
+
+def test_daily_summary_description_states_the_span_cap() -> None:
+    assert "at most 366 days" in _description("get_daily_summary")
+    assert "366" not in _description("get_workouts")
 
 
 def test_timeseries_description_points_to_metric_catalog_and_format() -> None:
