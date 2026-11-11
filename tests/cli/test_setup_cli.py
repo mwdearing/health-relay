@@ -580,6 +580,25 @@ def test_setup_accepts_numeric_lan_url_with_reachable_bind_and_guidance(
     assert "Local Network access" in payload.warning
 
 
+@pytest.mark.parametrize(
+    "hostname", ["receiver.lan", "nas.home.arpa", "receiver.tailnet-name.ts.net"]
+)
+def test_setup_warns_that_ios_blocks_plain_http_to_qualified_hostnames(
+    tmp_path: Path, hostname: str
+) -> None:
+    _db_path, _setup_page, args = _setup_args(tmp_path)
+    args[args.index("--receiver-url") + 1] = f"http://{hostname}:8765/v1/batches"
+    args.extend(("--receiver-host", "0.0.0.0"))  # noqa: S104 - test bind input
+
+    completed = _run_cli(*args)
+
+    assert completed.returncode == 0, completed.stderr
+    payload = SetupCliOutput.model_validate_json(completed.stdout)
+    assert "will block plain HTTP" in payload.warning
+    assert "HTTPS" in payload.warning
+    assert "IP address" in payload.warning
+
+
 def test_setup_accepts_plain_http_shared_address_with_compatibility_warning(
     tmp_path: Path,
 ) -> None:
