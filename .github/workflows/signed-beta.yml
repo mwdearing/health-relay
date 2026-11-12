@@ -6,7 +6,8 @@ name: Signed beta upload
 # the steps that need them. The bundle id is ALSO an environment secret (not an input), because a public repository
 # shows workflow inputs and step environments in its logs; secrets are masked. The job runs only from `main`, and the
 # environment must be restricted to the `main` branch in the repository settings. This workflow never runs on a pull
-# request, never uploads an artifact, keeps xcodebuild output out of the public log and always removes the key file.
+# request, keeps xcodebuild output out of the public log, and always removes the key file. The only upload is the
+# export log encrypted to the maintainer's age key, and only when that key is configured and the job has failed.
 
 on:
   workflow_dispatch:
@@ -45,6 +46,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Install age for the encrypted diagnostic log
+        if: vars.AGE_RECIPIENT != ''
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_FROM_API: "1"
+        run: brew install age
+        # Runs before any signing secret is written to the runner, so the formula install never sees them.
 
       - name: Show Xcode version
         run: xcodebuild -version
@@ -115,6 +124,7 @@ jobs:
 
       - name: Archive with automatic signing
         env:
+          AGE_RECIPIENT: ${{ vars.AGE_RECIPIENT }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -132,6 +142,14 @@ jobs:
               # xcodebuild echoes its command line and build settings (key path, team, version) at the top of the
               # log, so only its own error lines are searched, never the header.
               echo "::error::$name failed. Only fixed Apple error codes and categories are published."
+              # The full log is encrypted to the maintainer's age key and uploaded as a restricted artifact.
+              # Nothing readable leaves the runner; without a recipient, nothing is written.
+              if [ -n "${AGE_RECIPIENT:-}" ]; then
+                mkdir -p "$RUNNER_TEMP/diag"
+                if age -r "$AGE_RECIPIENT" -o "$RUNNER_TEMP/diag/$name.log.age" "$log"; then
+                  echo "::notice::encrypted $name log written for the diagnostic artifact"
+                fi
+              fi
               local errs
               errs=$(grep -iE '(^|[^[:alnum:]_])error:' "$log" || true)
               # Only fixed code patterns are printed (ITMS-nnnnnn and IDE distribution error names). They
@@ -228,6 +246,7 @@ jobs:
 
       - name: Export and upload to App Store Connect
         env:
+          AGE_RECIPIENT: ${{ vars.AGE_RECIPIENT }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -241,6 +260,14 @@ jobs:
               # xcodebuild echoes its command line and build settings (key path, team, version) at the top of the
               # log, so only its own error lines are searched, never the header.
               echo "::error::$name failed. Only fixed Apple error codes and categories are published."
+              # The full log is encrypted to the maintainer's age key and uploaded as a restricted artifact.
+              # Nothing readable leaves the runner; without a recipient, nothing is written.
+              if [ -n "${AGE_RECIPIENT:-}" ]; then
+                mkdir -p "$RUNNER_TEMP/diag"
+                if age -r "$AGE_RECIPIENT" -o "$RUNNER_TEMP/diag/$name.log.age" "$log"; then
+                  echo "::notice::encrypted $name log written for the diagnostic artifact"
+                fi
+              fi
               local errs
               errs=$(grep -iE '(^|[^[:alnum:]_])error:' "$log" || true)
               # Only fixed code patterns are printed (ITMS-nnnnnn and IDE distribution error names). They
@@ -298,6 +325,15 @@ jobs:
             -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey.p8" \
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Upload the encrypted diagnostic log
+        if: failure() && vars.AGE_RECIPIENT != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-beta-diagnostics-encrypted
+          path: ${{ runner.temp }}/diag/*.age
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: Remove the key file and the temporary keychain
         if: ${{ always() }}
