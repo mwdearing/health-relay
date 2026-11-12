@@ -47,6 +47,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install age for the encrypted diagnostic log
+        if: vars.AGE_RECIPIENT != ''
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_FROM_API: "1"
+        run: brew install age
+        # Runs before any signing secret is written to the runner, so the formula install never sees them.
+
       - name: Show Xcode version
         run: xcodebuild -version
 
@@ -113,10 +121,6 @@ jobs:
           # An identity of another team would pass the check above, and Xcode would create a new certificate
           # for this team on every run after all. The certificate's organisational unit is its team.
           security find-certificate -c "Apple Development" -p "$KEYCHAIN" 2> /dev/null | openssl x509 -noout -subject 2> /dev/null | grep -q "OU *= *$APPLE_TEAM_ID\b" || fail "the stored certificate was not issued to this team"
-
-      - name: Install age for the encrypted diagnostic log
-        if: vars.AGE_RECIPIENT != ''
-        run: brew install age
 
       - name: Archive with automatic signing
         env:
