@@ -212,6 +212,9 @@ def _require_bound_hash(
 
 
 def _declared_ios_companion(path: Path) -> tuple[str, int]:
+    # component-versions.json is the one recorded source for the marketing version.
+    # It matches MARKETING_VERSION in the Xcode project and is the default that
+    # both IPA workflows stamp.
     raw = json.loads(path.read_text(encoding="utf-8"))
     companion = raw.get("ios_companion") if isinstance(raw, dict) else None
     if not isinstance(companion, dict):

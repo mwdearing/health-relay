@@ -28,9 +28,13 @@ receiver-specific parts stay here.
   display strings and icon are HealthRelay's own.
 - Keep `LICENSE` and `NOTICE`; list every modification below.
 - Bundle id: keep `com.example.*` in tracked files (public-release audit rule); pass the real reverse-DNS id as `BUNDLE_ID` at build time. The value is not written in this repo.
-- Version: do not bump the iOS version by hand. The `Build unsigned IPA` workflow stamps both the marketing version and the build number as `1.2.<run number>`; the tracked values (`MARKETING_VERSION` 1.2.0, `CURRENT_PROJECT_VERSION` 50, `component-versions.json` `ios_companion`) are placeholders that never change on an app change.
+- Version: the marketing version is bumped by hand, and only there: `MARKETING_VERSION` in the Xcode project (currently 1.2.2) and `component-versions.json` `ios_companion.marketing_version` must match, and a guardrail checks that. `Signed beta upload` and `Build unsigned IPA` both stamp that recorded version unless a `marketing_version` input overrides it. The build number is never edited: `Signed beta upload` uses the run number + 100, `Build unsigned IPA` the run number, and the tracked `CURRENT_PROJECT_VERSION` (50) is only the floor the fresh-device evidence gate compares against.
 
 ## Modifications (newest first)
+- 2026-11-05: iOS version metadata has one source. `Build unsigned IPA` now stamps the marketing version
+  recorded in `component-versions.json` (the same default as `Signed beta upload`) instead of
+  `1.2.<run number>`, so a build from either workflow can satisfy the fresh-device evidence gate. The docs no
+  longer say which release GitHub marks Latest: that mark is not an install pointer (#222).
 - 2026-10-14: retired the `Publish IPA release` and `Promote IPA release` workflows (#127), so
   no workflow here attaches an unsigned IPA to a GitHub Release or promotes one to Latest, and
   a guardrail limits the workflow token's write scopes so only the receiver release pipeline
@@ -150,7 +154,7 @@ receiver-specific parts stay here.
   both sides still accept legacy `healthbridge://pair`), so a scanned QR can no longer open the upstream
   app. ECG and medication lanes honour the selected Apple Health history window on first sync (was a
   fixed 30 days). `ingest-fixture` summary now includes electrocardiograms and medication_dose_events.
-- 2026-09-28: IPA builds stamp marketing version `1.2.<run number>` by default (a distinct version
+- 2026-09-28 (superseded 2026-11-05, see the Version rule above): IPA builds stamp marketing version `1.2.<run number>` by default (a distinct version
   string per build, since sideload signers show only the marketing version).
 - 2026-09-28: diagnostics: the ECG and medication lanes prefix their status with `[ECG]` / `[Medication]`
   and the Activity Log keeps those lines verbatim (counts and error codes only), so a lane outcome is

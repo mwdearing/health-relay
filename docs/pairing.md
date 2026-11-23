@@ -213,7 +213,7 @@ uv run health-bridge receiver revoke-device \
   --device-ref <ref-from-list-devices>
 ```
 
-`revoke-device` fails closed if the reference is malformed, absent, already revoked, or not unique. It never requires or prints the bearer credential, installation ID, installation hash, or token hash. Legacy v1 credentials that have no device mapping continue to use `receiver revoke-token --token-prefix ...`.
+`revoke-device` fails closed if the reference is malformed, absent, already revoked, or not unique. It never requires or prints the bearer credential, installation ID, installation hash, or token hash. Legacy v1 credentials that have no device mapping continue to use `receiver revoke-token --token-prefix ...`. `revoke-token` exits 1 and prints nothing to stdout when the database file is missing or no active token carries that prefix (surrounding whitespace is ignored), so a typo or a second revocation is visible rather than reported as success; it never creates a database.
 
 ## Intake producers and intake tokens
 

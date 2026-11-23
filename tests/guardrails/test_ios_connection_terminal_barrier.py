@@ -137,7 +137,7 @@ def test_terminal_request_reservation_precancels_pairing() -> None:
         "try self.requireTrustedEmptyOutboxForConnectionTransition("
     ) < commit.index("let result = try await commit(expectedGeneration)")
     assert body.index("connectionTerminalBarrier.perform(") < body.index(
-        "try preparePrivateStorageForUploadAdmission()"
+        "try await preparePrivateStorageForUploadAdmission()"
     )
     assert "postCommitRecoveryRequired: true" in body
     assert "postCommitRecoveryRequired: false" in body
@@ -353,7 +353,7 @@ def test_terminal_transition_suppresses_transitive_task_ui_until_decision() -> N
     )
     assert transition.rindex(
         "endTerminalTaskUIPublicationSuppression()"
-    ) < transition.index("try preparePrivateStorageForUploadAdmission()")
+    ) < transition.index("try await preparePrivateStorageForUploadAdmission()")
 
     clear_start = source.index("func clearPendingOutbox() async")
     clear_end = source.index(
@@ -860,7 +860,7 @@ def test_outbox_payloads_are_receiver_bound_for_foreground_and_background() -> N
     assert "rotateBindingID: true" in view_model
     assert "rotateBindingID: true" in RECEIVER_CLIENT.read_text()
     assert "outbox.uploadablePendingItems(for: receiverIdentity)" in view_model
-    assert "outbox.uploadablePendingItems(for: receiverBindingID)" in background
+    assert "outboxForRead.uploadablePendingItems(for: receiverBindingID)" in background
 
 
 def test_cancelled_pairing_and_mixed_receiver_queue_remain_fail_closed() -> None:
