@@ -283,7 +283,7 @@ MCP tools expose:
 - redacted bridge status;
 - supported and synced metric catalogs;
 - bounded time-series observations;
-- workouts, sleep summaries, and daily summaries;
+- workouts, sleep summaries, and daily summaries (a daily summary covers at most 366 days per call; the CLI and MCP tools share one argument validator, so both reject malformed dates and over-long ranges with a "narrow the range" hint);
 - source provenance and missing-data caveats.
 
 They do not expose raw SQL, pairing material, bearer tokens, token hashes, opaque cursor values, or clinical recommendations.
