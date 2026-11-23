@@ -86,11 +86,7 @@ def test_secrets_are_read_only_through_step_environments() -> None:
 def test_no_step_prints_or_uploads_a_secret() -> None:
     text = WORKFLOW.read_text()
     assert "set -x" not in text
-    # The one allowed upload is the encrypted diagnostic log: only *.age files, only on failure.
-    if "actions/upload-artifact" in text:
-        assert "path: ${{ runner.temp }}/diag/*.age" in text
-        assert "if: failure() && vars.AGE_RECIPIENT" in text
-        assert text.count("actions/upload-artifact") == 1
+    assert "actions/upload-artifact" not in text
     for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith(("echo ", "printf ", "cat ")) and "$ASC_KEY_P8" in line:
