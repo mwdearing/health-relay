@@ -248,7 +248,7 @@ def test_exact_temp_state_dir_doctor_command_is_supported(tmp_path: Path) -> Non
 @pytest.mark.parametrize(
     ("state_dir", "expected"),
     [
-        (Path.cwd() / ".non-temp-mailbox-keys", "prohibited_storage"),
+        (Path.home() / ".non-temp-mailbox-keys", "prohibited_storage"),
         (
             Path(tempfile.gettempdir()) / "CloudStorage" / "keys",
             "prohibited_storage",

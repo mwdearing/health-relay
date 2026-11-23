@@ -11,7 +11,6 @@ from typing import cast
 
 ROOT = Path(__file__).parents[2]
 RELEASE_TOOL = ROOT / "scripts/release_tools.py"
-TAGGED_WORKFLOW = ROOT / ".github/workflows/release.yml"
 CONTINUATION_WORKFLOW = ROOT / ".github/workflows/publish-release.yml"
 STAGING_SCRIPT = ROOT / "scripts/stage-mailbox-helper-release.sh"
 
@@ -336,18 +335,6 @@ def test_owner_staging_script_is_exact_source_and_public_safe() -> None:
     assert "DEVELOPMENT_TEAM =" not in body
     assert "iCloud.dev." not in body
     assert "curl" not in body
-
-
-def test_tagged_release_stages_attested_draft_without_publishing() -> None:
-    workflow = TAGGED_WORKFLOW.read_text(encoding="utf-8")
-
-    assert "Create and verify helper-pending draft release" in workflow
-    assert "actions/attest-build-provenance@" in workflow
-    assert "--draft" in workflow
-    assert "--draft=false" not in workflow
-    assert "HealthBridgeMailboxAckPublisher" in workflow
-    assert "helper-pending" in workflow
-    assert "Existing published release" in workflow
 
 
 def test_manual_continuation_is_bound_and_never_replaces_published_release() -> None:

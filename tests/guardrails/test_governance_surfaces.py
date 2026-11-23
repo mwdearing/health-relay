@@ -62,13 +62,14 @@ def test_security_support_and_ownership_routes_are_current() -> None:
         assert marker in support
 
     for marker in (
-        "* @roian6",
-        "/ios/ @roian6",
-        "/src/ @roian6",
-        "/docs/ @roian6",
-        "/.github/ @roian6",
+        "* @mwdearing",
+        "/ios/ @mwdearing",
+        "/src/ @mwdearing",
+        "/docs/ @mwdearing",
+        "/.github/ @mwdearing",
     ):
         assert marker in codeowners
+    assert "@roian6" not in codeowners
 
 
 def test_contribution_and_maintainer_workflow_is_versioned() -> None:

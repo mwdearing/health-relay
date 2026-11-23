@@ -6,7 +6,7 @@ HealthRelay contains independently versioned components. Always include the comp
 
 | Component | Version source | Distribution |
 | --- | --- | --- |
-| iOS Companion (HealthRelay app) | Xcode `MARKETING_VERSION`; build number = the `signed-beta` workflow run number + 100 for signed beta builds, the `Build unsigned IPA` workflow run number for unsigned artifacts; a self-build uses `CURRENT_PROJECT_VERSION` from the Xcode project | Signed beta builds through Apple's beta distribution (access on request, see the README). GitHub Releases tagged `app-v<marketing-version>` are history: the workflows that published them were retired on 2026-10-14, and their unsigned IPA attachments, including on the release marked Latest, are unmaintained. Build and sign it yourself as the alternative ([self-build guide](self-build.md)). |
+| iOS Companion (HealthRelay app) | Xcode `MARKETING_VERSION`; build number = the `signed-beta` workflow run number + 100 for signed beta builds, the `Build unsigned IPA` workflow run number for unsigned artifacts; a self-build uses `CURRENT_PROJECT_VERSION` from the Xcode project | Signed beta builds through Apple's beta distribution (access on request, see the README). GitHub Releases tagged `app-v<marketing-version>` are history: the workflows that published them were retired on 2026-10-14, and their unsigned IPA attachments are unmaintained. Build and sign it yourself as the alternative ([self-build guide](self-build.md)). |
 | Receiver/CLI | `version` in `pyproject.toml` | Installed from this repository's `main`: `uv tool install "git+https://github.com/mwdearing/health-relay.git"`; update with `uv tool upgrade apple-health-ai-bridge`. A pinned receiver release is the alternative: `uv tool install "git+https://github.com/mwdearing/health-relay.git@healthrelay-receiver-<YYYY.MM.DD>"` (see below). |
 | Batch Protocol | `health_bridge.batch.v1` | Wire contract only; see below. |
 
@@ -21,9 +21,9 @@ healthrelay-receiver-<YYYY.MM.DD>
 ```
 
 - The tag is created at a merge commit and is never moved or reused for a different commit.
-- The release is **not** marked **Latest**. **Latest** stays on the last app release (an unmaintained unsigned-IPA release kept as history); the workflows that published and promoted app releases were retired on 2026-10-14.
+- The release is meant not to take the **Latest** mark. GitHub's **Latest** badge is not an install pointer for this fork and may sit on any release, including a pinned receiver release; the workflows that published and promoted app releases were retired on 2026-10-14. Check the badge after publishing (`gh release view --repo mwdearing/health-relay`) and fix it with `gh release edit <tag> --latest` if it moved unintentionally.
 - Create the tag only through the release: if `git ls-remote --tags origin healthrelay-receiver-<YYYY.MM.DD>` already returns a tag, stop unless it points at the intended merge commit (`--target` only applies when the tag does not exist yet; a leftover tag at another commit would be published as is).
-- Publish it with an explicit `--latest=false`; GitHub otherwise marks a new non-prerelease Latest automatically, which would move Latest off the app release:
+- Publish it with an explicit `--latest=false`; GitHub otherwise marks a new non-prerelease Latest automatically, which would move the badge onto the new release:
 
   ```bash
   gh release create healthrelay-receiver-<YYYY.MM.DD> --repo mwdearing/health-relay \
