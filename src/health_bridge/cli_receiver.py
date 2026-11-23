@@ -6,6 +6,7 @@ import secrets
 import shlex
 import sqlite3
 import stat
+import sys
 import time
 from collections.abc import Callable, Mapping
 from contextlib import suppress
@@ -22,11 +23,10 @@ from urllib.request import (
     ProxyHandler,
     Request,
     build_opener,
-    urlopen,
 )
 
 import typer
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from typing_extensions import override
 
 from health_bridge.cli_receiver_start import (
@@ -75,8 +75,6 @@ from health_bridge.receiver.invitations import (
 )
 from health_bridge.receiver.mailbox_keys import MailboxKeyStore
 from health_bridge.receiver.pairing import (
-    ReceiverPairingInvitationBundle,
-    create_receiver_pairing_bundle,
     create_receiver_pairing_invitation_bundle,
     pairing_deep_link,
 )
@@ -86,7 +84,12 @@ from health_bridge.receiver.server import (
     INTAKE_CONTEXT_CAPABILITIES_PATH,
     serve_receiver,
 )
-from health_bridge.receiver.tokens import create_receiver_token, revoke_receiver_token
+from health_bridge.receiver.tokens import (
+    AmbiguousReceiverTokenPrefixError,
+    create_receiver_token,
+    revoke_active_receiver_token,
+    revoke_receiver_token,
+)
 from health_bridge.receiver.transports import (
     PublicReceiverTransport,
     ReceiverTransport,
@@ -163,6 +166,13 @@ INTAKE_SETUP_ROTATE_UNIDENTIFIABLE_MESSAGE: Final = (
     "revoked and would stay usable; nothing was changed. Revoke it yourself "
     "with receiver intake-revoke-token after receiver intake-list-tokens, then "
     "re-run, or move the file aside."
+)
+INTAKE_SETUP_ROTATE_OWNER_MISMATCH_MESSAGE: Final = (
+    "Refusing to rotate the intake secret file {path}: it holds a token for "
+    "owner {held_owner} / producer {held_producer}, not owner {owner} / "
+    "producer {producer}, so rotating would revoke another producer's "
+    "credential; nothing was changed. Point --output-secret at this "
+    "producer's own file, or run with the owner and producer that file belongs to."
 )
 INTAKE_SETUP_URL_PLACEHOLDER: Final = "<receiver URL>"
 INTAKE_SETUP_URL_MESSAGE: Final = (
@@ -931,7 +941,7 @@ def _resolved_or_absolute(path: Path) -> Path:
 
 
 @receiver_app.command("create-pairing")
-def create_pairing(  # noqa: PLR0912, PLR0913 - Typer exposes CLI branches/options.
+def create_pairing(  # noqa: PLR0913 - Typer exposes CLI branches/options.
     db: Annotated[
         Path,
         typer.Option("--db", help="User-owned SQLite database path."),
@@ -991,13 +1001,6 @@ def create_pairing(  # noqa: PLR0912, PLR0913 - Typer exposes CLI branches/optio
             help="Allow secret-bearing pairing output on stdout for expert use.",
         ),
     ] = False,
-    legacy_v1: Annotated[
-        bool,
-        typer.Option(
-            "--legacy-v1",
-            help="Issue a legacy long-lived bearer-token pairing bundle.",
-        ),
-    ] = False,
 ) -> None:
     if output_format == "setup-page" and setup_page is None:
         typer.echo("--setup-page is required when --format setup-page.", err=True)
@@ -1009,39 +1012,24 @@ def create_pairing(  # noqa: PLR0912, PLR0913 - Typer exposes CLI branches/optio
         transport,
         mailbox_root=mailbox_root,
         icloud_container_identifier=icloud_container_identifier,
-        mailbox_allowed=not legacy_v1,
+        mailbox_allowed=True,
     )
 
-    if legacy_v1:
-        bundle = create_receiver_pairing_bundle(
-            db,
-            label=label,
-            receiver_url=receiver_url,
-        )
-    else:
-        bundle = create_receiver_pairing_invitation_bundle(
-            db,
-            label=label,
-            receiver_url=receiver_url,
-            transport=selected_transport,
-        )
+    bundle = create_receiver_pairing_invitation_bundle(
+        db,
+        label=label,
+        receiver_url=receiver_url,
+        transport=selected_transport,
+    )
     deep_link = pairing_deep_link(bundle)
     if output_format == "deeplink":
-        if isinstance(bundle, ReceiverPairingInvitationBundle):
-            output = {
-                "label": bundle.label,
-                "pairing_url": deep_link,
-                "pairing_schema_id": bundle.schema_id,
-                "invitation_expires_at": bundle.expires_at,
-                "warning": bundle.warning,
-            }
-        else:
-            output = {
-                "label": bundle.label,
-                "pairing_url": deep_link,
-                "token_prefix": bundle.token_prefix,
-                "warning": bundle.warning,
-            }
+        output = {
+            "label": bundle.label,
+            "pairing_url": deep_link,
+            "pairing_schema_id": bundle.schema_id,
+            "invitation_expires_at": bundle.expires_at,
+            "warning": bundle.warning,
+        }
     elif output_format == "setup-page":
         setup_page_path = cast("Path", setup_page)
         try:
@@ -1050,33 +1038,19 @@ def create_pairing(  # noqa: PLR0912, PLR0913 - Typer exposes CLI branches/optio
                 render_pairing_setup_page(bundle, deep_link, db),
             )
         except OSError as exc:
-            if isinstance(bundle, ReceiverPairingInvitationBundle):
-                revoke_pairing_invitation(db, bundle.invitation_id)
-            else:
-                revoke_receiver_token(db, bundle.token_prefix)
+            revoke_pairing_invitation(db, bundle.invitation_id)
             typer.echo(SETUP_PAGE_WRITE_FAILURE_MESSAGE, err=True)
             raise typer.Exit(code=1) from exc
-        if isinstance(bundle, ReceiverPairingInvitationBundle):
-            output = {
-                "label": bundle.label,
-                "setup_page": str(setup_page_path),
-                "pairing_schema_id": bundle.schema_id,
-                "invitation_expires_at": bundle.expires_at,
-                "warning": (
-                    "Setup page contains a temporary, single-use pairing invitation. "
-                    "Open it on your own device and delete it after pairing."
-                ),
-            }
-        else:
-            output = {
-                "label": bundle.label,
-                "setup_page": str(setup_page_path),
-                "token_prefix": bundle.token_prefix,
-                "warning": (
-                    "Legacy setup page contains a pairing secret. Open it on your "
-                    "own device and delete it after pairing."
-                ),
-            }
+        output = {
+            "label": bundle.label,
+            "setup_page": str(setup_page_path),
+            "pairing_schema_id": bundle.schema_id,
+            "invitation_expires_at": bundle.expires_at,
+            "warning": (
+                "Setup page contains a temporary, single-use pairing invitation. "
+                "Open it on your own device and delete it after pairing."
+            ),
+        }
     else:
         output = bundle.model_dump(mode="json", exclude_none=True)
         output["pairing_url"] = deep_link
@@ -1158,8 +1132,36 @@ def revoke_token(
         typer.Option("--token-prefix", help="Prefix returned by create-token."),
     ],
 ) -> None:
-    revoke_receiver_token(db, token_prefix)
-    typer.echo(json.dumps({"revoked_token_prefix": token_prefix}, sort_keys=True))
+    prefix = token_prefix.strip()
+    if not prefix:
+        typer.echo("--token-prefix must not be empty; nothing was revoked.", err=True)
+        raise typer.Exit(code=1)
+    if not db.is_file():
+        # Never create a database here: a mistyped path must not look like a
+        # store that simply holds no matching token.
+        typer.echo(
+            "Receiver database was not found; nothing was revoked.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    try:
+        revoked_count = revoke_active_receiver_token(db, prefix)
+    except AmbiguousReceiverTokenPrefixError as exc:
+        typer.echo(
+            "Several active receiver tokens carry that prefix; nothing was revoked.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    except (sqlite3.Error, OSError) as exc:
+        typer.echo("Receiver token storage is unavailable.", err=True)
+        raise typer.Exit(code=1) from exc
+    if revoked_count == 0:
+        typer.echo(
+            "No active receiver token carries that prefix; nothing was revoked.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    typer.echo(json.dumps({"revoked_token_prefix": prefix}, sort_keys=True))
 
 
 @receiver_app.command("intake-register-producer")
@@ -1756,7 +1758,14 @@ def intake_setup(  # noqa: PLR0913 -- Typer exposes independent setup options.
         # rotation that cannot revoke what it replaces would leave that credential
         # usable.
         replaced_prefix = (
-            _rotation_prefix_or_exit(db, output_secret) if rotate else None
+            _rotation_prefix_or_exit(
+                db,
+                output_secret,
+                owner_id=owner_id,
+                producer_id=producer_id,
+            )
+            if rotate
+            else None
         )
 
         # Claimed exclusively, not merely checked, so a second run that starts
@@ -1874,39 +1883,70 @@ def _release_rotation_lock(output_secret: Path) -> None:
         )
 
 
-def _rotation_prefix_or_exit(db: Path, output_secret: Path) -> str | None:
+def _rotation_prefix_or_exit(
+    db: Path,
+    output_secret: Path,
+    *,
+    owner_id: str,
+    producer_id: str,
+) -> str | None:
     """The prefix ``--rotate`` must retire, refusing when it cannot be recovered.
 
     A missing file has nothing to rotate, so a fresh token is simply issued. An
     existing file whose prefix cannot be read, or whose prefix names no token
     this receiver knows, is refused: the write would destroy the only record of
-    a credential the rotation promised to revoke.
+    a credential the rotation promised to revoke. A token that belongs to a
+    different owner or producer than this run is refused too, because revoking
+    it would retire another producer's only working credential.
     """
     if not output_secret.exists():
         return None
     prefix = _existing_secret_token_prefix(output_secret)
-    if prefix is None or not _intake_token_prefix_is_known(db, prefix):
+    held = None if prefix is None else _known_intake_token(db, prefix)
+    if held is None:
         typer.echo(
             INTAKE_SETUP_ROTATE_UNIDENTIFIABLE_MESSAGE.format(path=output_secret),
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    # The file's own claim is a cheap cross-check; the stored row is the record
+    # that decides, since the file can be edited or copied.
+    file_owner, file_producer = _existing_secret_identity(output_secret)
+    if (
+        (held.owner_id, held.producer_id) != (owner_id, producer_id)
+        or file_owner not in (None, owner_id)
+        or file_producer not in (None, producer_id)
+    ):
+        typer.echo(
+            INTAKE_SETUP_ROTATE_OWNER_MISMATCH_MESSAGE.format(
+                path=output_secret,
+                held_owner=held.owner_id,
+                held_producer=held.producer_id,
+                owner=owner_id,
+                producer=producer_id,
+            ),
             err=True,
         )
         raise typer.Exit(code=1)
     return prefix
 
 
-def _intake_token_prefix_is_known(db: Path, prefix: str) -> bool:
-    """True when the prefix has the intake shape and is a token this store holds.
+def _known_intake_token(db: Path, prefix: str) -> IntakeTokenRecord | None:
+    """The stored row for an intake-shaped prefix, or None when there is none.
 
     A read-only listing decides it, so checking a rotation's old token creates
     nothing and revokes nothing. An unreadable store is treated as unknown,
     which refuses the rotation rather than guessing.
     """
     if not prefix.startswith(INTAKE_TOKEN_PREFIX):
-        return False
+        return None
     try:
-        return prefix in {token.token_prefix for token in _read_intake_tokens(db)}
+        for token in _read_intake_tokens(db):
+            if token.token_prefix == prefix:
+                return token
     except (sqlite3.Error, OSError, _MissingIntakeTablesError):
-        return False
+        return None
+    return None
 
 
 def _reserve_secret_output_path(output_secret: Path) -> bool:
@@ -2168,6 +2208,20 @@ def _existing_secret_token_prefix(output_secret: Path) -> str | None:
     document = _intake_json_object(text.encode("utf-8"))
     prefix = None if document is None else document.get("token_prefix")
     return prefix if isinstance(prefix, str) and prefix != "" else None
+
+
+def _existing_secret_identity(output_secret: Path) -> tuple[str | None, str | None]:
+    """The owner and producer ids the secret file claims, None when absent."""
+    text = _existing_secret_text(output_secret)
+    document = None if text is None else _intake_json_object(text.encode("utf-8"))
+    if document is None:
+        return None, None
+    owner = document.get("owner_id")
+    producer = document.get("producer_id")
+    return (
+        owner if isinstance(owner, str) else None,
+        producer if isinstance(producer, str) else None,
+    )
 
 
 def _revoke_replaced_intake_token(
@@ -2729,40 +2783,110 @@ def smoke(
         typer.Option("--input", help="health_bridge.batch.v1 JSON payload."),
     ],
     token: Annotated[
-        str,
-        typer.Option("--token", help="Receiver bearer token."),
-    ],
+        str | None,
+        typer.Option(
+            "--token",
+            help="Deprecated: shows in ps and shell history. Use --token-file.",
+        ),
+    ] = None,
+    token_file: Annotated[
+        str | None,
+        typer.Option(
+            "--token-file",
+            help="File holding the receiver bearer token, or - to read it from stdin.",
+        ),
+    ] = None,
     url: Annotated[
         str,
-        typer.Option("--url", help="Receiver /v1/batches endpoint."),
+        typer.Option(
+            "--url",
+            help=(
+                "Receiver /v1/batches endpoint. Connects directly: HTTP(S)_PROXY "
+                "is not used and redirects are not followed."
+            ),
+        ),
     ] = "http://127.0.0.1:8765/v1/batches",
 ) -> None:
     _validate_receiver_url(url)
+    bearer = _smoke_bearer_token(token, token_file)
     request = Request(  # noqa: S310 - URL scheme is validated above.
         url,
         data=input_path.read_bytes(),
         headers={
-            "Authorization": f"Bearer {token}",
+            "Authorization": f"Bearer {bearer}",
             "Content-Type": "application/json",
         },
         method="POST",
     )
     try:
-        # `_validate_receiver_url` above restricts this request to HTTP(S).
+        # `_validate_receiver_url` above restricts this request to HTTP(S), and
+        # the opener refuses redirects and proxies so the bearer token only goes
+        # to the receiver the user named. A refused 3xx surfaces as HTTPError.
         with cast(
             "HTTPResponse",
-            urlopen(request, timeout=10),  # noqa: S310  # nosec B310
+            _bearer_opener().open(request, timeout=INTAKE_SMOKE_TIMEOUT_SECONDS),
         ) as response:
-            body = SMOKE_RESPONSE_ADAPTER.validate_json(response.read())
+            raw_body = response.read()
             status = response.status
     except HTTPError as exc:
+        with suppress(OSError):
+            exc.close()
         typer.echo(f"Receiver smoke failed: HTTP {exc.code}.", err=True)
         raise typer.Exit(code=1) from exc
-    except URLError as exc:
-        typer.echo("Receiver smoke failed: receiver was not reachable.", err=True)
+    except (URLError, HTTPException, TimeoutError, OSError) as exc:
+        typer.echo(
+            "Receiver smoke failed: receiver not reachable (proxies are not used).",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    try:
+        body = SMOKE_RESPONSE_ADAPTER.validate_json(raw_body)
+    except (ValidationError, ValueError) as exc:
+        typer.echo(
+            "Receiver smoke failed: response is not a receiver batch result.",
+            err=True,
+        )
         raise typer.Exit(code=1) from exc
     body["http_status"] = status
     typer.echo(json.dumps(body, sort_keys=True))
+
+
+SMOKE_ARGV_CREDENTIAL_WARNING: Final = (
+    "--token is deprecated: argv shows in ps and shell history; use --token-file."
+)
+STDIN_PATH_MARKER: Final = "-"
+SMOKE_TOKEN_PATTERN: Final = re.compile(r"[\x21-\x7e]+")
+
+
+def _smoke_bearer_token(token: str | None, token_file: str | None) -> str:
+    """The bearer token for ``smoke`` from exactly one source, never printed."""
+    if (token is None) == (token_file is None):
+        typer.echo(
+            "Receiver smoke failed: give exactly one of --token-file or --token.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if token is not None:
+        typer.echo(SMOKE_ARGV_CREDENTIAL_WARNING, err=True)
+        candidate = token
+    else:
+        try:
+            if token_file == STDIN_PATH_MARKER:
+                candidate = sys.stdin.read()
+            else:
+                candidate = Path(cast("str", token_file)).read_text(
+                    encoding="utf-8-sig"
+                )
+        except (OSError, UnicodeDecodeError) as exc:
+            typer.echo("Receiver smoke failed: could not read the token.", err=True)
+            raise typer.Exit(code=1) from exc
+    candidate = candidate.strip()
+    # Printable ASCII only: a newline or non-Latin-1 character makes urllib raise
+    # while building the Authorization header instead of failing cleanly.
+    if SMOKE_TOKEN_PATTERN.fullmatch(candidate) is None:
+        typer.echo("Receiver smoke failed: the token is not usable.", err=True)
+        raise typer.Exit(code=1)
+    return candidate
 
 
 @receiver_app.command("intake-smoke")
@@ -2795,7 +2919,7 @@ def intake_smoke(
         # forwarded to another host or downgraded from https to http.
         with cast(
             "HTTPResponse",
-            _intake_smoke_opener().open(
+            _bearer_opener().open(
                 request,
                 timeout=INTAKE_SMOKE_TIMEOUT_SECONDS,
             ),
@@ -2836,12 +2960,13 @@ def intake_smoke(
         raise typer.Exit(code=1)
 
 
-def _intake_smoke_opener() -> OpenerDirector:
+def _bearer_opener() -> OpenerDirector:
     """An opener that refuses redirects instead of replaying the bearer token.
 
-    ``urllib`` copies the original headers onto every redirect it follows, so an
-    automatic redirect would hand the intake token to whatever host the response
-    names, including an https-to-http downgrade.
+    Shared by ``smoke`` and ``intake-smoke``. ``urllib`` copies the original
+    headers onto every redirect it follows, so an automatic redirect would hand
+    the bearer token to whatever host the response names, including an
+    https-to-http downgrade.
     """
 
     class _RefuseRedirect(HTTPRedirectHandler):

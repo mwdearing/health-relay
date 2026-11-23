@@ -12,6 +12,7 @@ from health_bridge.queries._common import (
     source_from_row,
     unique_sources,
 )
+from health_bridge.queries.args import require_daily_span
 from health_bridge.queries.models import (
     DailyObservation,
     DailySampleStatistic,
@@ -78,6 +79,7 @@ def get_daily_summary(
     start_date: str,
     end_date: str,
 ) -> DailySummaryResult:
+    require_daily_span(start_date, end_date)
     start_time, end_time = date_bounds(start_date, end_date)
     with connect_readonly(db_path) as connection:
         sample_rows = SAMPLE_DAILY_ROWS_ADAPTER.validate_python(

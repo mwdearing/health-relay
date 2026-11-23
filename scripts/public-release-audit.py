@@ -104,6 +104,28 @@ ALLOWED_PAIRING_CODES = frozenset(
         "STUVW-XYZ23-45678",
     }
 )
+# Published contact addresses that are intentionally public, allowed only in the
+# exact files that must state them (path, address).
+ALLOWED_PUBLISHED_CONTACT_EMAILS = frozenset(
+    {
+        # Published support/privacy contact; the docs and their drift test must match.
+        ("docs/hosted/README.md", "health-relay-support@technology.mozmail.com"),
+        (
+            "docs/hosted/privacy-policy.md",
+            "health-relay-support@technology.mozmail.com",
+        ),
+        ("docs/hosted/support.md", "health-relay-support@technology.mozmail.com"),
+        (
+            "tests/guardrails/test_hosted_pages_drafts.py",
+            "health-relay-support@technology.mozmail.com",
+        ),
+        # This allowlist itself names the address.
+        (
+            "scripts/public-release-audit.py",
+            "health-relay-support@technology.mozmail.com",
+        ),
+    }
+)
 TEAM_ID_KEYS = frozenset(
     {
         "developmentteam",
@@ -527,7 +549,15 @@ def scan_plist_team_ids(path: Path, data: bytes) -> list[str]:
     return blockers
 
 
-def is_allowed_strict_match(pattern: StrictPattern, match: re.Match[str]) -> bool:
+def is_allowed_strict_match(
+    pattern: StrictPattern, match: re.Match[str], path: Path | None = None
+) -> bool:
+    if pattern.name == "account-linked-email":
+        return (
+            path is not None
+            and (path.as_posix(), match.group(0).lower())
+            in ALLOWED_PUBLISHED_CONTACT_EMAILS
+        )
     if pattern.name == "literal-invitation-secret":
         return match.group(0) in ALLOWED_INVITATION_SECRETS
     if pattern.name == "literal-pairing-code":
@@ -658,7 +688,7 @@ def scan_patterns(
         ):
             continue
         for match in pattern.regex.finditer(text):
-            if is_allowed_strict_match(pattern, match):
+            if is_allowed_strict_match(pattern, match, path):
                 continue
             if (
                 pattern.name == "non-neutral-bundle-literal"
@@ -729,15 +759,18 @@ def local_denylist_consulted() -> bool:
 def strict_audit_blockers(
     paths: list[Path], *, allow_missing_denylist: bool
 ) -> list[str]:
-    if local_denylist_consulted():
-        return scan_strict_blockers(paths)
-    if allow_missing_denylist:
-        # CI opt-out only: the private values are not checked, and the summary says so.
-        return []
+    # Built-in patterns always run. Only the operator's private values depend on
+    # the gitignored local denylist, which local_strict_patterns() skips if absent.
+    blockers = scan_strict_blockers(paths)
+    if local_denylist_consulted() or allow_missing_denylist:
+        return blockers
     # Fail closed: without the operator's values a strict run proves nothing
     # about them, so it must not report the same PASS as a checked run.
     names = ", ".join(path.as_posix() for path in LOCAL_DENYLIST_FILES)
-    return [f"local-denylist missing: {names}; strict private values were not checked"]
+    return [
+        f"local-denylist missing: {names}; strict private values were not checked",
+        *blockers,
+    ]
 
 
 def strict_pass_line() -> str:
@@ -748,8 +781,9 @@ def strict_pass_line() -> str:
             f"({count} local denylist patterns)."
         )
     return (
-        "PASS: no strict public-surface blockers found in the tracked tree, but the "
-        "local denylist was NOT consulted (--allow-missing-local-denylist)."
+        "PASS: built-in patterns ran on the tracked tree with no blockers; the "
+        "private local denylist values were NOT checked "
+        "(--allow-missing-local-denylist)."
     )
 
 

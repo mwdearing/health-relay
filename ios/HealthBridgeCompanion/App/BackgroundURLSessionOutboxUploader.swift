@@ -126,7 +126,11 @@ final class BackgroundURLSessionOutboxUploader: NSObject, @unchecked Sendable, U
               legacyEventFinalizationCoordinator.stateSnapshot().isIdle else {
             return 0
         }
-        let pendingItems = try outbox.uploadablePendingItems(for: receiverBindingID)
+        // The outbox read reconciles the manifest and scans payload files; keep it off the main actor.
+        nonisolated(unsafe) let outboxForRead = outbox
+        let pendingItems = try await Task.detached(priority: .utility) {
+            try outboxForRead.uploadablePendingItems(for: receiverBindingID)
+        }.value
         guard !pendingItems.isEmpty else { return 0 }
         guard let scheduledItemIDs = await currentScheduledItemIDs() else {
             return 0
@@ -864,10 +868,18 @@ final class BackgroundURLSessionOutboxUploader: NSObject, @unchecked Sendable, U
                 httpStatusCode: statusCode,
                 responseBody: responseBody
             )
+        let retryAfterSeconds = BackgroundOutboxUploadCompletionPolicy.retryAfterSeconds(
+            statusCode: statusCode,
+            headerValue: (task.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After")
+        )
+        if let retryAfterSeconds {
+            BackgroundUploadRetryDeadline.note(retryAfterSeconds: retryAfterSeconds, now: Date())
+        }
         let completion = BackgroundUploadTaskCompletion(
             statusCode: statusCode,
             hadTransportError: error != nil,
-            sleepMinimumResetEpoch: minimumResetEpoch
+            sleepMinimumResetEpoch: minimumResetEpoch,
+            retryAfterSeconds: retryAfterSeconds
         )
         let completionMetadataPersisted: Bool
         if ownershipRecord == nil {
