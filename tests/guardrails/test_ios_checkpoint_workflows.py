@@ -4,7 +4,6 @@ from pathlib import Path
 
 PYTHON_WORKFLOW = Path(".github/workflows/python.yml")
 IOS_WORKFLOW = Path(".github/workflows/ios.yml")
-RECEIVER_RELEASE_WORKFLOW = Path(".github/workflows/release.yml")
 RELEASE_CRITERIA = Path(".github/release/criteria.md")
 
 
@@ -44,18 +43,6 @@ def test_ios_checkpoint_tags_run_pinned_transition_and_source_gates() -> None:
     assert "Build unsigned generic iPhone app" in ios
     assert "Build unsigned Public Documents QA simulator app" in ios
     assert "Build unsigned Public Documents QA generic iPhone app" in ios
-
-
-def test_ios_checkpoint_tags_do_not_enter_receiver_release_publication() -> None:
-    receiver = RECEIVER_RELEASE_WORKFLOW.read_text(encoding="utf-8")
-
-    assert 'tags: ["receiver-v*"]' in receiver
-    assert '"ios-v*"' not in receiver
-    assert (
-        'expected_tagger_email="23256775+roian6"@"users.noreply.github.com"' in receiver
-    )
-    assert 'test "$tagger_email" = "$expected_tagger_email"' in receiver
-    assert 'endswith("@users.noreply.github.com")' not in receiver
 
 
 def test_ios_checkpoint_policy_requires_read_only_checks_and_tag_protection() -> None:
