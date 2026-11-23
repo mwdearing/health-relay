@@ -19,7 +19,6 @@ from health_bridge.receiver.invitations import (
     redeem_pairing_invitation,
 )
 from health_bridge.receiver.pairing import (
-    pairing_bundle_from_deep_link,
     pairing_invitation_from_deep_link,
 )
 from health_bridge.receiver.tokens import authenticate_receiver_token
@@ -946,12 +945,9 @@ def test_receiver_create_pairing_cli_requires_setup_page_or_explicit_secret_outp
     assert not db_path.exists()
 
 
-def test_receiver_create_pairing_cli_prints_secret_json_only_with_explicit_flag(
-    tmp_path: Path,
-) -> None:
+def test_receiver_create_pairing_cli_rejects_legacy_v1_flag(tmp_path: Path) -> None:
     # Given
-    db_path = tmp_path / "receiver.sqlite"
-    receiver_url = "https://health-bridge.example.test/v1/batches"
+    db_path = tmp_path / "health.sqlite"
 
     # When
     result = run(
@@ -966,7 +962,7 @@ def test_receiver_create_pairing_cli_prints_secret_json_only_with_explicit_flag(
             "--label",
             "maintainer-iphone",
             "--receiver-url",
-            receiver_url,
+            "https://receiver.example.test:8443",
             "--format",
             "json",
             "--print-secret",
@@ -976,36 +972,13 @@ def test_receiver_create_pairing_cli_prints_secret_json_only_with_explicit_flag(
         text=True,
         check=False,
     )
-    output = ReceiverPairingCliOutput.model_validate_json(result.stdout)
 
     # Then
-    assert result.returncode == 0, result.stderr
-    assert result.stderr == ""
-    assert output.schema_id == "health_bridge.receiver_pairing.v1"
-    assert output.schema_version == "1.0.0"
-    assert output.label == "maintainer-iphone"
-    assert output.receiver_url == receiver_url
-    assert output.bearer_token.startswith("hb_")
-    assert output.token_prefix == output.bearer_token[:11]
-    assert output.pairing_url.startswith("healthrelay://pair?payload=")
-    assert "secret" in output.warning.lower()
-    assert authenticate_receiver_token(db_path, output.bearer_token)
-    decoded = pairing_bundle_from_deep_link(output.pairing_url)
-    assert decoded.receiver_url == output.receiver_url
-    assert decoded.bearer_token == output.bearer_token
-
-    with connect_database(db_path) as connection:
-        row = RECEIVER_TOKEN_ROW_ADAPTER.validate_python(
-            connection.execute(
-                "select token_label, token_prefix, token_hash from receiver_tokens",
-            ).fetchone(),
-        )
-
-    assert row is not None
-    assert row[0] == "maintainer-iphone"
-    assert row[1] == output.token_prefix
-    assert row[2] != output.bearer_token
-    assert output.bearer_token not in row[2]
+    assert result.returncode != 0
+    plain_output = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout + result.stderr)
+    assert "No such option" in plain_output
+    assert "--legacy-v1" in plain_output
+    assert not db_path.exists()
 
 
 def test_receiver_create_pairing_cli_defaults_to_v2_invitation_json(

@@ -492,7 +492,7 @@ def test_private_storage_preflight_retries_atomic_connection_and_cursor_store() 
     preflight = source[start:end]
 
     assert preflight.index("ensureAtomicConnectionRecord()") < preflight.index(
-        "migrateLegacyHashedReceiverIdentities"
+        "Self.migrateAndCheckOutboxIdentities(snapshot)"
     )
     assert "cursorStore = try FileSyncCursorStore" in preflight
     assert "try cursorStore.validateReadableAndWritable()" in preflight
@@ -501,7 +501,11 @@ def test_private_storage_preflight_retries_atomic_connection_and_cursor_store() 
         "ReceiverConnectionRecordRecoveryPolicy.requiresDestructiveRecovery(error)"
         in preflight
     )
-    assert "ReceiverOutboxAdmissionPolicy.isReady(" in preflight
+    helper_start = source.index(
+        "nonisolated private static func migrateAndCheckOutboxIdentities"
+    )
+    helper = source[helper_start:start]
+    assert "ReceiverOutboxAdmissionPolicy.isReady(" in helper
     assert "outboxIdentityMigrationReady = false" in preflight
 
 
