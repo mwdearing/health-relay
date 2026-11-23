@@ -39,7 +39,7 @@ HealthRelay builds on Apple Health AI Bridge, the open-source project behind Hea
 | **First-sync history window** | Fixed presets | Adds a 7-day option, and the ECG and medication lanes honor the chosen window |
 | **Activity Log** | Generic status labels | Names the lane on each row and collapses runs of empty results into one counted line, so a manual sync reads as a short sequence instead of dozens of identical rows |
 | **Own identity and pairing** | Shares the upstream app's scheme | `healthrelay://pair` scheme, own name, icon and bundle id, so a scanned pairing code cannot open the upstream app |
-| **Release path** | App Store build | Signed beta builds on request (see step 1), or an unsigned IPA you build and sign yourself |
+| **Release path** | App Store build | Optional signed beta builds on TestFlight (see step 1), or an unsigned IPA you build and sign yourself |
 
 Fixes found by running the fork against a real receiver and phone (all in [`FORK.md`](FORK.md)):
 
@@ -47,7 +47,7 @@ Fixes found by running the fork against a real receiver and phone (all in [`FORK
 - The receiver no longer permanently rejects Apple Health export uploads with HTTP 403; because the outbox is strictly first-in-first-out, that one rejected item used to block every lane queued behind it.
 - ECG is kept out of the automatic background lane set, where its foreground-only type stalled the whole sync cycle.
 
-The generic pieces (ECG, dietary types, workouts) are intended to be offered upstream as pull requests. The medication, lab-import and receiver-specific parts stay here. HealthRelay has no App Store listing: install a maintainer-signed beta build on request, or build it yourself.
+The generic pieces (ECG, dietary types, workouts) are intended to be offered upstream as pull requests. The medication, lab-import and receiver-specific parts stay here. HealthRelay is on the App Store, with optional signed beta builds on TestFlight. You can also build it yourself.
 
 ## How it works
 
