@@ -1,6 +1,7 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
 from pydantic import TypeAdapter
 
 from health_bridge.queries import (
@@ -988,3 +989,23 @@ def test_explain_sources_returns_source_catalog_and_sync_cursors(
     }
     assert result.missing_data_notes != ()
     assert result.truncated is False
+
+
+def test_get_daily_summary_rejects_a_span_over_the_cap(tmp_path: Path) -> None:
+    # Given
+    db_path = initialized_fixture_db(tmp_path)
+
+    # When / Then
+    with pytest.raises(ValueError, match="must not exceed 366 days"):
+        _ = get_daily_summary(db_path, start_date="2016-01-01", end_date="2026-01-01")
+
+
+def test_get_daily_summary_accepts_the_longest_allowed_span(tmp_path: Path) -> None:
+    # Given
+    db_path = initialized_fixture_db(tmp_path)
+
+    # When
+    result = get_daily_summary(db_path, start_date="2025-01-01", end_date="2026-01-02")
+
+    # Then
+    assert len(result.days) == 366

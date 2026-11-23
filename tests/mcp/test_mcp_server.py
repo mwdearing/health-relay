@@ -13,10 +13,9 @@ from health_bridge.mcp.tools import (
     DATE_RANGE_INPUT_SCHEMA,
     MCP_TOOL_DEFINITIONS,
     TIMESERIES_INPUT_SCHEMA,
-    DateRangeArgs,
-    TimeseriesArgs,
 )
 from health_bridge.mcp.types import required_object
+from health_bridge.queries.args import DateRangeArgs, TimeseriesArgs
 from health_bridge.storage import initialize_database
 from health_bridge.storage.database import connect_database
 from tests.fixture_helpers import initialized_fixture_db

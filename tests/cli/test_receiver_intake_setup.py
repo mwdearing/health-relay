@@ -349,6 +349,52 @@ def test_intake_setup_cli_rotate_refuses_when_the_old_token_cannot_be_identified
     assert "intake-revoke-token" in result.output
 
 
+def test_intake_setup_cli_rotate_refuses_a_file_held_by_another_producer(
+    tmp_path: Path,
+) -> None:
+    # Given: producer A's secret file, and a rotation run for producer B on it
+    db_path = tmp_path / "receiver.sqlite"
+    secret_path = tmp_path / "private" / "intake-token.json"
+    first = _setup(db_path, secret_path)
+    before = secret_path.read_bytes()
+    other_args = [
+        "--producer-id",
+        "other-app",
+        "--writer-bundle-id",
+        "dev.example.other",
+    ]
+
+    # When
+    result = _cli(*_setup_args(db_path, secret_path), *other_args, "--rotate")
+
+    # Then: nothing is retired, written or issued
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "other-app" in result.output
+    assert PRODUCER_ID in result.output
+    assert secret_path.read_bytes() == before
+    assert _active_token_prefixes(db_path) == [first.token_prefix]
+
+
+def test_intake_setup_cli_rotate_refuses_a_file_held_by_another_owner(
+    tmp_path: Path,
+) -> None:
+    # Given
+    db_path = tmp_path / "receiver.sqlite"
+    secret_path = tmp_path / "private" / "intake-token.json"
+    first = _setup(db_path, secret_path)
+    before = secret_path.read_bytes()
+
+    # When: same producer id, different owner
+    result = _run_setup(db_path, secret_path, "--rotate", "--owner-id", "other-owner")
+
+    # Then
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert secret_path.read_bytes() == before
+    assert _active_token_prefixes(db_path) == [first.token_prefix]
+
+
 def test_intake_setup_cli_claims_the_secret_path_before_touching_the_database(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

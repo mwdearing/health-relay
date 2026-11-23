@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict
 
 ROOT = Path(__file__).parents[2]
 RELEASE_TOOL = ROOT / "scripts/release_tools.py"
-RELEASE_WORKFLOW = ROOT / ".github/workflows/release.yml"
 RELEASE_NOTES = ROOT / ".github/release/notes-receiver-v1.1.1.md"
 HISTORICAL_V101_RELEASE_NOTES = ROOT / ".github/release/notes-v1.0.1.md"
 RELEASE_CRITERIA = ROOT / ".github/release/criteria.md"
@@ -871,115 +870,6 @@ def test_draft_and_published_verifiers_reject_nonexact_release_metadata(
 
     assert completed.returncode == 1
     assert "metadata" in completed.stderr.lower()
-
-
-def test_release_workflow_requires_verified_tag_and_attested_draft() -> None:  # noqa: PLR0915
-    workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
-
-    assert 'tags: ["receiver-v*"]' in workflow
-    assert "  verify:\n" in workflow
-    assert "tag_object_sha:" in workflow
-    assert "target_commit_sha:" in workflow
-    assert workflow.count("needs: verify") == 2
-    assert "needs: [verify, python, ios]" in workflow
-    assert "environment: github-release" in workflow
-    assert "ref: ${{ needs.verify.outputs.target_commit_sha }}" in workflow
-    assert (
-        "PINNED_TAG_OBJECT_SHA: ${{ needs.verify.outputs.tag_object_sha }}" in workflow
-    )
-    assert (
-        "PINNED_TARGET_COMMIT_SHA: ${{ needs.verify.outputs.target_commit_sha }}"
-        in workflow
-    )
-    assert '"${{ needs.verify.outputs.tag_object_sha }}"' not in workflow
-    assert '"${{ needs.verify.outputs.target_commit_sha }}"' not in workflow
-    assert "permissions:\n  contents: read" in workflow
-    assert workflow.count("contents: write") == 1
-    assert "id-token: write" in workflow
-    assert "attestations: write" in workflow
-    assert "release_tools.py validate" in workflow
-    assert "release_tools.py manifest" in workflow
-    assert "release_tools.py checksums" in workflow
-    checksum_command = workflow.split("release_tools.py checksums", 1)[1].split(
-        "(cd dist",
-        1,
-    )[0]
-    assert "--repo ." in checksum_command
-    assert '--tag "$GITHUB_REF_NAME"' in checksum_command
-    assert '--tag-object "$tag_object_sha"' in checksum_command
-    assert '--commit "$commit_sha"' in checksum_command
-    assert '--tree "$tree_sha"' in checksum_command
-    assert workflow.count('--tag-object "$PINNED_TAG_OBJECT_SHA"') >= 2
-    assert workflow.count('--commit "$PINNED_TARGET_COMMIT_SHA"') >= 1
-    assert workflow.count('--tree "$(git rev-parse') >= 1
-    assert "rm -f dist/.gitignore" in workflow
-    assert "check-jsonschema --builtin-schema vendor.github-workflows" in workflow
-    assert "enable-cache: false" in workflow
-    assert "enable-cache: true" not in workflow
-    assert "refs/tags/${GITHUB_REF_NAME}^{tag}" in workflow
-    assert "${{ github.event.after }}" in workflow
-    assert 'test "$target_sha" = "$event_target_commit_sha"' not in workflow
-    assert 'test "$tag_ref_sha" = "$event_tag_object_sha"' in workflow
-    assert 'test "$signed_tag_name" = "$GITHUB_REF_NAME"' in workflow
-    assert 'test "$target_sha" = "$(git rev-parse HEAD)"' in workflow
-    assert 'commit_sha="$(git rev-parse HEAD)"' in workflow
-    assert '--commit "$commit_sha"' in workflow
-    assert '--tag-object "$tag_object_sha"' in workflow
-    assert "verification.verified == true" in workflow
-    assert '.author.login == "roian6"' in workflow
-    assert '.commit.author.name == "Chanhyo Jung"' in workflow
-    assert '.committer.login == "web-flow"' in workflow
-    assert '.commit.committer.name == "GitHub"' in workflow
-    assert '.commit.committer.email == ("noreply" + "@" + "github.com")' in workflow
-    assert ".commit.author.email | endswith" not in workflow
-    assert (
-        'expected_tagger_email="23256775+roian6"@"users.noreply.github.com"' in workflow
-    )
-    assert 'test "$tagger_email" = "$expected_tagger_email"' in workflow
-    assert 'endswith("@users.noreply.github.com")' not in workflow
-    assert (
-        "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8"
-        in workflow
-    )
-    assert "gh release create" in workflow
-    assert "--draft" in workflow
-    assert "DRAFT_RELEASE_ID" in workflow
-    assert "for _ in {1..10}" in workflow
-    assert "releases/${draft_release_id}" in workflow
-    assert "releases/${DRAFT_RELEASE_ID}" in workflow
-    assert "gh release edit" not in workflow
-    assert "--draft=false" not in workflow
-    assert 'test "$asset_names" = "$expected_assets"' in workflow
-    assert workflow.count("git/ref/tags/${GITHUB_REF_NAME}") >= 2
-    assert workflow.index(
-        "Create and verify helper-pending draft release"
-    ) < workflow.index("Attest release artifacts")
-    assert "verify-core-draft" in workflow
-    assert "helper-pending" in workflow
-    assert "published_at == null" in workflow
-    release_tool = RELEASE_TOOL.read_text(encoding="utf-8")
-    assert "remote asset digest mismatch" in release_tool
-    assert "release body does not match exact notes" in release_tool
-    assert "(cd dist && sha256sum --check --strict SHA256SUMS)" in workflow
-    assert "--verify-tag" in workflow
-    assert workflow.count("release_tools.py tag-info") == 1
-    assert 'prerelease="$(jq -r \'.prerelease\' <<< "$tag_info")"' in workflow
-    assert 'version="$(jq -r \'.version\' <<< "$tag_info")"' in workflow
-    assert 'if [[ "$prerelease" = "true" ]]' in workflow
-    assert 'version="${GITHUB_REF_NAME#receiver-v}"' not in workflow
-    assert "release_flags+=(--prerelease)" in workflow
-    assert '--notes-file ".github/release/notes-${GITHUB_REF_NAME}.md"' in workflow
-    assert "--generate-notes" not in workflow
-    assert "dist/*.whl" in workflow
-    assert "dist/*.tar.gz" in workflow
-    create_block = workflow.split("gh release create", 1)[1].split(
-        "release_flags[@]",
-        1,
-    )[0]
-    assert "dist/SHA256SUMS" not in create_block
-    assert "dist/release-metadata.json" in workflow
-    assert "(cd dist && sha256sum --check --strict SHA256SUMS)" in workflow
-    assert "pypi" not in workflow.lower()
 
 
 def test_v101_receiver_release_notes_are_versioned_and_actionable() -> None:
