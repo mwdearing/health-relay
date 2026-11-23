@@ -121,7 +121,7 @@
     "name": "get_sleep_summary"
   },
   {
-    "description": "Answers what each day looked like across metrics: sum-safe sample_totals for additive metrics (such as steps) and sample_statistics for non-summable metrics (such as heart rate or weight), per day. A day is the device's calendar day when the app recorded one, otherwise the UTC day. The best tool for week or month questions. Dates use YYYY-MM-DD and range bounds are UTC midnights. start_date is inclusive and end_date is EXCLUSIVE, so for one day set end_date to the next day (2026-06-03 to 2026-06-04); start_date equal to end_date is an empty window. Read-only, no clinical interpretation.",
+    "description": "Answers what each day looked like across metrics: sum-safe sample_totals for additive metrics (such as steps) and sample_statistics for non-summable metrics (such as heart rate or weight), per day. A day is the device's calendar day when the app recorded one, otherwise the UTC day. The best tool for week or month questions. Dates use YYYY-MM-DD and range bounds are UTC midnights. start_date is inclusive and end_date is EXCLUSIVE, so for one day set end_date to the next day (2026-06-03 to 2026-06-04); start_date equal to end_date is an empty window. The range may span at most 366 days; longer ranges are rejected, so ask for a year at a time. Read-only, no clinical interpretation.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {

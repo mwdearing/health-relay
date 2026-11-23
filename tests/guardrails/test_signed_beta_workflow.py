@@ -188,7 +188,7 @@ def test_xcodebuild_output_stays_out_of_the_public_log() -> None:
     for line in text.splitlines():
         stripped = line.strip()
         if "$log" in stripped and not stripped.startswith(
-            ("local ", "if ", "grep -q", "errs=$(grep ")
+            ("local ", "if ", "grep -q", "errs=$(grep ", "codes=$(grep -oE ")
         ):
             assert (
                 stripped.startswith(("quiet ", '"$RUNNER_TEMP'))
@@ -197,6 +197,10 @@ def test_xcodebuild_output_stays_out_of_the_public_log() -> None:
     assert "tail " not in text
     assert "sed -E" not in text
     assert "category:" in text
+    # Only fixed Apple code patterns are printed from the log; never raw lines.
+    assert "ITMS-[0-9]{5,6}" in text
+    assert "xcodebuild: $line" not in text
+    assert "xcodebuild reports a distribution" in text
     cleanup = _steps()[-1]
     assert "archive.log" in str(cleanup["run"])
     assert "export.log" in str(cleanup["run"])
@@ -341,12 +345,12 @@ INVOCATION_HEADER = """\
 Command line invocation:
     /usr/bin/xcodebuild archive -project X.xcodeproj -allowProvisioningUpdates \
         -authenticationKeyPath /tmp/asc/AuthKey.p8 -authenticationKeyID KEYID00000 \
-        DEVELOPMENT_TEAM=TEAMID0000 MARKETING_VERSION=1.2.2 CURRENT_PROJECT_VERSION=140
+        DEVELOPMENT_TEAM=tid MARKETING_VERSION=1.2.2 CURRENT_PROJECT_VERSION=140
 
 Build settings from command line:
     CODE_SIGN_STYLE = Automatic
     CURRENT_PROJECT_VERSION = 140
-    DEVELOPMENT_TEAM = TEAMID0000
+    DEVELOPMENT_TEAM = tid
     MARKETING_VERSION = 1.2.2
     PRODUCT_BUNDLE_IDENTIFIER = com.example.fixture
 
