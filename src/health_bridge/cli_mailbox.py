@@ -117,18 +117,26 @@ def import_mailbox(
         _emit_import_result(MailboxImportResult(retryable=1), json_output)
         raise typer.Exit(code=2) from None
     except sqlite3.Error as exc:
-        # Opening the importer migrates the database. A failure there is setup:
-        # a busy or locked file is retryable, anything else is reported like the
-        # probe's failure. A failure after the importer opened is the pass
-        # itself, not a database that cannot be read, so it stays retryable.
-        if importer is not None or (
-            isinstance(exc, sqlite3.OperationalError)
-            and _is_transient_sqlite_error(exc)
-        ):
-            _emit_import_result(MailboxImportResult(retryable=1), json_output)
-            raise typer.Exit(code=2) from None
-        _fail_import("database_unreadable", json_output)
+        _report_sqlite_error(exc, importer is not None, json_output)
     _emit_import_result(result, json_output)
+
+
+def _report_sqlite_error(
+    exc: sqlite3.Error, importer_opened: bool, json_output: bool
+) -> NoReturn:
+    """Map a sqlite error from opening the importer or from the pass.
+
+    A busy, locked, full or failing-I/O database is retryable in either phase.
+    Anything else is permanent: before the importer opened it is reported like
+    the probe's failure; after, the database opened and the pass itself failed,
+    so it gets its own code and no guidance to fix access or run `init`.
+    """
+    if isinstance(exc, sqlite3.OperationalError) and _is_transient_sqlite_error(exc):
+        _emit_import_result(MailboxImportResult(retryable=1), json_output)
+        raise typer.Exit(code=2) from None
+    if importer_opened:
+        _fail_import("import_database_error", json_output)
+    _fail_import("database_unreadable", json_output)
 
 
 # Mailbox file errors a later run cannot fix. Storage I/O, a delivery failure or

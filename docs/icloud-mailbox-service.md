@@ -211,10 +211,12 @@ is not a receiver and device directory pair, or its record is invalid),
 `connection_storage_unsafe`, `connection_conflict`, `helper_not_ready` (the
 signed ACK helper is missing or not ready on macOS, or its bundle identity
 cannot be read), and `mailbox_unavailable` (a mailbox entry is unsafe or larger
-than the import limit). Mailbox storage I/O errors, a failed delivery, an entry
-replaced while it was being read, a helper that ran but timed out, failed or
-returned a mismatched receipt, and a database error raised during the import
-pass itself exit 2 instead, since a later run can succeed.
+than the import limit), and `import_database_error` (the database opened, but a
+database error that a rerun will not clear was raised during the import pass
+itself; do not run `init`, inspect the database). Mailbox storage I/O errors, a
+failed delivery, an entry replaced while it was being read, a helper that ran
+but timed out, failed or returned a mismatched receipt, and a busy, locked or
+full database exit 2 instead, since a later run can succeed.
 
 Check the service with:
 

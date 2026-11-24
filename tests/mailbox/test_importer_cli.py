@@ -238,13 +238,36 @@ class _FailingPass:
         sqlite3.OperationalError("no such table: samples"),
     ],
 )
-def test_import_sqlite_error_during_the_pass_is_not_a_setup_error(
+def test_import_persistent_sqlite_error_during_the_pass_is_permanent_but_not_setup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
 ) -> None:
     value = environment(tmp_path)
 
     def fail_during_pass(_db: Path, _mailbox: Path) -> _FailingPass:
         return _FailingPass(error)
+
+    monkeypatch.setattr(
+        "health_bridge.cli_mailbox.production_importer", fail_during_pass
+    )
+    result = _run_import(value.db_path, value.mailbox_path, "--json")
+
+    assert result.exit_code == 3
+    assert json.loads(result.stdout) == {
+        "error_code": "import_database_error",
+        "status": "error",
+    }
+
+
+@pytest.mark.parametrize(
+    "message", ["database is locked", "disk I/O error", "database or disk is full"]
+)
+def test_import_transient_sqlite_error_during_the_pass_stays_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, message: str
+) -> None:
+    value = environment(tmp_path)
+
+    def fail_during_pass(_db: Path, _mailbox: Path) -> _FailingPass:
+        return _FailingPass(sqlite3.OperationalError(message))
 
     monkeypatch.setattr(
         "health_bridge.cli_mailbox.production_importer", fail_during_pass
