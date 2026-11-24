@@ -57,6 +57,10 @@ EXPECTED_TABLES = {
     "electrocardiograms",
     "medication_dose_events",
     "lab_results",
+    "daily_projection_owners",
+    "daily_projection_records",
+    "daily_projection_fences",
+    "daily_projection_replays",
 }
 
 
@@ -491,6 +495,11 @@ def test_initialize_database_creates_core_tables_when_database_is_empty(
         ("014_intake_context_tokens",),
         ("015_range_guards",),
         ("016_source_scoped_types",),
+        ("017_daily_projection_state",),
+        ("018_daily_projection_fence_order",),
+        ("019_catalogue_coverage_index",),
+        ("020_mailbox_enrollment",),
+        ("021_uv_raw_aggregation",),
     ]
 
 
@@ -509,7 +518,7 @@ def test_initialize_database_is_idempotent_when_called_twice(tmp_path: Path) -> 
             "select count(*) from schema_migrations",
         )
 
-    assert migration_count == 16
+    assert migration_count == 21
 
 
 def _create_legacy_sleep_revision_database(db_path: Path) -> None:
