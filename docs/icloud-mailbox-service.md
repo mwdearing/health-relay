@@ -189,6 +189,31 @@ attempts to reactivate the old job. `upgraded` reports a changed generation;
 `upgrade_recovery_required` error means automatic rollback or reactivation did
 not complete and the owned service state needs operator inspection.
 
+Run one manual import pass with `health-bridge mailbox import --db PATH
+--mailbox DIR --once`. The database must already exist and be initialized (run
+`health-bridge init` first); the command never creates or migrates a missing
+database. Exit codes:
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | The pass finished; counts are on standard output. |
+| 2 | Retryable: another importer holds the lock, or a transient storage error occurred. Try again. |
+| 2 | Usage error: `--once` was omitted (or an option is missing or invalid). The command prints a usage message and shares exit 2 with the retryable case, but rerunning unchanged fails every time; add `--once`. |
+| 3 | Permanent setup error; retrying will not help. With `--json` the object is `{"error_code": "...", "status": "error"}`; otherwise the code is on standard error. |
+
+Exit 3 error codes: `database_unavailable` (no file at `--db`),
+`database_uninitialized` (the file opened and was read, but it is not an initialized
+receiver database; run `health-bridge init`), `database_unreadable` (the file
+exists but could not be opened or read, for example because of permissions or an
+unopenable WAL `-shm` file; fix access, do not run `init`), `connection_unavailable`
+(no connection record for the mailbox), `connection_malformed` (the mailbox path
+is not a receiver and device directory pair, or its record is invalid),
+`connection_storage_unsafe`, `connection_conflict`, `helper_not_ready` (the
+signed ACK helper is missing or not ready on macOS), and `mailbox_unavailable`
+(a mailbox entry is unsafe or larger than the import limit). Mailbox storage
+I/O errors, a failed delivery, or an entry replaced while it was being read
+exit 2 instead, since a later run can succeed.
+
 Check the service with:
 
 ```bash
