@@ -4,6 +4,7 @@ Recent changes to the HealthRelay receiver and app. The newest entry is first. T
 
 ## Unreleased
 
+- **#265**: upstream's receiver `1.2.0` migrations `010` to `014` are carried forward as `017_daily_projection_state`, `018_daily_projection_fence_order`, `019_catalogue_coverage_index`, `020_mailbox_enrollment` and `021_uv_raw_aggregation`, SQL unchanged (the upstream numbers were already taken by this fork's `010` to `014`). Four empty `daily_projection_*` tables, an index on `samples`, three nullable pairing columns and a backfill of raw UV rows; no receiver code reads them yet. Mapping and caveats: `docs/reference/sqlite-v1.md`.
 - **#264**: upstream sync through `receiver-v1.2.0` (package version stays `1.1.1`; `FORK.md` lists what was taken and held). `daily_activity_totals` now counts a daily aggregate only when it is marked complete (or legacy unmarked) and its start and end are the exact calendar-day boundaries for its time zone; partial or mismatched aggregates still appear in `sample_statistics` and `sample_counts` but no longer in the completed-day totals (upstream `be7dc91`, #68). `health-bridge status` and `get_bridge_status` report a metric's sync freshness from its current anchored and automatic cursor kinds, not only the legacy foreground ones (upstream `e6ce6b3`, #111). No schema, protocol or endpoint change.
 - **#170**: each source owns its health type rows, keyed by `(source_id, type_code)`. A batch writes only the sources it declares, and stored aliases are capped at 64 per owned type. Migration `016_source_scoped_types` rebuilds `health_types`, `health_type_aliases` and `samples`. Closes #135.
 - **#169**: migration `015_range_guards` adds database triggers that refuse reversed intervals and negative workout duration, energy and distance. Schema reference: `docs/reference/sqlite-v1.md`.
@@ -35,4 +36,4 @@ From the security, bug and usability review of 2026-11-05. Each line moves under
 
 ## Migrations
 
-Migrations run in order through `016`. A running receiver applies a migration only after it restarts from a checkout that includes it.
+Migrations run in order through `021`. A running receiver applies a migration only after it restarts from a checkout that includes it.
