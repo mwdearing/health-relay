@@ -4,6 +4,7 @@ Recent changes to the HealthRelay receiver and app. The newest entry is first. T
 
 ## Unreleased
 
+- **#264**: upstream sync through `receiver-v1.2.0` (package version stays `1.1.1`; `FORK.md` lists what was taken and held). `daily_activity_totals` now counts a daily aggregate only when it is marked complete (or legacy unmarked) and its start and end are the exact calendar-day boundaries for its time zone; partial or mismatched aggregates still appear in `sample_statistics` and `sample_counts` but no longer in the completed-day totals (upstream `be7dc91`, #68). `health-bridge status` and `get_bridge_status` report a metric's sync freshness from its current anchored and automatic cursor kinds, not only the legacy foreground ones (upstream `e6ce6b3`, #111). No schema, protocol or endpoint change.
 - **#170**: each source owns its health type rows, keyed by `(source_id, type_code)`. A batch writes only the sources it declares, and stored aliases are capped at 64 per owned type. Migration `016_source_scoped_types` rebuilds `health_types`, `health_type_aliases` and `samples`. Closes #135.
 - **#169**: migration `015_range_guards` adds database triggers that refuse reversed intervals and negative workout duration, energy and distance. Schema reference: `docs/reference/sqlite-v1.md`.
 - **#168**: `POST /v1/batches` allows 60 requests per 60 seconds per batch token, then returns 429 `rate_limited` with `Retry-After`. Failed authentication is not counted. The budget is set by `batch_rate_limit_count`.
