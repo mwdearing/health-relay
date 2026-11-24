@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, final
 
 import pytest
 from typer.testing import CliRunner
@@ -15,7 +15,10 @@ from health_bridge.mailbox.connections import (
 )
 from health_bridge.mailbox.filesystem import MailboxFileError, MailboxFileErrorCode
 from health_bridge.mailbox.importer import MailboxBusyError
-from health_bridge.mailbox.native_ack_publication import NativeAckPublicationError
+from health_bridge.mailbox.native_ack_publication import (
+    NativeAckHelperUnavailableError,
+    NativeAckPublicationError,
+)
 from tests.mailbox.importer_support import (
     BATCH,
     IMPORTED_COUNTS,
@@ -169,7 +172,7 @@ def test_import_reports_malformed_mailbox_path_as_permanent(tmp_path: Path) -> N
             MailboxConnectionError(MailboxConnectionErrorCode.UNAVAILABLE),
             "connection_unavailable",
         ),
-        (NativeAckPublicationError("helper"), "helper_not_ready"),
+        (NativeAckHelperUnavailableError("helper"), "helper_not_ready"),
         (MailboxFileError(MailboxFileErrorCode.UNSAFE_ENTRY), "mailbox_unavailable"),
         (MailboxFileError(MailboxFileErrorCode.OVERSIZE), "mailbox_unavailable"),
     ],
@@ -190,6 +193,66 @@ def test_import_maps_permanent_setup_errors(
 
     assert result.exit_code == 3
     assert json.loads(result.stdout) == {"error_code": code, "status": "error"}
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "native ACK helper timed out",
+        "native ACK helper failed",
+        "native ACK helper receipt mismatch",
+    ],
+)
+def test_import_helper_timeout_or_failure_stays_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, message: str
+) -> None:
+    value = environment(tmp_path)
+
+    def fail(_db: Path, _mailbox: Path) -> MailboxImporter:
+        raise NativeAckPublicationError(message)
+
+    monkeypatch.setattr("health_bridge.cli_mailbox.production_importer", fail)
+    result = _run_import(value.db_path, value.mailbox_path, "--json")
+
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["retryable"] == 1
+
+
+@final
+class _FailingPass:
+    """An importer that opened fine and fails while importing."""
+
+    def __init__(self, error: Exception) -> None:
+        self._error: Exception = error
+
+    def import_once(self) -> object:
+        raise self._error
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        sqlite3.IntegrityError("UNIQUE constraint failed: samples.sample_id"),
+        sqlite3.ProgrammingError("Cannot operate on a closed database."),
+        sqlite3.DatabaseError("file is not a database"),
+        sqlite3.OperationalError("no such table: samples"),
+    ],
+)
+def test_import_sqlite_error_during_the_pass_is_not_a_setup_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    value = environment(tmp_path)
+
+    def fail_during_pass(_db: Path, _mailbox: Path) -> _FailingPass:
+        return _FailingPass(error)
+
+    monkeypatch.setattr(
+        "health_bridge.cli_mailbox.production_importer", fail_during_pass
+    )
+    result = _run_import(value.db_path, value.mailbox_path, "--json")
+
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["retryable"] == 1
 
 
 def test_import_busy_stays_retryable_exit_two(

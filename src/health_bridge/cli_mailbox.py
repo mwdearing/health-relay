@@ -25,7 +25,7 @@ from health_bridge.mailbox.importer import (
 )
 from health_bridge.mailbox.models import MailboxImportResult
 from health_bridge.mailbox.native_ack_publication import (
-    NativeAckPublicationError,
+    NativeAckHelperUnavailableError,
     default_native_ack_publisher,
 )
 from health_bridge.receiver._mailbox_key_models import (
@@ -97,14 +97,16 @@ def import_mailbox(
         typer.echo("Mailbox import requires --once.", err=True)
         raise typer.Exit(code=2)
     _require_initialized_database(db, json_output)
+    importer = None
     try:
-        result = production_importer(db, mailbox).import_once()
+        importer = production_importer(db, mailbox)
+        result = importer.import_once()
     except MailboxBusyError:
         _emit_import_result(MailboxImportResult(retryable=1), json_output)
         raise typer.Exit(code=2) from None
     except MailboxConnectionError as exc:
         _fail_import(exc.code.value, json_output)
-    except NativeAckPublicationError:
+    except NativeAckHelperUnavailableError:
         _fail_import("helper_not_ready", json_output)
     except MailboxFileError as exc:
         if exc.code in _PERMANENT_MAILBOX_FILE_ERRORS:
@@ -115,10 +117,13 @@ def import_mailbox(
         _emit_import_result(MailboxImportResult(retryable=1), json_output)
         raise typer.Exit(code=2) from None
     except sqlite3.Error as exc:
-        # Opening the importer migrates the database; a busy or locked file
-        # is retryable, anything else is reported like the probe's failure.
-        if isinstance(exc, sqlite3.OperationalError) and _is_transient_sqlite_error(
-            exc
+        # Opening the importer migrates the database. A failure there is setup:
+        # a busy or locked file is retryable, anything else is reported like the
+        # probe's failure. A failure after the importer opened is the pass
+        # itself, not a database that cannot be read, so it stays retryable.
+        if importer is not None or (
+            isinstance(exc, sqlite3.OperationalError)
+            and _is_transient_sqlite_error(exc)
         ):
             _emit_import_result(MailboxImportResult(retryable=1), json_output)
             raise typer.Exit(code=2) from None
