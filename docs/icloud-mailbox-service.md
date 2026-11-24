@@ -208,9 +208,7 @@ exists but could not be opened or read, for example because of permissions or an
 unopenable WAL `-shm` file; fix access, do not run `init`), `connection_unavailable`
 (no connection record for the mailbox), `connection_malformed` (the mailbox path
 is not a receiver and device directory pair, or its record is invalid),
-`connection_storage_unsafe`, `connection_conflict`, `helper_not_ready` (the
-signed ACK helper is missing or not ready on macOS, or its bundle identity
-cannot be read), and `mailbox_unavailable` (a mailbox entry is unsafe or larger
+`connection_storage_unsafe`, `connection_conflict`, `helper_not_ready` (the signed ACK helper's installation on macOS is missing, not ready, unreadable or unsafe: its bundle or bundle identity, the helper executable, or its protocol directory, for example because of wrong permissions or ownership; repair or reinstall the helper), `mailbox_unavailable` (a mailbox entry is unsafe or larger
 than the import limit), and `import_database_error` (the database opened, but a
 database error that a rerun will not clear was raised during the import pass
 itself; do not run `init`, inspect the database). Mailbox storage I/O errors, a
