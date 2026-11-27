@@ -195,11 +195,14 @@ def test_database_at_012_upgrades_in_place_with_its_data_intact(
 ) -> None:
     path = tmp_path / "old.sqlite"
     full_ids = database_module.MIGRATION_IDS
-    assert full_ids[-4] == "013_intake_context"
-    assert full_ids[-3] == "014_intake_context_tokens"
-    assert full_ids[-2] == "015_range_guards"
-    assert full_ids[-1] == "016_source_scoped_types"
-    monkeypatch.setattr(database_module, "MIGRATION_IDS", full_ids[:-4])
+    intake = full_ids.index("013_intake_context")
+    assert full_ids[intake : intake + 4] == (
+        "013_intake_context",
+        "014_intake_context_tokens",
+        "015_range_guards",
+        "016_source_scoped_types",
+    )
+    monkeypatch.setattr(database_module, "MIGRATION_IDS", full_ids[:intake])
     initialize_database(path)
     with closing(sqlite3.connect(path)) as conn:
         _ = conn.execute(
@@ -216,7 +219,7 @@ def test_database_at_012_upgrades_in_place_with_its_data_intact(
         before_counts = {table: _count_rows(conn, table) for table in tables}
     assert not any("intake" in name for _, name in before_sql)
 
-    monkeypatch.setattr(database_module, "MIGRATION_IDS", full_ids[:-2])
+    monkeypatch.setattr(database_module, "MIGRATION_IDS", full_ids[: intake + 2])
     initialize_database(path)
 
     with closing(sqlite3.connect(path)) as conn:
