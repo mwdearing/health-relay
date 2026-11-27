@@ -16,6 +16,7 @@ public enum OutboxDeliveryFailureCode: String, Codable, Equatable, Sendable {
     case receiverBusy, storageUnavailable, quotaExceeded, internalRetry
     case payloadInvalid, payloadOversize, duplicateConflict
     case principalMismatch, bindingMismatch, generationMismatch, keyRevoked
+    case sleepBaselineResetEpochStale
 
     init(_ errorCode: DeliveryReceiptV1.ErrorCode?) {
         switch errorCode {
@@ -41,6 +42,8 @@ public enum OutboxDeliveryFailureCode: String, Codable, Equatable, Sendable {
             self = .generationMismatch
         case .keyRevoked:
             self = .keyRevoked
+        case .sleepBaselineResetEpochStale:
+            self = .sleepBaselineResetEpochStale
         case nil:
             self = .internalRetry
         }

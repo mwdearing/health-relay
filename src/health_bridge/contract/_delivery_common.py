@@ -43,9 +43,11 @@ TerminalCode: TypeAlias = Literal[
     "binding_mismatch",
     "generation_mismatch",
     "key_revoked",
+    "sleep_baseline_reset_epoch_stale",
 ]
 ReceiptErrorCode: TypeAlias = RetryableCode | TerminalCode
 
+SLEEP_BASELINE_STALE_CODE: Final = "sleep_baseline_reset_epoch_stale"
 RETRYABLE_CODES: Final = frozenset(
     {"receiver_busy", "storage_unavailable", "quota_exceeded", "internal_retry"}
 )
@@ -58,6 +60,7 @@ TERMINAL_CODES: Final = frozenset(
         "binding_mismatch",
         "generation_mismatch",
         "key_revoked",
+        SLEEP_BASELINE_STALE_CODE,
     }
 )
 _HEX_16_PATTERN: Final = re.compile(r"^[0-9a-f]{32}$")

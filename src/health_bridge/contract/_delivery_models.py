@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 from health_bridge.contract._delivery_common import (
     RETRYABLE_CODES,
+    SLEEP_BASELINE_STALE_CODE,
     TERMINAL_CODES,
     fail,
     require_nonnegative_i64,
@@ -152,9 +153,17 @@ class DeliveryReceiptV1:
     dataset_generation: int | None
     committed_at_ms: int | None
     error_code: str | None
+    # Present on the wire only for the stale Sleep reset epoch terminal code.
+    minimum_reset_epoch: int | None = None
 
     def __post_init__(self) -> None:
         require_sha256(self.payload_sha256)
+        if (self.error_code == SLEEP_BASELINE_STALE_CODE) != (
+            self.minimum_reset_epoch is not None
+        ):
+            fail("authentication_failed")
+        if self.minimum_reset_epoch is not None:
+            require_nonnegative_i64(self.minimum_reset_epoch)
         if self.result == "committed":
             if self.error_code is not None or None in {
                 self.receipt_id,
@@ -192,16 +201,17 @@ class DeliveryReceiptV1:
             fail("authentication_failed")
 
     def to_bytes(self) -> bytes:
-        return hbjcs1_encode(
-            {
-                "result": self.result,
-                "payload_sha256": self.payload_sha256,
-                "receipt_id": self.receipt_id,
-                "dataset_generation": self.dataset_generation,
-                "committed_at_ms": self.committed_at_ms,
-                "error_code": self.error_code,
-            }
-        )
+        fields: dict[str, JsonValue] = {
+            "result": self.result,
+            "payload_sha256": self.payload_sha256,
+            "receipt_id": self.receipt_id,
+            "dataset_generation": self.dataset_generation,
+            "committed_at_ms": self.committed_at_ms,
+            "error_code": self.error_code,
+        }
+        if self.minimum_reset_epoch is not None:
+            fields["minimum_reset_epoch"] = self.minimum_reset_epoch
+        return hbjcs1_encode(fields)
 
 
 @dataclass(frozen=True, slots=True)

@@ -45,6 +45,51 @@ final class DeliveryProtocolV1Tests: XCTestCase {
         XCTAssertEqual(try DeliveryProtocolV1.openAck(ack, context: DeliveryProtocolV1TestSupport.ackOpen("python")), receipt)
     }
 
+    func testStaleSleepEpochTerminalAckCarriesEpochFloor() throws {
+        let fixture = try DeliveryProtocolV1TestSupport.fixture("python")
+        let plaintext = try DeliveryProtocolV1TestSupport.data(fixture.plaintext)
+        let stale = DeliveryReceiptV1(
+            result: .terminal,
+            payloadSHA256: plaintext.sha256Hex,
+            receiptID: nil,
+            datasetGeneration: nil,
+            committedAtMS: nil,
+            errorCode: .sleepBaselineResetEpochStale,
+            minimumResetEpoch: 200
+        )
+        let ack = try DeliveryProtocolV1.sealAck(stale, context: DeliveryProtocolV1TestSupport.ackSeal("python"))
+        let opened = try DeliveryProtocolV1.openAck(ack, context: DeliveryProtocolV1TestSupport.ackOpen("python"))
+        XCTAssertEqual(opened, stale)
+        XCTAssertEqual(opened.minimumResetEpoch, 200)
+    }
+
+    func testEpochFloorBelongsOnlyToTheStaleSleepEpochCode() throws {
+        let fixture = try DeliveryProtocolV1TestSupport.fixture("python")
+        let plaintext = try DeliveryProtocolV1TestSupport.data(fixture.plaintext)
+        let invalid = [
+            DeliveryReceiptV1(
+                result: .terminal, payloadSHA256: plaintext.sha256Hex, receiptID: nil,
+                datasetGeneration: nil, committedAtMS: nil,
+                errorCode: .sleepBaselineResetEpochStale
+            ),
+            DeliveryReceiptV1(
+                result: .terminal, payloadSHA256: plaintext.sha256Hex, receiptID: nil,
+                datasetGeneration: nil, committedAtMS: nil,
+                errorCode: .payloadInvalid, minimumResetEpoch: 200
+            ),
+            DeliveryReceiptV1(
+                result: .retryable, payloadSHA256: plaintext.sha256Hex, receiptID: nil,
+                datasetGeneration: nil, committedAtMS: nil,
+                errorCode: .sleepBaselineResetEpochStale, minimumResetEpoch: 200
+            ),
+        ]
+        for receipt in invalid {
+            XCTAssertThrowsError(
+                try DeliveryProtocolV1.sealAck(receipt, context: DeliveryProtocolV1TestSupport.ackSeal("python"))
+            )
+        }
+    }
+
     func testMetadataAndPayloadLimitsFailClosed() throws {
         XCTAssertThrowsError(try DeliveryProtocolV1.decodeMetadata(Data(repeating: 0x20, count: 2_097_153)))
         XCTAssertThrowsError(

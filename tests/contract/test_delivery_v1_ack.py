@@ -245,3 +245,51 @@ def test_ack_rejects_excessive_metadata_nesting_with_closed_error(
         _ = delivery.open_delivery_ack(encoded, ack_open)
 
     assert error_code(exc) == "authentication_failed"
+
+
+def _stale_epoch_receipt(
+    error_code: str | None, minimum_reset_epoch: int | None
+) -> delivery.DeliveryReceiptV1:
+    return delivery.DeliveryReceiptV1(
+        result="terminal",
+        payload_sha256=hashlib.sha256(BATCH).hexdigest(),
+        receipt_id=None,
+        dataset_generation=None,
+        committed_at_ms=None,
+        error_code=error_code,
+        minimum_reset_epoch=minimum_reset_epoch,
+    )
+
+
+def test_stale_sleep_epoch_ack_round_trips_with_epoch_floor(
+    contexts: Contexts,
+) -> None:
+    # Given
+    _, _, ack_seal, ack_open = contexts
+    stale = _stale_epoch_receipt("sleep_baseline_reset_epoch_stale", 200)
+    # When
+    opened = delivery.open_delivery_ack(
+        delivery.create_delivery_ack(stale, ack_seal).to_bytes(), ack_open
+    )
+    # Then
+    assert (opened.result, opened.error_code, opened.minimum_reset_epoch) == (
+        "terminal",
+        "sleep_baseline_reset_epoch_stale",
+        200,
+    )
+
+
+@pytest.mark.parametrize(
+    ("error_code", "minimum_reset_epoch"),
+    [
+        ("sleep_baseline_reset_epoch_stale", None),
+        ("sleep_baseline_reset_epoch_stale", -1),
+        ("payload_invalid", 200),
+    ],
+)
+def test_minimum_reset_epoch_belongs_only_to_the_stale_sleep_code(
+    error_code: str, minimum_reset_epoch: int | None
+) -> None:
+    # Given / When / Then
+    with pytest.raises(delivery.DeliveryProtocolError):
+        _ = _stale_epoch_receipt(error_code, minimum_reset_epoch)
