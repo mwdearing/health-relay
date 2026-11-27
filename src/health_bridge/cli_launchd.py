@@ -63,7 +63,10 @@ service_app = typer.Typer(
 def validate_service(
     executable: Annotated[
         Path,
-        typer.Option("--executable", help="Absolute health-bridge executable path."),
+        typer.Option(
+            "--executable",
+            help="Absolute health-bridge executable path (symlinks are resolved).",
+        ),
     ],
     db: Annotated[
         Path,
@@ -86,7 +89,7 @@ def validate_service(
     ] = False,
 ) -> None:
     request = LaunchdServiceRequest(
-        executable=executable,
+        executable=_resolve_executable(executable),
         db_path=db,
         mailbox_root=mailbox_root,
         icloud_container_identifier=icloud_container_identifier,
@@ -107,7 +110,10 @@ def validate_service(
 def install_service(
     executable: Annotated[
         Path,
-        typer.Option("--executable", help="Absolute health-bridge executable path."),
+        typer.Option(
+            "--executable",
+            help="Absolute health-bridge executable path (symlinks are resolved).",
+        ),
     ],
     db: Annotated[
         Path,
@@ -131,7 +137,7 @@ def install_service(
 ) -> None:
     _require_macos(json_output)
     request = LaunchdServiceRequest(
-        executable=executable,
+        executable=_resolve_executable(executable),
         db_path=db,
         mailbox_root=mailbox_root,
         icloud_container_identifier=icloud_container_identifier,
@@ -153,7 +159,10 @@ def install_service(
 def upgrade_service(
     executable: Annotated[
         Path,
-        typer.Option("--executable", help="Absolute health-bridge executable path."),
+        typer.Option(
+            "--executable",
+            help="Absolute health-bridge executable path (symlinks are resolved).",
+        ),
     ],
     db: Annotated[
         Path,
@@ -177,7 +186,7 @@ def upgrade_service(
 ) -> None:
     _require_macos(json_output)
     desired = LaunchdServiceRequest(
-        executable=executable,
+        executable=_resolve_executable(executable),
         db_path=db,
         mailbox_root=mailbox_root,
         icloud_container_identifier=icloud_container_identifier,
@@ -323,6 +332,21 @@ def uninstall_service(
     _emit_result(result, json_output)
 
 
+def _resolve_executable(executable: Path) -> Path:
+    """Follow the symlink `uv tool install` leaves in ~/.local/bin.
+
+    The resolved path is what gets validated and written into the plist, so
+    launchd never depends on the symlink. Validation still refuses unsafe
+    targets, and still reports relative or missing paths as given.
+    """
+    if not executable.is_absolute():
+        return executable
+    try:
+        return executable.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return executable
+
+
 def _launchctl(uid: int) -> LaunchctlAdapter:
     return LaunchctlAdapter(
         launchctl=LAUNCHCTL_PATH,
@@ -361,7 +385,12 @@ def _require_helper_for_service(home: Path, json_output: bool) -> None:
 
 def _exit_with_error(error: LaunchdServiceError, json_output: bool) -> Never:
     if json_output:
-        typer.echo(json.dumps({"code": error.code.value}, sort_keys=True))
+        payload = {"code": error.code.value}
+        if error.field is not None:
+            payload["field"] = error.field
+        if error.reason is not None:
+            payload["reason"] = error.reason
+        typer.echo(json.dumps(payload, sort_keys=True))
     else:
         typer.echo(str(error), err=True)
     raise typer.Exit(code=1)

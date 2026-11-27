@@ -422,3 +422,56 @@ def test_owned_installation_load_ignores_missing_runtime_targets(
     assert loaded.executable == request.executable
     assert loaded.db_path == request.db_path
     assert loaded.mailbox_root == request.mailbox_root
+
+
+def _error_detail(action: Callable[[], object]) -> tuple[str, str | None, str | None]:
+    with pytest.raises(LaunchdServiceError) as raised:
+        _ = action()
+    error = raised.value
+    return error.code.value, error.field, error.reason
+
+
+def test_validation_names_symlinked_executable_as_the_failing_input(
+    tmp_path: Path,
+) -> None:
+    request = service_request(tmp_path)
+    link = request.executable.with_name("health-bridge-link")
+    link.symlink_to(request.executable)
+    request = replace(request, executable=link)
+
+    code, field, reason = _error_detail(lambda: validate_launch_agent(request))
+
+    assert (code, field, reason) == ("unsafe_filesystem", "executable", "symlink")
+    with pytest.raises(LaunchdServiceError) as raised:
+        _ = validate_launch_agent(request)
+    assert str(raised.value) == (
+        "Mailbox LaunchAgent filesystem is unsafe (executable: symlink)."
+    )
+    assert str(request.home) not in str(raised.value)
+
+
+def test_validation_names_group_readable_database_not_launch_agent_artifact(
+    tmp_path: Path,
+) -> None:
+    request = service_request(tmp_path)
+    request.db_path.chmod(0o644)
+
+    code, field, reason = _error_detail(lambda: validate_launch_agent(request))
+
+    assert (code, field, reason) == (
+        "unsafe_permissions",
+        "db",
+        "group_or_world_access",
+    )
+
+
+def test_validation_names_relative_executable(tmp_path: Path) -> None:
+    request = replace(service_request(tmp_path), executable=Path("health-bridge"))
+
+    code, field, reason = _error_detail(lambda: validate_launch_agent(request))
+
+    assert (code, field, reason) == (
+        "invalid_configuration",
+        "executable",
+        "not_absolute",
+    )
