@@ -53,7 +53,35 @@ These tokens are separate from `receiver_tokens`.
 
 Migrations from `010_` on: `010_electrocardiograms`,
 `011_medication_dose_events`, `012_lab_results`, `013_intake_context`,
-`014_intake_context_tokens`, `015_range_guards`, `016_source_scoped_types`.
+`014_intake_context_tokens`, `015_range_guards`, `016_source_scoped_types`,
+`017_daily_projection_state`, `018_daily_projection_fence_order`,
+`019_catalogue_coverage_index`, `020_mailbox_enrollment`,
+`021_uv_raw_aggregation`.
+
+### Numbering and upstream migrations
+
+Migration numbers belong to this fork, and an applied migration is never renumbered
+or edited. Upstream's receiver `1.2.0` migrations reuse numbers this fork had already
+applied (`010` to `014`), so they are carried forward under the next free numbers with
+their SQL unchanged. Each file's header names its upstream origin.
+
+| This fork | Upstream receiver `1.2.0` | Adds |
+| --- | --- | --- |
+| `017_daily_projection_state` | `010_daily_projection_state` | tables `daily_projection_owners`, `daily_projection_records`, `daily_projection_fences`, `daily_projection_replays` and three indexes |
+| `018_daily_projection_fence_order` | `011_daily_projection_fence_order` | index `daily_projection_fence_order` |
+| `019_catalogue_coverage_index` | `012_catalogue_coverage_index` | index `samples_type_coverage` on `samples(type_code, start_time, sample_id, end_time)` |
+| `020_mailbox_enrollment` | `013_mailbox_enrollment` | nullable, hash-checked columns `mailbox_enrollment_sha256` and `native_request_sha256` on `pairing_invitation_redemptions`, and `native_cancel_sha256` on `pairing_invitations` |
+| `021_uv_raw_aggregation` | `014_uv_raw_aggregation` | data backfill: raw `uv_exposure` samples stored with `aggregation: sum` are relabelled `min_max_average` |
+
+A database created by upstream's receiver is therefore not interchangeable with this
+fork's: the same migration file name carries a different identifier.
+
+These five migrations arrive ahead of the receiver code that uses them. Until that code
+is ported, the four `daily_projection_*` tables stay empty, the three pairing columns
+stay `NULL`, and nothing reads them. `021_uv_raw_aggregation` is the one data change: it
+updates `metadata_json` of existing raw UV rows, and the ingest normalisation that keeps
+new rows consistent (upstream `8eefdd2`) is not ported yet, so a raw UV row stored after
+the migration can still carry `sum`.
 
 `015_range_guards` adds BEFORE INSERT/UPDATE triggers that abort a write whose
 interval is reversed (`end_time < start_time`, on `samples`, `workouts`,
