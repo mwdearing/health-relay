@@ -226,6 +226,48 @@ final class CompanionUXStateTests: XCTestCase {
         XCTAssertEqual(summary.message, "Sync complete. Queued uploads: 2.")
     }
 
+    func testSyncNowCompletionReportsServerRejectionAsError() {
+        let failure = "Your server rejected the saved connection key. Reconnect from a fresh setup link. | domain=ReceiverClientError | code=http_401"
+        let summary = CompanionSyncNowCompletion.summary(
+            pendingOutboxCount: 2,
+            firstDeliveryFailure: failure
+        )
+
+        XCTAssertTrue(summary.isError)
+        XCTAssertTrue(summary.message.contains("Reconnect"))
+        XCTAssertFalse(summary.message.contains("Sync complete"))
+        XCTAssertEqual(
+            CompanionPrimaryStatusMessage.sanitized(from: summary.message, isError: true),
+            "Connection key was rejected (HTTP 401). Reconnect from a fresh setup link."
+        )
+    }
+
+    func testSyncNowCompletionTreatsTransportFailureAsQueuedNotError() {
+        let summary = CompanionSyncNowCompletion.summary(
+            pendingOutboxCount: 2,
+            firstDeliveryFailure: "The Internet connection appears to be offline. | domain=NSURLErrorDomain | code=-1009"
+        )
+
+        XCTAssertFalse(summary.isError)
+        XCTAssertEqual(summary.message, "Sync complete. Queued uploads: 2.")
+    }
+
+    func testCancellationTextSanitizesToPausedMessageNotFailure() {
+        let raw = "Step sync failed: The operation couldn\u{2019}t be completed. (Swift.CancellationError error 1.) | domain=Swift.CancellationError | code=1"
+
+        XCTAssertEqual(
+            CompanionPrimaryStatusMessage.sanitized(from: raw, isError: true),
+            CompanionSyncNowCompletion.pausedByIOSMessage
+        )
+        XCTAssertEqual(
+            CompanionPrimaryStatusMessage.sanitized(
+                from: CompanionSyncNowCompletion.pausedByIOSMessage,
+                isError: false
+            ),
+            CompanionSyncNowCompletion.pausedByIOSMessage
+        )
+    }
+
     func testPrimaryStatusMessageSanitizesTechnicalAndHealthDerivedDetails() {
         let rawMessages = [
             "Receiver accepted test batch with HTTP 200 via 192.0.2.10. Pending outbox: 0.",

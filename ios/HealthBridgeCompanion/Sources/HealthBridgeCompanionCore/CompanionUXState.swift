@@ -212,10 +212,32 @@ public struct CompanionSyncNowCompletionSummary: Equatable, Sendable {
 }
 
 public enum CompanionSyncNowCompletion {
+    /// Shown when iOS ended the app's background time and cancelled a Sync Now run. Nothing
+    /// failed: queued uploads are kept and the next Sync Now continues.
+    public static let pausedByIOSMessage =
+        "Sync paused because iOS stopped background time. Open HealthRelay and tap Sync Now to continue; queued uploads are kept."
+
+    /// Shown when Sync Now cannot start because a background upload is still finishing.
+    public static let backgroundUploadStillFinishingMessage =
+        "A background upload is still finishing. Try again in a moment."
+
+    /// True when a delivery failure description carries an HTTP status from the receiver, so the
+    /// server was reached and refused the upload. A transport failure has no such status.
+    public static func isServerRejection(_ failureDescription: String) -> Bool {
+        failureDescription.contains("code=http_")
+    }
+
     public static func summary(
-        pendingOutboxCount: Int
+        pendingOutboxCount: Int,
+        firstDeliveryFailure: String? = nil
     ) -> CompanionSyncNowCompletionSummary {
-        CompanionSyncNowCompletionSummary(
+        if let failure = firstDeliveryFailure, isServerRejection(failure) {
+            return CompanionSyncNowCompletionSummary(
+                message: "Sync stopped: \(failure)",
+                isError: true
+            )
+        }
+        return CompanionSyncNowCompletionSummary(
             message: "Sync complete. Queued uploads: \(pendingOutboxCount).",
             isError: false
         )
@@ -276,6 +298,10 @@ public enum CompanionPrimaryStatusMessage {
         ]
         for (code, copy) in pairingRedeemMessages where message.contains(code) {
             return copy
+        }
+        // iOS ended background time: not a failure, and never pairing related.
+        if message.contains("ios stopped background time") || message.contains("cancellationerror") {
+            return CompanionSyncNowCompletion.pausedByIOSMessage
         }
         if message.contains("sync complete") {
             return "Sync complete"
