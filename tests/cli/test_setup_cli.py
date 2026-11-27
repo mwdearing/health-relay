@@ -498,9 +498,30 @@ def test_setup_rejects_documentation_hosts_before_private_side_effects(
     assert completed.returncode == 1
     assert "documentation or testing hostname" in completed.stderr
     assert "docs/setup.md" in completed.stderr
+    assert "roian6" not in completed.stderr
+    assert (
+        "https://github.com/mwdearing/health-relay/blob/main/docs/setup.md"
+        in completed.stderr
+    )
     assert not db_path.parent.exists()
     assert not db_path.exists()
     assert not setup_page.exists()
+
+
+def test_setup_explains_a_group_writable_database_directory(tmp_path: Path) -> None:
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o775)
+    _db_path, _setup_page, args = _setup_args(tmp_path)
+    args[args.index("--db") + 1] = str(shared / "health.sqlite")
+    args[args.index("--setup-page") + 1] = str(tmp_path / "pair.html")
+
+    completed = _run_cli(*args)
+
+    assert completed.returncode == 1
+    assert "Choose an owner-only directory (chmod 700) and retry." in completed.stderr
+    assert "Traceback" not in completed.stderr
+    assert "╭" not in completed.stderr
 
 
 def test_setup_accepts_real_hostname_with_documentation_like_prefix(

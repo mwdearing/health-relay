@@ -6,7 +6,10 @@ from typing import TYPE_CHECKING, Final, Protocol
 import typer
 
 from health_bridge.launchd import LaunchdServiceError
-from health_bridge.receiver.server import DEFAULT_REQUEST_TIMEOUT_SECONDS
+from health_bridge.receiver.server import (
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    ReceiverBindError,
+)
 from health_bridge.receiver.transports import ReceiverTransport
 
 if TYPE_CHECKING:
@@ -44,6 +47,7 @@ class ReceiverServer(Protocol):
         mailbox_root: Path | None,
         intake_context_enabled: bool,
         request_timeout_seconds: float,
+        on_listening: Callable[[str, int], None],
     ) -> None: ...
 
 
@@ -118,15 +122,19 @@ def run_receiver_start(
         if selected_transport is ReceiverTransport.MAILBOX
         else None
     )
-    typer.echo(
-        f"health-bridge receiver listening on http://{host}:{port}",
-        err=True,
-    )
-    typer.echo(
-        "Intake-context routes: "
-        + ("enabled" if options.intake_context_enabled else "disabled"),
-        err=True,
-    )
+
+    def announce(bound_host: str, bound_port: int) -> None:
+        url_host = f"[{bound_host}]" if ":" in bound_host else bound_host
+        typer.echo(
+            f"health-bridge receiver listening on http://{url_host}:{bound_port}",
+            err=True,
+        )
+        typer.echo(
+            "Intake-context routes: "
+            + ("enabled" if options.intake_context_enabled else "disabled"),
+            err=True,
+        )
+
     try:
         dependencies.serve(
             db_path=db,
@@ -137,6 +145,10 @@ def run_receiver_start(
             mailbox_root=mailbox_root,
             intake_context_enabled=options.intake_context_enabled,
             request_timeout_seconds=options.request_timeout_seconds,
+            on_listening=announce,
         )
+    except ReceiverBindError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from None
     except KeyboardInterrupt:
         raise typer.Exit(code=0) from None

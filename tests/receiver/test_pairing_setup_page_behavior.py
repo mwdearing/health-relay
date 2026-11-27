@@ -160,3 +160,36 @@ def test_mailbox_renewal_uses_the_public_transport_name(tmp_path: Path) -> None:
     assert "--transport mailbox" not in expired
     assert "&lt;" not in expired
     assert "&quot;$HEALTH_BRIDGE_MAILBOX_ROOT&quot;" in expired
+
+
+def _expired_box(rendered: str) -> str:
+    return rendered.split('id="expired"', 1)[1].split("</div>", 1)[0]
+
+
+def test_mailbox_renewal_names_the_icloud_container(tmp_path: Path) -> None:
+    bundle = create_receiver_pairing_invitation_bundle(
+        tmp_path / "receiver.sqlite",
+        label="mailbox-iphone",
+        receiver_url="https://health.example.test/v1/batches",
+        transport="mailbox",
+    )
+    rendered = render_pairing_setup_page(bundle, pairing_deep_link(bundle))
+
+    assert "--icloud-container-identifier" in _expired_box(rendered)
+
+
+def test_renewal_command_targets_the_database_the_invitation_was_created_in(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "my receiver" / "receiver.sqlite"
+    db_path.parent.mkdir(mode=0o700)
+    bundle = create_receiver_pairing_invitation_bundle(
+        db_path,
+        label="ios-companion",
+        receiver_url="https://health.example.test/v1/batches",
+    )
+    rendered = render_pairing_setup_page(bundle, pairing_deep_link(bundle), db_path)
+
+    expired = _expired_box(rendered)
+    assert f"--db &#x27;{db_path}&#x27;" in expired
+    assert ".local/share/health-bridge/health.sqlite" not in expired

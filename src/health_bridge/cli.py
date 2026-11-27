@@ -1,7 +1,7 @@
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Annotated, Final, Literal
+from typing import Annotated, Final, Literal, NoReturn
 
 import typer
 from pydantic import ValidationError
@@ -81,6 +81,17 @@ def main(
         raise typer.Exit
 
 
+def _exit_for_unsafe_private_parent(exc: PermissionError) -> NoReturn:
+    """Print recovery guidance for a group/other-writable database directory."""
+    if "private file parent must not be group/other writable" not in str(exc):
+        raise exc
+    unsafe_location = "group/other-writable directory"
+    recovery = "Choose an owner-only directory (chmod 700) and retry."
+    message = f"Cannot create a private database below a {unsafe_location}. {recovery}"
+    typer.echo(message, err=True)
+    raise typer.Exit(code=1) from None
+
+
 @app.command()
 def init(
     db: Annotated[
@@ -91,15 +102,7 @@ def init(
     try:
         initialize_database(db)
     except PermissionError as exc:
-        if "private file parent must not be group/other writable" not in str(exc):
-            raise
-        unsafe_location = "group/other-writable directory"
-        recovery = "Choose an owner-only directory (chmod 700) and retry."
-        message = (
-            f"Cannot create a private database below a {unsafe_location}. {recovery}"
-        )
-        typer.echo(message, err=True)
-        raise typer.Exit(code=1) from None
+        _exit_for_unsafe_private_parent(exc)
     typer.echo(f"initialized: {db}")
 
 
@@ -209,6 +212,8 @@ def setup(  # noqa: PLR0913 - Typer exposes each setup input as an option.
         )
         manifest = verify_local_mcp(manifest)
         manifest = configure_mcp_clients(manifest, requested_clients)
+    except PermissionError as exc:
+        _exit_for_unsafe_private_parent(exc)
     except (RuntimeError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc

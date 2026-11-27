@@ -3,6 +3,7 @@
 import html
 import shlex
 from io import BytesIO
+from pathlib import Path
 from typing import Final
 
 import segno
@@ -185,23 +186,30 @@ _BRAND_MARK_SVG: Final = """<svg viewBox="0 0 1000 1000" aria-hidden="true">
       </g>
     </svg>"""
 _CMD: Final = "health-bridge receiver create-pairing"
-_CMD_DB: Final = "--db ~/.local/share/health-bridge/health.sqlite"
+_DEFAULT_DB: Final = "~/.local/share/health-bridge/health.sqlite"
 _CMD_PAGE: Final = (
     "--format setup-page --setup-page ~/.local/share/health-bridge/iphone-setup.html"
 )
 
 
-def _renewal_command(bundle: ReceiverPairingInvitationBundle) -> str:
-    """The command that recreates this page: same label, URL and transport."""
+def _renewal_command(
+    bundle: ReceiverPairingInvitationBundle,
+    db_path: Path | None,
+) -> str:
+    """The command that recreates this page: same database, label, URL, transport."""
+    db_argument = (
+        _DEFAULT_DB if db_path is None else shlex.quote(str(db_path.absolute()))
+    )
     parts = [
         _CMD,
-        _CMD_DB,
+        f"--db {db_argument}",
         f"--label {shlex.quote(bundle.label)}",
         f"--receiver-url {shlex.quote(bundle.receiver_url)}",
     ]
     if bundle.transport == ReceiverTransport.MAILBOX:
         parts.append("--transport icloud-mailbox")
         parts.append('--mailbox-root "$HEALTH_BRIDGE_MAILBOX_ROOT"')
+        parts.append('--icloud-container-identifier "$HEALTH_BRIDGE_ICLOUD_CONTAINER"')
     parts.append(_CMD_PAGE)
     return html.escape(" ".join(parts), quote=True)
 
@@ -304,15 +312,17 @@ def _brand_header() -> str:
 def render_pairing_setup_page(
     bundle: ReceiverPairingBundle | ReceiverPairingInvitationBundle,
     pairing_url: str,
+    db_path: Path | None = None,
 ) -> str:
     if isinstance(bundle, ReceiverPairingInvitationBundle):
-        return _render_invitation_setup_page(bundle, pairing_url)
+        return _render_invitation_setup_page(bundle, pairing_url, db_path)
     return _render_legacy_setup_page(bundle, pairing_url)
 
 
 def _render_invitation_setup_page(
     bundle: ReceiverPairingInvitationBundle,
     pairing_url: str,
+    db_path: Path | None,
 ) -> str:
     qr_svg = _pairing_qr_svg(pairing_url)
     escaped_label = html.escape(bundle.label, quote=True)
@@ -321,7 +331,7 @@ def _render_invitation_setup_page(
     escaped_expires_at = html.escape(bundle.expires_at, quote=True)
     escaped_warning = html.escape(bundle.warning, quote=True)
     escaped_pairing_url = html.escape(pairing_url, quote=True)
-    renewal_command = _renewal_command(bundle)
+    renewal_command = _renewal_command(bundle, db_path)
     return f"""<!doctype html>
 <html lang="en">
 <head>
