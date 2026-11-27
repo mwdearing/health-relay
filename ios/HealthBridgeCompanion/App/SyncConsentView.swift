@@ -98,10 +98,10 @@ struct SyncConsentReviewView: View {
                         showWithdrawConfirmation = true
                     }
                 } else {
-                    Text("Consent is withdrawn. HealthRelay will not send data until you accept again.")
+                    Text("HealthRelay will not send data until you agree.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                    Button("Accept Again") {
+                    Button("Agree") {
                         viewModel.acceptSyncConsent()
                     }
                 }

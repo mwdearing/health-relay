@@ -1,6 +1,6 @@
 import Foundation
 
-public enum ReceiverPairingBundleError: Error, Equatable, LocalizedError {
+public enum ReceiverPairingBundleError: Error, Equatable, LocalizedError, CaseIterable {
     case invalidJSON
     case unsupportedSchema
     case invalidReceiverURL
@@ -34,6 +34,33 @@ public enum ReceiverPairingBundleError: Error, Equatable, LocalizedError {
             return "Pairing link is not a supported HealthRelay setup link."
         case .missingPayload:
             return "Pairing link is missing its payload."
+        }
+    }
+
+    /// Copy for the person who typed or scanned the input. It names the field to fix and
+    /// never suggests that a server was contacted: these errors are raised before any request.
+    public var userMessage: String {
+        switch self {
+        case .invalidJSON:
+            return "This setup information could not be read. Scan a fresh setup QR code or open a fresh setup link."
+        case .unsupportedSchema:
+            return "This setup link is from an unsupported version. Create a fresh one from your server."
+        case .invalidReceiverURL:
+            return "Server address must start with http:// or https:// and include a host."
+        case .emptyBearerToken:
+            return "This setup link has no connection key. Create a fresh one from your server."
+        case .emptyInvitationSecret:
+            return "This setup link has no invitation. Create a fresh one from your server."
+        case .invalidInvitationCode:
+            return "Invitation code must be 15 letters or numbers."
+        case .crossOriginRedeemURL:
+            return "This setup link points to two different servers. Create a fresh one from your server."
+        case .unsupportedTransport:
+            return "This setup link uses a connection type this app does not support."
+        case .invalidDeepLink:
+            return "This is not a HealthRelay setup link."
+        case .missingPayload:
+            return "This setup link is incomplete. Create a fresh one from your server."
         }
     }
 }
