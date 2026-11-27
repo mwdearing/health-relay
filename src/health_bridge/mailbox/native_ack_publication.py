@@ -41,6 +41,15 @@ class NativeAckPublicationError(OSError):
     """The signed native ACK helper failed or returned an invalid receipt."""
 
 
+class NativeAckHelperUnavailableError(NativeAckPublicationError):
+    """The signed helper is missing, not ready, or its bundle identity is unreadable.
+
+    Only an operator can fix this. A helper that ran and timed out, failed or
+    returned a mismatched receipt raises the base error instead, because a later
+    run can succeed.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class NativeAckPublisherConfig:
     helper_executable: Path
@@ -54,7 +63,7 @@ class NativeAckPublisherConfig:
             try:
                 require_ready_helper(resolved_home)
             except HelperError as exc:
-                raise NativeAckPublicationError(
+                raise NativeAckHelperUnavailableError(
                     "native ACK helper is not ready"
                 ) from exc
         app = (
@@ -207,11 +216,13 @@ def _installed_helper_bundle_id(home: Path) -> str:
     try:
         value = cast("object", plistlib.loads(raw_info))
     except plistlib.InvalidFileException as exc:
-        raise NativeAckPublicationError(
+        raise NativeAckHelperUnavailableError(
             "native ACK helper bundle identity is unavailable"
         ) from exc
     if not isinstance(value, dict):
-        raise NativeAckPublicationError("native ACK helper bundle identity is invalid")
+        raise NativeAckHelperUnavailableError(
+            "native ACK helper bundle identity is invalid"
+        )
     mapping = cast("dict[object, object]", value)
     bundle_id = mapping.get("CFBundleIdentifier")
     if (
@@ -223,7 +234,9 @@ def _installed_helper_bundle_id(home: Path) -> str:
             for component in bundle_id.split(".")
         )
     ):
-        raise NativeAckPublicationError("native ACK helper bundle identity is invalid")
+        raise NativeAckHelperUnavailableError(
+            "native ACK helper bundle identity is invalid"
+        )
     return bundle_id
 
 
@@ -250,7 +263,7 @@ def _open_owner_directory_chain(home: Path, components: tuple[str, ...]) -> int:
     except OSError as exc:
         if descriptor >= 0:
             os.close(descriptor)
-        raise NativeAckPublicationError(
+        raise NativeAckHelperUnavailableError(
             "native ACK helper bundle identity is unavailable"
         ) from exc
     except Exception:
@@ -280,7 +293,7 @@ def _read_owner_regular_at(
             or initial.st_uid != os.geteuid()
             or initial.st_size > maximum_bytes
         ):
-            raise NativeAckPublicationError(
+            raise NativeAckHelperUnavailableError(
                 "native ACK helper bundle identity is unsafe"
             )
         content = bytearray()
@@ -303,12 +316,12 @@ def _read_owner_regular_at(
             final.st_mtime_ns,
             final.st_ctime_ns,
         ):
-            raise NativeAckPublicationError(
+            raise NativeAckHelperUnavailableError(
                 "native ACK helper bundle identity is unsafe"
             )
         return bytes(content)
     except OSError as exc:
-        raise NativeAckPublicationError(
+        raise NativeAckHelperUnavailableError(
             "native ACK helper bundle identity is unavailable"
         ) from exc
     finally:
@@ -319,14 +332,18 @@ def _read_owner_regular_at(
 def _required_open_flag(name: str) -> int:
     value = getattr(os, name, None)
     if not isinstance(value, int) or value == 0:
-        raise NativeAckPublicationError("native ACK helper path safety unavailable")
+        raise NativeAckHelperUnavailableError(
+            "native ACK helper path safety unavailable"
+        )
     return value
 
 
 def _require_owner_directory_descriptor(descriptor: int) -> None:
     result = os.fstat(descriptor)
     if not stat.S_ISDIR(result.st_mode) or result.st_uid != os.geteuid():
-        raise NativeAckPublicationError("native ACK helper bundle identity is unsafe")
+        raise NativeAckHelperUnavailableError(
+            "native ACK helper bundle identity is unsafe"
+        )
 
 
 def _valid_final_name(value: str) -> bool:
@@ -343,14 +360,14 @@ def _require_executable(path: Path) -> None:
     try:
         result = path.lstat()
     except OSError as exc:
-        raise NativeAckPublicationError("native ACK helper unavailable") from exc
+        raise NativeAckHelperUnavailableError("native ACK helper unavailable") from exc
     if (
         not stat.S_ISREG(result.st_mode)
         or stat.S_ISLNK(result.st_mode)
         or result.st_uid != os.geteuid()
         or not os.access(path, os.X_OK)
     ):
-        raise NativeAckPublicationError("native ACK helper is unsafe")
+        raise NativeAckHelperUnavailableError("native ACK helper is unsafe")
 
 
 def _require_owner_private_directory(path: Path) -> None:
@@ -361,7 +378,7 @@ def _require_owner_private_directory(path: Path) -> None:
         or result.st_uid != os.geteuid()
         or bool(result.st_mode & 0o077)
     ):
-        raise NativeAckPublicationError("native ACK protocol directory is unsafe")
+        raise NativeAckHelperUnavailableError("native ACK protocol directory is unsafe")
 
 
 def _write_private_bytes(path: Path, content: bytes) -> None:
