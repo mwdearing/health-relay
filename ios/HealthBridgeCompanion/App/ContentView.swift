@@ -577,6 +577,7 @@ private struct ReceiverSettingsView: View {
     @State private var showDisconnectFailureAlert = false
     @State private var disconnectFailureMessage = ""
     @State private var showClearQueuedUploadsConfirmation = false
+    @State private var showDiscardRejectedUploadsConfirmation = false
     @State private var showMailboxKeyResetConfirmation = false
 
     var body: some View {
@@ -640,6 +641,14 @@ private struct ReceiverSettingsView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(disconnectFailureMessage)
+        }
+        .confirmationDialog("Discard rejected uploads?", isPresented: $showDiscardRejectedUploadsConfirmation, titleVisibility: .visible) {
+            Button("Discard Rejected Uploads", role: .destructive) {
+                viewModel.discardQuarantinedUploads()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your server permanently rejected these uploads, so sending them again would fail. This deletes them from this iPhone. Apple Health data itself is not deleted, and the next sync rebuilds what is missing.")
         }
         .confirmationDialog("Reset private sync state?", isPresented: $showClearQueuedUploadsConfirmation, titleVisibility: .visible) {
             Button("Reset Private Sync State", role: .destructive) {
@@ -776,6 +785,19 @@ private struct ReceiverSettingsView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.large)
             }
+            if viewModel.quarantinedUploadCount > 0 {
+                Button(role: .destructive) {
+                    showDiscardRejectedUploadsConfirmation = true
+                } label: {
+                    Label(
+                        "Discard Rejected Uploads (\(viewModel.quarantinedUploadCount))",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+            }
             if viewModel.pendingOutboxCount > 0
                 || viewModel.hasPendingSleepTransition
                 || viewModel.hasPendingOutboxDeletion
@@ -805,6 +827,7 @@ private struct ReceiverSettingsView: View {
 
     private var showsDangerZone: Bool {
         viewModel.canSendConnectionTest
+            || viewModel.quarantinedUploadCount > 0
             || viewModel.pendingOutboxCount > 0
             || viewModel.hasPendingSleepTransition
             || viewModel.hasPendingOutboxDeletion

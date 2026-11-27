@@ -24,7 +24,7 @@ HealthRelay reads Apple Health data that you allow on your iPhone and sends it o
 
 ## Retention and deletion
 
-- **On the iPhone:** records leave the local outbox once the receiver confirms delivery. Deleting the app removes the outbox from the device.
+- **On the iPhone:** records leave the local outbox once the receiver confirms delivery. An upload your receiver permanently rejects is moved aside on the iPhone, still unsent, until you choose Discard Rejected Uploads under Connection. Deleting the app removes the outbox and anything moved aside from the device.
 - **On your receiver:** delivered records are stored in a database that you own. You control how long they are kept and how they are deleted. The receiver's data is not held by the developer.
 - **Backups:** if you back up your receiver or its database, those copies are also yours to manage and to delete.
 

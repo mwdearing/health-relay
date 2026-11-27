@@ -280,6 +280,9 @@ public struct BackgroundUploadTaskCompletion: Codable, Equatable, Sendable {
     public let statusCode: Int?
     public let hadTransportError: Bool
     public let sleepMinimumResetEpoch: UInt64?
+    /// The receiver's `{"error": "<code>"}` value, when the response carried one. Only
+    /// used to tell a permanent rejection from a transient one (see `PermanentUploadRejection`).
+    public let responseErrorCode: String?
     /// Seconds the receiver asked us to wait after HTTP 429, if it sent a usable `Retry-After`.
     public let retryAfterSeconds: Int?
 
@@ -287,11 +290,13 @@ public struct BackgroundUploadTaskCompletion: Codable, Equatable, Sendable {
         statusCode: Int?,
         hadTransportError: Bool,
         sleepMinimumResetEpoch: UInt64?,
+        responseErrorCode: String? = nil,
         retryAfterSeconds: Int? = nil
     ) {
         self.statusCode = statusCode
         self.hadTransportError = hadTransportError
         self.sleepMinimumResetEpoch = sleepMinimumResetEpoch
+        self.responseErrorCode = responseErrorCode
         self.retryAfterSeconds = retryAfterSeconds
     }
 }
@@ -317,6 +322,8 @@ public enum DirectUploadFinalizationOutcome: Equatable, Sendable {
     case recovered
     case retired
     case retained
+    /// The receiver permanently rejected the item; it was moved aside so later items can send.
+    case quarantined
 }
 
 public enum DirectUploadFinalizer {
@@ -326,8 +333,9 @@ public enum DirectUploadFinalizer {
         currentReceiverGeneration: String,
         currentReceiverBindingID: String?,
         recoverSleepBaseline: (String, UInt64) throws -> Void,
-        retire: (String, String) throws -> Void
-    ) rethrows -> DirectUploadFinalizationOutcome {
+        retire: (String, String) throws -> Void,
+        quarantine: ((String, PermanentUploadRejection, Int) throws -> Void)? = nil
+    ) throws -> DirectUploadFinalizationOutcome {
         guard descriptor.receiverGeneration == currentReceiverGeneration,
               descriptor.receiverBindingID == currentReceiverBindingID else {
             return .stale
@@ -338,6 +346,19 @@ public enum DirectUploadFinalizer {
            completion.statusCode == 409 {
             try recoverSleepBaseline(descriptor.itemID, minimumResetEpoch)
             return .recovered
+        }
+
+        // A 413 is answered before the receiver reads the body, so the connection may be
+        // reported as failed even though the status arrived.
+        if let statusCode = completion.statusCode,
+           !completion.hadTransportError || statusCode == 413,
+           let rejection = PermanentUploadRejection.classify(
+               statusCode: statusCode,
+               errorCode: completion.responseErrorCode
+           ),
+           let quarantine {
+            try quarantine(descriptor.itemID, rejection, statusCode)
+            return .quarantined
         }
 
         guard !completion.hadTransportError,

@@ -12,6 +12,12 @@ public struct HealthBridgeBatchEncoder {
     public func encode(_ batch: HealthBridgeBatchV1) throws -> Data {
         try encoder.encode(batch)
     }
+
+    /// Encoded JSON size of one value with this encoder's settings. A value that cannot be
+    /// encoded reports `Int.max` so size checks fail closed instead of passing as empty.
+    public func encodedByteCount<Value: Encodable>(of value: Value) -> Int {
+        (try? encoder.encode(value))?.count ?? Int.max
+    }
 }
 
 public enum HealthBridgeUTCFormatter {
@@ -32,5 +38,137 @@ public enum HealthBridgeUTCFormatter {
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
         return formatter.date(from: string)
+    }
+}
+
+/// Keeps every uploaded batch under the receiver's body limit.
+///
+/// The receiver answers 413 `batch_too_large` before reading any body larger than
+/// `MAX_BATCH_BYTES` (5,000,000 in `receiver/server.py`), and resending the same bytes can
+/// never succeed. Lanes that read an unbounded amount of history (raw steps, ECG, lab
+/// import) therefore split their output with `bounded(_:maxRecordsPerBatch:)`.
+public enum OutboundBatchSizePolicy {
+    /// Mirrors the receiver's `MAX_BATCH_BYTES`. Documentation and test reference only.
+    public static let receiverMaxBatchBytes = 5_000_000
+    /// Budget for the encoded record arrays of one batch. The remainder of the receiver
+    /// limit is the safety margin for the envelope (sources, window, cursors).
+    public static let defaultMaxRecordBytesPerBatch = 3_000_000
+
+    /// Splits `batch` into batches whose record arrays stay under both caps.
+    ///
+    /// Only the sample, ECG, lab-result and deletion arrays are split. A batch that also
+    /// carries workouts, sleep sessions or medication dose events, or that already fits,
+    /// is returned unchanged. The sync cursors ride only on the last batch, so the cursor
+    /// checkpoint can apply only after the final batch is accepted. A single record that alone
+    /// exceeds the byte budget is never trimmed: it goes out as a batch of its own, so a
+    /// receiver 413 reaches the quarantine path and the cursor is not advanced past it.
+    public static func bounded(
+        _ batch: HealthBridgeBatchV1,
+        maxRecordsPerBatch: Int,
+        maxRecordBytesPerBatch: Int = defaultMaxRecordBytesPerBatch
+    ) -> [HealthBridgeBatchV1] {
+        guard batch.workouts.isEmpty,
+              batch.sleepSessions.isEmpty,
+              batch.medicationDoseEvents.isEmpty else {
+            return [batch]
+        }
+        let recordLimit = max(1, maxRecordsPerBatch)
+        let byteLimit = max(1, maxRecordBytesPerBatch)
+        let encoder = HealthBridgeBatchEncoder()
+        // A batch whose records all fit one upload is never split, whatever mix of record
+        // kinds it carries (for example a raw step sample plus its legacy daily tombstone).
+        // It goes out unchanged as a single batch that carries its cursors.
+        let totalRecords = batch.samples.count + batch.electrocardiograms.count
+            + batch.labResults.count + batch.deletedRecords.count
+        if totalRecords <= recordLimit {
+            var remainingBytes = byteLimit
+            var fits = true
+            func spend<Element: Encodable>(_ elements: [Element]) {
+                guard fits, !elements.isEmpty else { return }
+                let size = encoder.encodedByteCount(of: elements)
+                if size >= remainingBytes { fits = false } else { remainingBytes -= size }
+            }
+            spend(batch.samples)
+            spend(batch.electrocardiograms)
+            spend(batch.labResults)
+            spend(batch.deletedRecords)
+            if fits { return [batch] }
+        }
+        var pieces: [Piece] = []
+        for chunk in chunks(of: batch.samples, recordLimit: recordLimit, byteLimit: byteLimit, encoder: encoder) {
+            pieces.append(Piece(samples: chunk))
+        }
+        for chunk in chunks(of: batch.electrocardiograms, recordLimit: recordLimit, byteLimit: byteLimit, encoder: encoder) {
+            pieces.append(Piece(electrocardiograms: chunk))
+        }
+        for chunk in chunks(of: batch.labResults, recordLimit: recordLimit, byteLimit: byteLimit, encoder: encoder) {
+            pieces.append(Piece(labResults: chunk))
+        }
+        for chunk in chunks(of: batch.deletedRecords, recordLimit: recordLimit, byteLimit: byteLimit, encoder: encoder) {
+            pieces.append(Piece(deletedRecords: chunk))
+        }
+        if pieces.count <= 1 {
+            return [batch]
+        }
+        if pieces.isEmpty {
+            pieces.append(Piece())
+        }
+
+        let lastIndex = pieces.count - 1
+        return pieces.enumerated().map { index, piece in
+            HealthBridgeBatchV1(
+                schemaID: batch.schemaID,
+                schemaVersion: batch.schemaVersion,
+                generatedAt: batch.generatedAt,
+                exportWindow: batch.exportWindow,
+                sources: batch.sources,
+                healthTypes: batch.healthTypes,
+                samples: piece.samples,
+                workouts: [],
+                electrocardiograms: piece.electrocardiograms,
+                medicationDoseEvents: [],
+                labResults: piece.labResults,
+                sleepSessions: [],
+                deletedRecords: piece.deletedRecords,
+                sync: HealthBridgeSyncContext(
+                    syncWindow: batch.sync.syncWindow,
+                    cursors: index == lastIndex ? batch.sync.cursors : []
+                )
+            )
+        }
+    }
+
+    private struct Piece {
+        var samples: [HealthBridgeSample] = []
+        var electrocardiograms: [HealthBridgeElectrocardiogram] = []
+        var labResults: [HealthBridgeLabResult] = []
+        var deletedRecords: [HealthBridgeDeletedRecord] = []
+    }
+
+    private static func chunks<Element: Encodable>(
+        of elements: [Element],
+        recordLimit: Int,
+        byteLimit: Int,
+        encoder: HealthBridgeBatchEncoder
+    ) -> [[Element]] {
+        var result: [[Element]] = []
+        var current: [Element] = []
+        var currentBytes = 0
+        for element in elements {
+            // One byte for the array separator.
+            let size = min(encoder.encodedByteCount(of: element), Int.max - 1) + 1
+            let overflowsBytes = size > byteLimit - currentBytes
+            if !current.isEmpty && (current.count >= recordLimit || overflowsBytes) {
+                result.append(current)
+                current = []
+                currentBytes = 0
+            }
+            current.append(element)
+            currentBytes += min(size, byteLimit - currentBytes)
+        }
+        if !current.isEmpty {
+            result.append(current)
+        }
+        return result
     }
 }
