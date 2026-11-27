@@ -17,7 +17,7 @@ You will need: an iPhone on iOS 18 or later (medication dose events need the Hea
 
 ## 1. HealthRelay: app and receiver
 
-Follow the [README](../README.md#set-up-the-bridge) and the [setup guide](setup.md): install the app (ask for a signed beta build with the [Beta access request](https://github.com/mwdearing/health-relay/issues/new?template=beta_access.yml) form, or build and sign it yourself), choose and verify a private route, install the receiver, run `health-bridge setup`, keep the printed receiver command running under your service manager, then pair and turn on Automatic Sync.
+Follow the [README](../README.md#set-up-the-bridge) and the [setup guide](setup.md): install the app (install it from the [App Store](https://apps.apple.com/app/id6819907894), or build and sign it yourself), choose and verify a private route, install the receiver, run `health-bridge setup`, keep the printed receiver command running under your service manager, then pair and turn on Automatic Sync.
 
 **Checks**
 - The printed local health URL returns `{"status":"ok"}`, and so does the same URL opened on the physical iPhone.
