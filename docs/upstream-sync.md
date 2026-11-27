@@ -97,6 +97,7 @@ git log --oneline main..upstream/main   # commits we do not have
 | `src/`, `ios/` **feature**, or anything touching data flow | **Stop and review it first.** See §3a. |
 | `tests/` regression test for a fix we also took | **Take it.** Prefer theirs to a test we wrote. |
 | Dependency bump in `uv.lock` | Take the dependency delta, **not** the file. See below. |
+| Schema migration (`src/health_bridge/storage/migrations/NNN_*.sql`) | **Never take the number.** Port the SQL unchanged under the next free number with a provenance header, register it in `MIGRATION_IDS`, record the mapping in `docs/reference/sqlite-v1.md`, and test it on a database at the previous migration. A data backfill (`update`) ships with the code that keeps new rows consistent, or says plainly that it does not. See §3b. |
 | `pyproject.toml` or `__init__.py` **version bump** | **Skip.** See §4. |
 | Release docs, release guardrails, `component-versions.json` receiver values | **Skip.** See §4. |
 | README / brand / public-language guardrails | **Skip by default.** See §4. |
@@ -135,6 +136,19 @@ than proceeding.
 
 A fix that *preserves* all four — say, a corrected error message or a null check — is fine to take
 directly. The distinction is whether behaviour moved, not how large the diff is.
+
+## 3b. Upstream migrations keep their SQL, not their number
+
+Upstream numbers its migrations independently, and this fork has already applied its own
+`010` onward to real databases, so an upstream migration `NNN` can never keep its number
+here. An applied migration is never renumbered or edited; the upstream file is carried
+forward under the next free number, with a header comment naming its upstream origin. Add
+the id to `MIGRATION_IDS`, extend the id lists in `tests/storage/test_sqlite_schema.py`,
+and add a row to the mapping table in `docs/reference/sqlite-v1.md`. Test it three ways: a
+fresh database, a database at the previous migration that already holds rows (existing
+tables unchanged, new objects added, `foreign_key_check` clean), and a copy of a real
+database. Never run a migration on the live database before the tested build is ready to
+deploy; the receiver applies it at its next start.
 
 ## 4. What must never be taken wholesale
 

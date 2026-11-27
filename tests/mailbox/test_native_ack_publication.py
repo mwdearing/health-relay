@@ -12,6 +12,7 @@ import pytest
 
 from health_bridge.mailbox.filesystem import open_mailbox_directory
 from health_bridge.mailbox.native_ack_publication import (
+    NativeAckHelperUnavailableError,
     NativeAckPublicationError,
     NativeAckPublisher,
     NativeAckPublisherConfig,
@@ -87,7 +88,7 @@ def test_production_config_rejects_invalid_installed_bundle_identity(
     payload = {} if bundle_id is None else {"CFBundleIdentifier": bundle_id}
     _ = (contents / "Info.plist").write_bytes(plistlib.dumps(payload))
 
-    with pytest.raises(NativeAckPublicationError, match="bundle identity"):
+    with pytest.raises(NativeAckHelperUnavailableError, match="bundle identity"):
         _ = NativeAckPublisherConfig.production(home=tmp_path)
 
 
@@ -109,7 +110,7 @@ def test_macos_production_config_refuses_unowned_helper_before_publication(
     )
     monkeypatch.setattr(sys, "platform", "darwin")
 
-    with pytest.raises(NativeAckPublicationError, match="not ready"):
+    with pytest.raises(NativeAckHelperUnavailableError, match="not ready"):
         _ = NativeAckPublisherConfig.production(home=tmp_path)
 
 
@@ -139,7 +140,7 @@ def test_production_config_rejects_symlinked_bundle_path_component(
         contents.mkdir(parents=True)
         (contents / "Info.plist").symlink_to(real_contents / "Info.plist")
 
-    with pytest.raises(NativeAckPublicationError, match="bundle identity"):
+    with pytest.raises(NativeAckHelperUnavailableError, match="bundle identity"):
         _ = NativeAckPublisherConfig.production(home=tmp_path)
 
 
@@ -236,9 +237,12 @@ def test_helper_failure_is_retryable_and_cleans_protocol_files(
     monkeypatch.setattr(subprocess, "run", fail_helper)
     with (
         open_mailbox_directory(mailbox) as directory,
-        pytest.raises(NativeAckPublicationError),
+        pytest.raises(NativeAckPublicationError) as raised,
     ):
         _ = publisher(directory, FINAL_NAME, PAYLOAD)
+    # A helper that ran and failed can succeed on a later run; only a helper
+    # that is missing or unreadable needs an operator.
+    assert not isinstance(raised.value, NativeAckHelperUnavailableError)
 
     assert list((mailbox / "acks").iterdir()) == []
     assert list((tmp_path / "protocol" / "requests").iterdir()) == []
