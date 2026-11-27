@@ -24,10 +24,7 @@ def test_icloud_capability_is_bundle_and_team_neutral() -> None:
     expected_container = "$(HEALTH_BRIDGE_ICLOUD_CONTAINER_IDENTIFIER)"
     assert entitlements.count(f"<string>{expected_container}</string>") == 2
     assert "<string>CloudDocuments</string>" in entitlements
-    assert (
-        "<string>$(TeamIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>"
-        in entitlements
-    )
+    assert "ubiquity-kvstore-identifier" not in entitlements
     container_setting = (
         "HEALTH_BRIDGE_ICLOUD_CONTAINER_IDENTIFIER = "
         '"iCloud.$(PRODUCT_BUNDLE_IDENTIFIER)";'

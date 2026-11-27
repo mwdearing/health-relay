@@ -14,8 +14,6 @@
 	<array>
 		<string>$(HEALTH_BRIDGE_QA_ICLOUD_CONTAINER_IDENTIFIER)</string>
 	</array>
-	<key>com.apple.developer.ubiquity-kvstore-identifier</key>
-	<string>$(TeamIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>keychain-access-groups</key>
 	<array>
 		<string>$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>

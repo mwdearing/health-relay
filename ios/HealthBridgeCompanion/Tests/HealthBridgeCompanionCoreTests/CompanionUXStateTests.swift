@@ -426,6 +426,21 @@ final class CompanionUXStateTests: XCTestCase {
         XCTAssertFalse(pairingFailure.message.contains(String(repeating: "x", count: 32)))
     }
 
+    func testAppTransportSecurityFailureIsNotReportedAsLocalNetworkProblem() {
+        let raw = "Pairing failed: The resource could not be loaded because the App Transport Security policy requires the use of a secure connection. | domain=NSURLErrorDomain | code=-1022"
+
+        let status = CompanionPrimaryStatusMessage.sanitized(from: raw, isError: true)
+        let pairing = CompanionPairingFailurePresentationState(rawFailure: raw)
+
+        XCTAssertEqual(
+            status,
+            "This build only allows unencrypted HTTP to IP addresses, single-label names or .local names (NSURLErrorDomain -1022). Use an HTTPS receiver URL or the receiver's IP address, then retry."
+        )
+        XCTAssertFalse(status.contains("Local Network"))
+        XCTAssertTrue(pairing.message.contains("HTTPS"))
+        XCTAssertFalse(pairing.message.contains("Local Network"))
+    }
+
     func testPairingRedeemNonHTTPDiagnosticIsNotMisclassifiedAsMissingConnectionKey() {
         let presentation = CompanionPairingFailurePresentationState(
             rawFailure: "Setup link failed: Pairing server returned a non-HTTP response. | domain=ReceiverPairingRedeem | code=pairing_redeem_non_http_response"

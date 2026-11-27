@@ -79,12 +79,13 @@ Generated setup pages are mode `0600`. Open them only on trusted devices and del
 
 Common working shapes:
 
-- same private LAN hostname or IP, with the receiver bound to the LAN interface;
-- private VPN/Tailscale hostname or HTTPS Serve URL;
+- plain HTTP to a LAN IP address, a single-label name, or a Bonjour `.local` name, with the receiver bound to the LAN interface (iOS blocks plain HTTP to other hostnames);
+- an HTTPS URL, including a Tailscale Serve MagicDNS name (`*.ts.net`) or any other qualified hostname;
 - a hardened private HTTPS endpoint after a separate security review.
 
 Common failure shapes:
 
+- plain `http://` with a qualified hostname such as `receiver.lan` or a `*.ts.net` name; the app reports this as blocked by transport security. Use HTTPS or an IP address;
 - `127.0.0.1` or `localhost` in iPhone setup material — that points at the iPhone itself;
 - receiver bound only to loopback while the iPhone uses another host/IP;
 - laptop asleep, firewall blocked, VPN disconnected, or captive/corporate network isolation;

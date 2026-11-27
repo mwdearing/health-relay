@@ -432,6 +432,24 @@ def _validated_url_port(request: SetupRequest, parsed: ParseResult) -> int | Non
     return url_port
 
 
+def _hostname_notice(*, scheme: str, host: str) -> str | None:
+    bare = host.rstrip(".").lower()
+    if bare.endswith(".local"):
+        return (
+            "Bonjour .local works only on a multicast-capable reachable LAN. The "
+            "iPhone must allow Local Network access."
+        )
+    if scheme != "http" or "." not in bare:
+        return None
+    return (
+        "The HealthRelay iPhone app will block plain HTTP to this hostname "
+        "(App Transport Security), and a Safari check of /health will not show "
+        "it. Plain HTTP works only to an IP address, a single-label name, or a "
+        "Bonjour .local name. Use an HTTPS receiver URL (Route A or B) or the "
+        "receiver's IP address."
+    )
+
+
 def _setup_transport_notice(request: SetupRequest) -> str:
     parsed = urlparse(request.receiver_url)
     host = parsed.hostname
@@ -485,11 +503,9 @@ def _setup_transport_notice(request: SetupRequest) -> str:
     )
     if numeric_notice is not None:
         return numeric_notice
-    if host.rstrip(".").lower().endswith(".local"):
-        return (
-            "Bonjour .local works only on a multicast-capable reachable LAN. The "
-            "iPhone must allow Local Network access."
-        )
+    hostname_notice = _hostname_notice(scheme=parsed.scheme, host=host)
+    if hostname_notice is not None:
+        return hostname_notice
     return "Verify this receiver URL is reachable from the iPhone before pairing."
 
 
