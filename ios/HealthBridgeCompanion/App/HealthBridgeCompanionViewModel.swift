@@ -425,6 +425,10 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
     private let pairingRequestEpoch = PairingRequestEpoch()
     private var backgroundOutboxSchedulingTask: Task<Void, Never>?
     private var backgroundOutboxSchedulingID: UUID?
+    #if os(iOS)
+    // Holds the app alive while scheduling runs after it enters the background (#193).
+    private var backgroundOutboxSchedulingAssertion: UIBackgroundTaskIdentifier = .invalid
+    #endif
     private var trackedSyncTasks: [UUID: Task<Void, Never>] = [:]
     private var directOutboxTransferRequestCount = 0
     private var bootstrapCompleted = false
@@ -3345,18 +3349,41 @@ final class HealthBridgeCompanionViewModel: ObservableObject {
         }
         backgroundOutboxSchedulingID = schedulingID
         backgroundOutboxSchedulingTask = task
+        beginBackgroundOutboxSchedulingAssertion()
+    }
+
+    private func beginBackgroundOutboxSchedulingAssertion() {
+        #if os(iOS)
+        guard backgroundOutboxSchedulingAssertion == .invalid else { return }
+        backgroundOutboxSchedulingAssertion = UIApplication.shared.beginBackgroundTask(
+            withName: "HealthBridge outbox scheduling"
+        ) { [weak self] in
+            Task { @MainActor in self?.endBackgroundOutboxSchedulingAssertion() }
+        }
+        #endif
+    }
+
+    private func endBackgroundOutboxSchedulingAssertion() {
+        #if os(iOS)
+        let identifier = backgroundOutboxSchedulingAssertion
+        backgroundOutboxSchedulingAssertion = .invalid
+        guard identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(identifier)
+        #endif
     }
 
     private func finishBackgroundOutboxScheduling(id: UUID) {
         guard backgroundOutboxSchedulingID == id else { return }
         backgroundOutboxSchedulingTask = nil
         backgroundOutboxSchedulingID = nil
+        endBackgroundOutboxSchedulingAssertion()
     }
 
     private func cancelBackgroundOutboxSchedulingIfNeeded() async {
         guard let task = backgroundOutboxSchedulingTask else { return }
         backgroundOutboxSchedulingTask = nil
         backgroundOutboxSchedulingID = nil
+        endBackgroundOutboxSchedulingAssertion()
         task.cancel()
         await task.value
     }
